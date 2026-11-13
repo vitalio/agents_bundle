@@ -8,10 +8,9 @@ Task heading format: `### <emoji> [<STATUS>] <ID>: <title>`
 
 ## Resume
 
-Written 2026-11-14. Released `agents_bundle` `v0.4.0` (`7e09267`):
-- Added support for loading standalone `.md` rules and `.preset` files directly via URL (`http://`, `https://`, `file://`) with local caching in `~/.cache/agents_bundle/urls/`.
-- Fixed `test_preset_rule_if_conditions_and_dollar_commands` to use the active host OS variable so CI passes on `macos-latest` and `windows-latest`.
-- Simplified `.agents_bundle` to use `preset vitalio/agents_rules:default`.
+Written 2026-11-14. Released `agents_bundle` `v0.5.0` (`5623f54`):
+- Removed `--agents` flag from `agents_bundle` (since context bundling runs prior to starting a chat session via `agents_bundle | run_block`) and documented module boundaries in `AGENTS.md`.
+- Updated tests and documentation for flat `core` and `default` presets in `vitalio/agents_rules`.
 
 ## Tasks
 
