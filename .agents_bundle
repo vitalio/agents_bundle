@@ -1,0 +1,13 @@
+# .agents_bundle — session context bundle specification (run: agents_bundle | run_block --start)
+$ run_block --agents
+$ todo_md --agents
+$ agents_rules vitalio/agents_rules:python-tool
+$ agents_rules vitalio/agents_rules:release/single-file-build
+
+AGENTS.md
+
+$ todo_md
+$ agents_bundle --tree
+$ git status -sb
+$ git branch -vv
+$ git log --oneline -10

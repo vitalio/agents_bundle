@@ -1,0 +1,562 @@
+#!/usr/bin/env python3
+# agents_bundle-repo: vitalio/agents_bundle
+"""Usage:
+  {prog} [-p TEXT] [FILE ...]       Build context bundle from .agents_bundle to stdout
+                                      Opts: -p/--prompt TEXT, -C/--dir DIR
+  {prog} --init [--force]           Create a starter .agents_bundle in the current directory
+  {prog} --tree [DIR] [opts]        Print token-budgeted repository file tree to stdout
+                                      Opts: --max-lines N (120), --max-tokens N (1200)
+  {prog} --agents                   Print Markdown instructions for AI agents
+  {prog} --update [--force]         Self-update {prog} from GitHub (vitalio/agents_bundle)
+  {prog} --check-update             Check if a newer version is available
+  {prog} -V | --version             Print version and exit 0
+  {prog} -h | --help                Print this usage and exit 0
+"""
+from __future__ import annotations
+
+if __doc__ is None:
+    raise SystemExit("missing usage documentation")
+
+import ast
+import math
+import os
+import re
+import shlex
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+from pathlib import Path
+
+VERSION = "0.1.0"
+REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
+DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/agents_bundle/main/agents_bundle"
+SPEC_FILE_NAME = ".agents_bundle"
+
+
+def prog_name() -> str:
+    raw = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "agents_bundle"
+    for suf in (".py", ".cmd", ".bat", ".exe"):
+        if raw.lower().endswith(suf) and len(raw) > len(suf):
+            raw = raw[:-len(suf)]
+            break
+    return raw or "agents_bundle"
+
+
+def usage_text() -> str:
+    return (__doc__ or "").format(prog=prog_name())
+
+
+def approx_tokens(text: str) -> int:
+    return math.ceil(len(text) / 4)
+
+
+_TREE_SKIP_DIRS = {
+    ".git",
+    "__pycache__",
+    "node_modules",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "target",
+}
+
+
+def _collect_repo_files(root: Path) -> list[str]:
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "--cached", "--others", "--exclude-standard"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if r.returncode == 0:
+            files = []
+            for raw in r.stdout.splitlines():
+                rel = raw.strip()
+                if not rel:
+                    continue
+                p = root / rel
+                if p.is_file() and not p.is_symlink():
+                    files.append(Path(rel).as_posix())
+            return sorted(set(files))
+    except Exception:
+        pass
+
+    files = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(
+            d for d in dirnames if d not in _TREE_SKIP_DIRS and not d.startswith(".git")
+        )
+        rel_dir = Path(dirpath).relative_to(root)
+        for fn in sorted(filenames):
+            p = Path(dirpath) / fn
+            if p.is_file() and not p.is_symlink():
+                rel_p = (rel_dir / fn).as_posix() if str(rel_dir) != "." else fn
+                files.append(rel_p)
+    return sorted(set(files))
+
+
+def _inspect_file_meta(path: Path) -> tuple[int, bool, int]:
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as f:
+            head = f.read(4096)
+            if b"\x00" in head:
+                return 0, True, size
+            rest = f.read(512 * 1024)
+        data = head + rest
+        n_lines = data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
+        return n_lines, False, size
+    except OSError:
+        return 0, False, 0
+
+
+def build_repo_tree(
+    root_dir: Path | None = None,
+    max_lines: int = 120,
+    max_tokens: int = 1200,
+) -> str:
+    root = (root_dir if root_dir is not None else Path.cwd()).resolve()
+    rel_files = _collect_repo_files(root)
+    file_info: dict[str, tuple[int, bool, int]] = {}
+    dir_files: dict[str, list[str]] = {"": []}
+    dir_subdirs: dict[str, list[str]] = {"": []}
+    all_dirs: set[str] = {""}
+
+    for rel in rel_files:
+        info = _inspect_file_meta(root / rel)
+        file_info[rel] = info
+        parts = rel.split("/")
+        cur = ""
+        for part in parts[:-1]:
+            nxt = f"{cur}/{part}" if cur else part
+            if nxt not in all_dirs:
+                all_dirs.add(nxt)
+                dir_files[nxt] = []
+                dir_subdirs[nxt] = []
+                dir_subdirs[cur].append(nxt)
+            cur = nxt
+        dir_files[cur].append(rel)
+
+    for d in all_dirs:
+        dir_subdirs[d].sort()
+        dir_files[d].sort()
+
+    dir_totals: dict[str, tuple[int, int]] = {}
+    for d in sorted(all_dirs, key=lambda x: (0 if not x else x.count("/") + 1), reverse=True):
+        f_cnt = len(dir_files[d])
+        l_cnt = sum(file_info[f][0] for f in dir_files[d])
+        for sub in dir_subdirs[d]:
+            sf, sl = dir_totals[sub]
+            f_cnt += sf
+            l_cnt += sl
+        dir_totals[d] = (f_cnt, l_cnt)
+
+    def render_dir(d: str, prefix: str, collapsed: set[str], root_file_limit: int | None) -> list[str]:
+        out: list[str] = []
+        subs = dir_subdirs[d]
+        files = dir_files[d]
+        extra_files = 0
+        if d == "" and root_file_limit is not None and len(files) > root_file_limit:
+            extra_files = len(files) - root_file_limit
+            files = files[:root_file_limit]
+
+        entries: list[tuple[str, str]] = [("dir", s) for s in subs] + [("file", f) for f in files]
+        if extra_files > 0:
+            entries.append(("more", f"... (+{extra_files} more files)"))
+
+        for idx, (kind, item) in enumerate(entries):
+            is_last = idx == len(entries) - 1
+            conn = "└── " if is_last else "├── "
+            child_prefix = prefix + ("    " if is_last else "│   ")
+            if kind == "dir":
+                name = item.rsplit("/", 1)[-1]
+                if item in collapsed:
+                    fc, lc = dir_totals[item]
+                    out.append(f"{prefix}{conn}{name}/ ({fc} file{'s' if fc != 1 else ''}, {lc:,}L)")
+                else:
+                    out.append(f"{prefix}{conn}{name}/")
+                    out.extend(render_dir(item, child_prefix, collapsed, None))
+            elif kind == "file":
+                name = item.rsplit("/", 1)[-1]
+                lines_n, is_bin, sz = file_info[item]
+                tag = f"({sz:,}B)" if is_bin else f"({lines_n}L)"
+                out.append(f"{prefix}{conn}{name} {tag}")
+            else:
+                out.append(f"{prefix}{conn}{item}")
+        return out
+
+    collapsed: set[str] = set()
+    root_limit: int | None = None
+    total_f, total_l = dir_totals[""]
+
+    while True:
+        body = [f"{root.name}/"] + render_dir("", "", collapsed, root_limit)
+        footer = f"# Total: {total_f} file{'s' if total_f != 1 else ''}, {total_l:,} lines"
+        full_lines = body + [footer]
+        tok = approx_tokens("\n".join(full_lines))
+        if len(full_lines) <= max_lines and tok <= max_tokens:
+            return "\n".join(full_lines) + "\n"
+
+        candidates = [
+            d for d in all_dirs
+            if d != "" and d not in collapsed and not any(
+                d.startswith(c + "/") for c in collapsed
+            ) and dir_totals[d][0] > 1
+        ]
+        if candidates:
+            best = max(candidates, key=lambda d: (d.count("/"), dir_totals[d][0]))
+            collapsed.add(best)
+            continue
+
+        cur_root_files = len(dir_files[""]) if root_limit is None else root_limit
+        if cur_root_files > 5:
+            root_limit = max(5, cur_root_files // 2)
+            continue
+        return "\n".join(full_lines[: max(2, max_lines - 1)] + [footer]) + "\n"
+
+
+def _tree_from_args(argv: list[str], default_dir: Path | None = None) -> str:
+    prog = prog_name()
+    max_lines = 120
+    max_tokens = 1200
+    target_dir: Path | None = default_dir
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--max-lines":
+            if i + 1 >= len(argv):
+                raise SystemExit(f"{prog}: --max-lines requires an integer")
+            try:
+                max_lines = max(5, int(argv[i + 1]))
+            except ValueError:
+                raise SystemExit(f"{prog}: invalid --max-lines value: {argv[i + 1]!r}")
+            i += 2
+        elif a.startswith("--max-lines="):
+            try:
+                max_lines = max(5, int(a.split("=", 1)[1]))
+            except ValueError:
+                raise SystemExit(f"{prog}: invalid --max-lines value: {a!r}")
+            i += 1
+        elif a == "--max-tokens":
+            if i + 1 >= len(argv):
+                raise SystemExit(f"{prog}: --max-tokens requires an integer")
+            try:
+                max_tokens = max(20, int(argv[i + 1]))
+            except ValueError:
+                raise SystemExit(f"{prog}: invalid --max-tokens value: {argv[i + 1]!r}")
+            i += 2
+        elif a.startswith("--max-tokens="):
+            try:
+                max_tokens = max(20, int(a.split("=", 1)[1]))
+            except ValueError:
+                raise SystemExit(f"{prog}: invalid --max-tokens value: {a!r}")
+            i += 1
+        elif a.startswith("-"):
+            raise SystemExit(f"{prog}: usage: {prog} --tree [DIR] [--max-lines N] [--max-tokens N]")
+        else:
+            p = Path(a).expanduser()
+            if default_dir is not None and not p.is_absolute():
+                p = default_dir / p
+            if not p.is_dir():
+                raise SystemExit(f"{prog}: directory not found: {a}")
+            target_dir = p
+            i += 1
+    return build_repo_tree(root_dir=target_dir, max_lines=max_lines, max_tokens=max_tokens)
+
+
+def cmd_tree(argv: list[str]) -> int:
+    sys.stdout.write(_tree_from_args(argv))
+    return 0
+
+
+def agents_markdown(prog: str | None = None) -> str:
+    cmd = prog or prog_name()
+    lines = [
+        f"## Context bundler (`{cmd}` v{VERSION})",
+        "",
+        f"- Build a project context bundle from `{SPEC_FILE_NAME}` to `stdout` via `{cmd} [-p \"<task prompt>\"] [file ...]`.",
+        f"- Print a token-budgeted repository file tree via `{cmd} --tree [--max-lines N] [--max-tokens N]`.",
+    ]
+    return "\n".join(lines)
+
+
+def default_spec_template(prog: str | None = None) -> str:
+    cmd = prog or prog_name()
+    lines = [
+        f"# {SPEC_FILE_NAME} — context bundle specification for '{cmd}'",
+        "# Plain lines are UTF-8 file paths relative to this directory.",
+        "# Lines starting with '$ ' (or '! ') are shell commands whose stdout is captured.",
+        "",
+        "AGENTS.md",
+        "",
+        f"$ {cmd} --tree",
+        "$ git status -sb",
+        "$ git branch -vv",
+        "$ git log --oneline -10",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def cmd_init(force: bool = False, target_dir: Path | None = None) -> int:
+    prog = prog_name()
+    base_dir = (target_dir if target_dir is not None else Path.cwd()).resolve()
+    path = base_dir / SPEC_FILE_NAME
+    if path.exists() and not force:
+        sys.stderr.write(f"{prog}: {path} already exists (use --force to overwrite)\n")
+        return 2
+    path.write_text(default_spec_template(prog), encoding="utf-8")
+    sys.stdout.write(f"{prog}: wrote starter {SPEC_FILE_NAME} to {path}\n")
+    return 0
+
+
+def find_spec_file(start_dir: Path | None = None) -> Path | None:
+    cur = (start_dir if start_dir is not None else Path.cwd()).resolve()
+    candidate = cur / SPEC_FILE_NAME
+    if candidate.is_file():
+        return candidate
+    return None
+
+
+def parse_spec(text: str) -> list[tuple[str, str]]:
+    entries: list[tuple[str, str]] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("$ ") or line.startswith("! "):
+            cmd_str = line[2:].strip()
+            if cmd_str:
+                entries.append(("cmd", cmd_str))
+        elif line in ("$", "!"):
+            continue
+        else:
+            entries.append(("file", line))
+    return entries
+
+
+def _run_spec_command(cmd_str: str, cwd: Path) -> tuple[int, str]:
+    prog = prog_name()
+    self_dir = str(Path(__file__).resolve().parent)
+    if re.fullmatch(rf"(?:{re.escape(prog)}|agents_bundle)\s+--agents", cmd_str):
+        return 0, agents_markdown(prog)
+    if re.match(rf"^(?:{re.escape(prog)}|agents_bundle)\s+--tree(?:\s+.*)?$", cmd_str):
+        try:
+            parts = shlex.split(cmd_str)[2:]
+            return 0, _tree_from_args(parts, default_dir=cwd).rstrip()
+        except SystemExit as exc:
+            return 1, str(exc)
+
+    shell_bin = os.environ.get("AGENTS_BUNDLE_SHELL", "bash").strip() or "bash"
+    env = {**os.environ, "PYTHONUTF8": "1"}
+    env["PATH"] = f"{self_dir}{os.pathsep}{Path.home() / '.local/bin'}{os.pathsep}{env.get('PATH', '')}"
+    try:
+        r = subprocess.run(
+            [shell_bin, "-c", cmd_str],
+            cwd=str(cwd),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=env,
+            check=False,
+        )
+        return r.returncode, r.stdout.decode("utf-8", errors="replace").rstrip()
+    except OSError as exc:
+        return 1, f"[error running {cmd_str!r}: {exc}]"
+
+
+def build_bundle(
+    work_dir: Path | None = None,
+    extra_files: list[str] | None = None,
+    prompt_text: str | None = None,
+) -> tuple[str, list[str]]:
+    prog = prog_name()
+    wdir = (work_dir if work_dir is not None else Path.cwd()).resolve()
+    spec_file = find_spec_file(wdir)
+    if spec_file is None:
+        sys.stderr.write(f"{prog}: {SPEC_FILE_NAME} not found in {wdir} (run '{prog} --init' to create a starter template)\n")
+        raise SystemExit(2)
+
+    spec_dir = spec_file.parent
+    entries = parse_spec(spec_file.read_text(encoding="utf-8"))
+    sections: list[tuple[str, str]] = []
+    warnings: list[str] = []
+    included_files: set[Path] = set()
+
+    def add_file_section(rel_path: str, base_folder: Path) -> None:
+        clean = rel_path.strip()
+        if not clean:
+            return
+        p = (base_folder / clean).resolve() if not Path(clean).is_absolute() else Path(clean).resolve()
+        if p in included_files:
+            return
+        if not p.is_file():
+            warnings.append(f"missing file: {clean}")
+            return
+        included_files.add(p)
+        try:
+            disp = str(p.relative_to(spec_dir))
+        except ValueError:
+            disp = str(p)
+        content = p.read_text(encoding="utf-8", errors="replace").rstrip()
+        sections.append((f"File: {disp}", content))
+
+    for kind, val in entries:
+        if kind == "file":
+            add_file_section(val, spec_dir)
+        elif kind == "cmd":
+            rc, out = _run_spec_command(val, spec_dir)
+            if rc != 0:
+                warnings.append(f"command exited {rc}: {val}")
+            sections.append((f"$ {val}", out))
+
+    for extra in extra_files or []:
+        add_file_section(extra, wdir)
+
+    if prompt_text and prompt_text.strip():
+        sections.append(("Prompt", prompt_text.strip()))
+
+    blocks = [f"===== {title} =====\n{content}\n" for title, content in sections]
+    return "\n".join(blocks), warnings
+
+
+def cmd_bundle(argv: list[str]) -> int:
+    prog = prog_name()
+    work_dir: Path | None = None
+    prompt_parts: list[str] = []
+    extra_files: list[str] = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("-p", "--prompt"):
+            if i + 1 >= len(argv):
+                raise SystemExit(f"{prog}: {a} requires an argument")
+            prompt_parts.append(argv[i + 1])
+            i += 2
+        elif a in ("-C", "--dir"):
+            if i + 1 >= len(argv):
+                raise SystemExit(f"{prog}: {a} requires a directory path")
+            work_dir = Path(argv[i + 1]).expanduser()
+            i += 2
+        elif a.startswith("-"):
+            raise SystemExit(f"{prog}: unknown option: {a}")
+        else:
+            extra_files.append(a)
+            i += 1
+
+    prompt_text = "\n\n".join(prompt_parts) if prompt_parts else None
+    body, warnings = build_bundle(work_dir=work_dir, extra_files=extra_files, prompt_text=prompt_text)
+    for w in warnings:
+        sys.stderr.write(f"{prog}: warning: {w}\n")
+    sys.stdout.write(body)
+    return 0
+
+
+def parse_version_from_source(source: str) -> str | None:
+    m = re.search(r'^VERSION\s*=\s*["\x27]([^"\x27]+)["\x27]', source, flags=re.MULTILINE)
+    return m.group(1) if m else None
+
+
+def version_tuple(v: str) -> tuple[int, ...]:
+    return tuple(int(p) for p in re.split(r"[^0-9]+", v) if p)
+
+
+def fetch_remote_script(url: str | None = None) -> str:
+    target_url = url or os.environ.get("AGENTS_BUNDLE_UPDATE_URL") or DEFAULT_UPDATE_URL
+    if target_url.startswith(("http://", "https://")) and "?" not in target_url:
+        target_url = f"{target_url}?t={int(time.time())}"
+    req = urllib.request.Request(
+        target_url,
+        headers={"User-Agent": f"agents_bundle/{VERSION}", "Cache-Control": "no-cache"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        data = resp.read().decode("utf-8")
+    if REPO_MARKER not in data:
+        raise ValueError("downloaded file does not contain expected repository marker")
+    ast.parse(data)
+    return data
+
+
+def cmd_check_update(url: str | None = None) -> int:
+    prog = prog_name()
+    try:
+        remote_src = fetch_remote_script(url)
+    except Exception as exc:
+        sys.stderr.write(f"{prog}: failed to check for updates: {exc}\n")
+        return 1
+    remote_ver = parse_version_from_source(remote_src) or "unknown"
+    if version_tuple(remote_ver) > version_tuple(VERSION):
+        sys.stdout.write(f"{prog}: update available: {VERSION} -> {remote_ver} (run '{prog} --update')\n")
+    else:
+        sys.stdout.write(f"{prog} {VERSION} is up to date (remote: {remote_ver}).\n")
+    return 0
+
+
+def cmd_update(force: bool = False, url: str | None = None) -> int:
+    prog = prog_name()
+    dest = Path(__file__).resolve()
+    try:
+        remote_src = fetch_remote_script(url)
+    except Exception as exc:
+        sys.stderr.write(f"{prog}: update failed: {exc}\n")
+        return 1
+    remote_ver = parse_version_from_source(remote_src) or "unknown"
+    if not force and version_tuple(remote_ver) <= version_tuple(VERSION):
+        sys.stdout.write(f"{prog} {VERSION} is already up to date.\n")
+        return 0
+    try:
+        tmp_fd, tmp_name = tempfile.mkstemp(prefix=f".{dest.name}.", dir=str(dest.parent))
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                f.write(remote_src)
+            os.chmod(tmp_name, 0o755)
+            os.replace(tmp_name, dest)
+        except Exception:
+            if os.path.exists(tmp_name):
+                os.unlink(tmp_name)
+            raise
+    except Exception as exc:
+        sys.stderr.write(f"{prog}: could not write updated binary to {dest}: {exc}\n")
+        return 1
+    sys.stdout.write(f"{prog}: updated {VERSION} -> {remote_ver} ({dest})\n")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    prog = prog_name()
+    if "-h" in args or "--help" in args:
+        sys.stdout.write(usage_text())
+        return 0
+    if "-V" in args or "--version" in args:
+        sys.stdout.write(f"{prog} {VERSION}\n")
+        return 0
+    if "--agents" in args:
+        sys.stdout.write(agents_markdown(prog) + "\n")
+        return 0
+    if args and args[0] == "--init":
+        force = "--force" in args[1:]
+        rest = [a for a in args[1:] if a != "--force"]
+        if rest:
+            raise SystemExit(f"{prog}: usage: {prog} --init [--force]")
+        return cmd_init(force=force)
+    if args and args[0] == "--tree":
+        return cmd_tree(args[1:])
+    if args and args[0] == "--check-update":
+        return cmd_check_update()
+    if args and args[0] in ("--update", "--self-update"):
+        return cmd_update(force="--force" in args[1:])
+    return cmd_bundle(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
