@@ -47,13 +47,16 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertIn("agents_bundle --init", r.stderr)
 
     def test_preset_rule_if_conditions_and_dollar_commands(self):
+        import sys
+        cur_os = "windows" if os.name == "nt" else ("macos" if sys.platform == "darwin" else "linux")
+        other_os = "windows" if cur_os != "windows" else "linux"
         (self.tmp / "AGENTS.md").write_text("# Project Rules\n", encoding="utf-8")
         (self.tmp / "extra.txt").write_text("extra content\n", encoding="utf-8")
         (self.tmp / ".agents_bundle").write_text(
             "preset vitalio/agents_rules:workflow -collab/external lang=Russian\n"
-            "[if os=linux] rule vitalio/agents_rules:os/linux\n"
-            "[if os=windows] rule vitalio/agents_rules:os/windows\n"
-            "[if os=linux]\n"
+            f"[if os={cur_os}] rule vitalio/agents_rules:os/linux\n"
+            f"[if os={other_os}] rule vitalio/agents_rules:os/windows\n"
+            f"[if os={cur_os}]\n"
             "rule vitalio/agents_rules:stack/python-cli py_min=3.12\n"
             "[/if]\n"
             "$ cat AGENTS.md\n"
@@ -87,8 +90,23 @@ class TestAgentsBundle(unittest.TestCase):
         )
         self.assertEqual(rb_v.returncode, 0, rb_v.stderr)
         self.assertIn("# [preset vitalio/agents_rules:workflow -> preset core -> rules/core/start.md]", rb_v.stdout)
-        self.assertIn("# [[if os=linux] rule vitalio/agents_rules:os/linux -> rules/os/linux.md]", rb_v.stdout)
-        self.assertIn("# [[if os=linux] rule vitalio/agents_rules:stack/python-cli -> rules/stack/python-cli.md] (py_min=3.12)", rb_v.stdout)
+        self.assertIn(f"# [[if os={cur_os}] rule vitalio/agents_rules:os/linux -> rules/os/linux.md]", rb_v.stdout)
+        self.assertIn(f"# [[if os={cur_os}] rule vitalio/agents_rules:stack/python-cli -> rules/stack/python-cli.md] (py_min=3.12)", rb_v.stdout)
+
+        # Verify direct URL rule and preset loading
+        url_rule = self.tmp / "custom_url_rule.md"
+        url_rule.write_text("# Description: Direct URL rule\n- **Direct URL invariant:** Loaded from URL {val:42}.\n", encoding="utf-8")
+        url_preset = self.tmp / "custom_url.preset"
+        url_preset.write_text(f"# Description: Direct URL preset\nrule {url_rule.as_uri()} val=99\n", encoding="utf-8")
+        r_url = subprocess.run(
+            [str(SCRIPT), "preset", url_preset.as_uri()],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(r_url.returncode, 0, r_url.stderr)
+        self.assertIn("Loaded from URL 99.", r_url.stdout)
 
     def test_builtin_vars_override_in_preset(self):
         rp = subprocess.run(

@@ -34,7 +34,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/agents_bundle/main/agents_bundle"
 SPEC_FILE_NAME = ".agents_bundle"

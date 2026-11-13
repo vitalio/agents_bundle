@@ -227,21 +227,39 @@ def _get_package_catalog(
     return _load_package_from_dir(pkg_dir)
 
 
+def _fetch_url_file(url: str, refresh: bool = False) -> Path:
+    prog = prog_name()
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", url)
+    cpath = cache_dir_path() / "urls" / slug
+    if cpath.is_file() and not refresh:
+        return cpath
+    cpath.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": f"agents_bundle/{VERSION}"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = resp.read().decode("utf-8")
+        cpath.write_text(data, encoding="utf-8")
+        return cpath
+    except Exception as exc:
+        raise SystemExit(f"{prog}: failed to fetch {url!r}: {exc}")
+
+
 def _parse_target_spec(spec: str, default_pkg: str | None = None) -> tuple[str, str]:
     prog = prog_name()
     if ":" not in spec and spec.startswith(("./", "../", "~/", "/")):
         return "__file__", spec
+    if spec.startswith(("http://", "https://", "file://")):
+        idx = spec.rfind(":")
+        scheme_end = spec.find("://") + 2
+        if idx <= scheme_end or spec.endswith((".md", ".preset")):
+            return "__url__", spec
+        return spec[:idx], spec[idx + 1:].strip().lower()
     if ":" not in spec:
         if default_pkg:
             return default_pkg, spec.strip().lower()
         raise SystemExit(
             f"{prog}: missing package prefix in {spec!r} (expected '<owner>/<repo>:{spec}' or './path')"
         )
-    if spec.startswith(("http://", "https://")):
-        idx = spec.rfind(":")
-        if idx <= 8:
-            raise SystemExit(f"{prog}: missing ':<item>' in URL target {spec!r}")
-        return spec[:idx], spec[idx + 1:].strip().lower()
     pkg, item = spec.split(":", 1)
     if not pkg.strip() or not item.strip():
         raise SystemExit(f"{prog}: invalid target {spec!r}; expected <package>:<item>")
@@ -284,12 +302,17 @@ def collect_directive_items(
     effective_vars = {**builtin_vars(work_dir), **(cli_vars or {})}
     cur_trace = list(trace_prefix or [f"{kind} {target_spec}"])
 
-    if pkg_id == "__file__":
-        fpath = Path(item_name).expanduser()
-        if work_dir is not None and not fpath.is_absolute():
-            fpath = (work_dir / fpath).resolve()
-        if not fpath.is_file():
-            raise SystemExit(f"{prog}: {kind} file not found: {item_name}")
+    if pkg_id in ("__file__", "__url__"):
+        if pkg_id == "__url__":
+            fpath = _fetch_url_file(item_name, refresh=refresh)
+            base_url = item_name.rsplit("/", 1)[0] if "/" in item_name else DEFAULT_RULES_PKG
+        else:
+            fpath = Path(item_name).expanduser()
+            if work_dir is not None and not fpath.is_absolute():
+                fpath = (work_dir / fpath).resolve()
+            if not fpath.is_file():
+                raise SystemExit(f"{prog}: {kind} file not found: {item_name}")
+            base_url = DEFAULT_RULES_PKG
         raw = fpath.read_text(encoding="utf-8", errors="replace")
         if kind == "preset":
             _, directives = _parse_preset_file(raw, fpath.stem)
@@ -303,7 +326,7 @@ def collect_directive_items(
                 items_out.extend(
                     collect_directive_items(
                         sub_kind,
-                        sub_target,
+                        (f"{base_url}/{sub_target}" if (pkg_id == "__url__" and ":" not in sub_target and sub_target.endswith((".md", ".preset"))) else sub_target),
                         excludes=merged_excls,
                         cli_vars=merged_vars,
                         work_dir=work_dir,
