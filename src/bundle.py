@@ -40,13 +40,18 @@ def find_spec_file(start_dir: Path | None = None) -> Path | None:
     return None
 
 
-def parse_spec(text: str, work_dir: Path | None = None) -> list[tuple[str, str, str | None]]:
+def parse_spec(
+    text: str,
+    work_dir: Path | None = None,
+    cli_vars: dict[str, str] | None = None,
+) -> list[tuple[str, str, str | None]]:
     prog = prog_name()
-    bvars = builtin_vars(work_dir)
+    bvars = {**builtin_vars(work_dir), **(cli_vars or {})}
     entries: list[tuple[str, str, str | None]] = []
-    for cond_expr, line in strip_if_blocks_and_lines(text, prog):
+    for cond_expr, raw_line in strip_if_blocks_and_lines(text, prog):
         if cond_expr and not eval_if_condition(cond_expr, bvars, prog):
             continue
+        line = _render_rule_vars(raw_line, bvars).strip()
         if line.startswith("$ ") or line.startswith("! "):
             cmd_str = line[2:].strip()
             if cmd_str:
@@ -95,6 +100,7 @@ def build_bundle(
     prompt_text: str | None = None,
     refresh: bool = False,
     verbose: bool = False,
+    cli_vars: dict[str, str] | None = None,
 ) -> tuple[str, list[str]]:
     prog = prog_name()
     wdir = (work_dir if work_dir is not None else Path.cwd()).resolve()
@@ -104,7 +110,7 @@ def build_bundle(
         raise SystemExit(2)
 
     spec_dir = spec_file.parent
-    entries = parse_spec(spec_file.read_text(encoding="utf-8"), work_dir=spec_dir)
+    entries = parse_spec(spec_file.read_text(encoding="utf-8"), work_dir=spec_dir, cli_vars=cli_vars)
     sections: list[tuple[str, str]] = []
     warnings: list[str] = []
     pending_rules: list[tuple[str, str, str]] = []
@@ -123,12 +129,13 @@ def build_bundle(
             d_kind = parts[0]
             target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
             trace_start = f"[if {cond_expr}] {d_kind} {target}" if cond_expr else f"{d_kind} {target}"
+            merged_vmap = {**vmap, **(cli_vars or {})}
             pending_rules.extend(
                 collect_directive_items(
                     d_kind,
                     target,
                     excludes=excls,
-                    cli_vars=vmap,
+                    cli_vars=merged_vmap,
                     work_dir=spec_dir,
                     refresh=refresh,
                     trace_prefix=[trace_start],
@@ -169,6 +176,7 @@ def cmd_bundle(argv: list[str]) -> int:
     work_dir: Path | None = None
     prompt_parts: list[str] = []
     extra_files: list[str] = []
+    cli_vars: dict[str, str] = {}
     refresh = False
     verbose = False
     i = 0
@@ -192,12 +200,23 @@ def cmd_bundle(argv: list[str]) -> int:
             i += 2
         elif a.startswith("-"):
             raise SystemExit(f"{prog}: unknown option: {a}")
+        elif "=" in a and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", a, flags=re.DOTALL) and not Path(a).exists():
+            k, v = a.split("=", 1)
+            cli_vars[k.strip()] = v.strip()
+            i += 1
         else:
             extra_files.append(a)
             i += 1
 
     prompt_text = "\n\n".join(prompt_parts) if prompt_parts else None
-    body, warnings = build_bundle(work_dir=work_dir, extra_files=extra_files, prompt_text=prompt_text, refresh=refresh, verbose=verbose)
+    body, warnings = build_bundle(
+        work_dir=work_dir,
+        extra_files=extra_files,
+        prompt_text=prompt_text,
+        refresh=refresh,
+        verbose=verbose,
+        cli_vars=cli_vars,
+    )
     for w in warnings:
         sys.stderr.write(f"{prog}: warning: {w}\n")
     sys.stdout.write(body)

@@ -108,6 +108,24 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertEqual(r_url.returncode, 0, r_url.stderr)
         self.assertIn("Loaded from URL 99.", r_url.stdout)
 
+        # Verify CLI key=val variables in .agents_bundle ([if task=...] and {task:})
+        (self.tmp / ".agents_bundle").write_text(
+            "preset vitalio/agents_rules:core\n"
+            "[if task=] $ echo all_tasks\n"
+            "[if task!=] $ echo focused_task_{task:}\n",
+            encoding="utf-8",
+        )
+        r_all = subprocess.run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self.assertEqual(r_all.returncode, 0, r_all.stderr)
+        self.assertIn("all_tasks", r_all.stdout)
+        self.assertNotIn("focused_task_", r_all.stdout)
+
+        r_foc = subprocess.run([str(SCRIPT), "task=A2", "lang=German"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self.assertEqual(r_foc.returncode, 0, r_foc.stderr)
+        self.assertIn("focused_task_A2", r_foc.stdout)
+        self.assertNotIn("all_tasks", r_foc.stdout)
+        self.assertIn("in **German**", r_foc.stdout)
+
     def test_builtin_vars_override_in_preset(self):
         rp = subprocess.run(
             [str(SCRIPT), "preset", "vitalio/agents_rules:default", "os=windows", "vcs=cvs", "-v"],

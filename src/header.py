@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # agents_bundle-repo: vitalio/agents_bundle
 """Usage:
-  {prog} [-p TEXT] [FILE ...]                 Build context bundle from .agents_bundle to stdout
+  {prog} [k=v ...] [-p TEXT] [FILE ...]       Build context bundle from .agents_bundle to stdout
                                                 Opts: -p/--prompt TEXT, -C/--dir DIR, -v/--verbose, --refresh
   {prog} preset <pkg>:<name> [-excl] [k=v]    Render a preset to stdout
   {prog} rule <pkg>:<name> [k=v]              Render a single rule to stdout
@@ -33,7 +33,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/agents_bundle/main/agents_bundle"
 SPEC_FILE_NAME = ".agents_bundle"

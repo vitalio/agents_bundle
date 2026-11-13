@@ -9,7 +9,8 @@ rule vitalio/agents_rules:stack/cli
 rule vitalio/agents_rules:stack/python-cli py_min=3.9
 
 $ cat AGENTS.md
-$ todo_md
+[if task=] $ todo_md
+[if task!=] $ todo_md {task:}
 $ agents_bundle --tree
 $ git status -sb
 $ git branch -vv
