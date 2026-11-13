@@ -1,11 +1,15 @@
-# .agents_bundle — session context bundle specification (run: agents_bundle | run_block --start)
+# .agents_bundle — root context preset and command bundle (run: agents_bundle | run_block --start)
 $ run_block --agents
 $ todo_md --agents
-$ agents_rules vitalio/agents_rules:python-tool
-$ agents_rules vitalio/agents_rules:release/single-file-build
+$ agents_bundle --agents
 
-AGENTS.md
+preset vitalio/agents_rules:workflow
+rule vitalio/agents_rules:vcs/git
+rule vitalio/agents_rules:release/semver
+rule vitalio/agents_rules:release/single-file-build
+rule vitalio/agents_rules:stack/python-cli py_min=3.9
 
+$ cat AGENTS.md
 $ todo_md
 $ agents_bundle --tree
 $ git status -sb

@@ -2,6 +2,7 @@
 """Tests for agents_bundle."""
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -12,13 +13,18 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "agents_bundle"
 BUILD_PY = ROOT / "build.py"
 INSTALL_SH = ROOT / "install.sh"
+AR_REPO = Path("/home/vitaly/agents_rules")
 
 
 class TestAgentsBundle(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="ab_test_"))
+        os.environ["AGENTS_BUNDLE_CACHE_DIR"] = str(self.tmp / "cache")
+        os.environ["AGENTS_BUNDLE_LOCAL_PKG_DIR"] = str(AR_REPO)
 
     def tearDown(self):
+        os.environ.pop("AGENTS_BUNDLE_CACHE_DIR", None)
+        os.environ.pop("AGENTS_BUNDLE_LOCAL_PKG_DIR", None)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_build_check_help_and_version(self):
@@ -39,15 +45,15 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertIn(".agents_bundle not found", r.stderr)
         self.assertIn("agents_bundle --init", r.stderr)
 
-    def test_init_and_bundle_to_stdout_with_warnings_on_stderr(self):
-        ri = subprocess.run([str(SCRIPT), "--init"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
-        self.assertEqual(ri.returncode, 0)
-        self.assertTrue((self.tmp / ".agents_bundle").is_file())
-
+    def test_preset_rule_and_dollar_commands_in_agents_bundle(self):
         (self.tmp / "AGENTS.md").write_text("# Project Rules\n", encoding="utf-8")
         (self.tmp / "extra.txt").write_text("extra content\n", encoding="utf-8")
         (self.tmp / ".agents_bundle").write_text(
-            "AGENTS.md\nMISSING.md\n$ agents_bundle --tree --max-lines 10\n$ echo cmd_ok\n",
+            "preset vitalio/agents_rules:workflow -core/external lang=Russian\n"
+            "rule vitalio/agents_rules:stack/python-cli py_min=3.12\n"
+            "$ cat AGENTS.md\n"
+            "$ agents_bundle --tree --max-lines 10\n"
+            "$ echo cmd_ok\n",
             encoding="utf-8",
         )
         rb = subprocess.run(
@@ -57,16 +63,29 @@ class TestAgentsBundle(unittest.TestCase):
             text=True,
             check=False,
         )
-        self.assertEqual(rb.returncode, 0)
-        self.assertIn("missing file: MISSING.md", rb.stderr)
-        self.assertNotIn("MISSING.md", rb.stdout)
-        self.assertIn("===== File: AGENTS.md =====", rb.stdout)
+        self.assertEqual(rb.returncode, 0, rb.stderr)
+        self.assertIn("===== preset vitalio/agents_rules:workflow -core/external lang=Russian =====", rb.stdout)
+        self.assertIn("in **Russian**", rb.stdout)
+        self.assertNotIn("Clean external text & two-step external changes:", rb.stdout)
+        self.assertIn("===== rule vitalio/agents_rules:stack/python-cli py_min=3.12 =====", rb.stdout)
+        self.assertIn("Python 3.12+ compatibility", rb.stdout)
+        self.assertIn("===== $ cat AGENTS.md =====", rb.stdout)
         self.assertIn("# Project Rules", rb.stdout)
         self.assertIn("===== $ agents_bundle --tree --max-lines 10 =====", rb.stdout)
         self.assertIn("cmd_ok", rb.stdout)
-        self.assertIn("===== File: extra.txt =====", rb.stdout)
+        self.assertIn("===== $ cat extra.txt =====", rb.stdout)
         self.assertIn("===== Prompt =====", rb.stdout)
         self.assertIn("Solve task 1", rb.stdout)
+
+    def test_cli_preset_rule_and_list(self):
+        rl = subprocess.run([str(SCRIPT), "--list"], capture_output=True, text=True, check=False)
+        self.assertEqual(rl.returncode, 0, rl.stderr)
+        self.assertIn("vitalio/agents_rules:workflow", rl.stdout)
+        self.assertIn("vitalio/agents_rules:core/unix-philosophy", rl.stdout)
+
+        rr = subprocess.run([str(SCRIPT), "rule", "vitalio/agents_rules:release/single-file-build"], capture_output=True, text=True, check=False)
+        self.assertEqual(rr.returncode, 0, rr.stderr)
+        self.assertIn("Single-file build from modular `src/`:", rr.stdout)
 
     def test_install_sh(self):
         bin_dir = self.tmp / "bin"

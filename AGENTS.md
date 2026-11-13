@@ -1,6 +1,6 @@
 # `agents_bundle` — Project-Specific Agent Rules
 
-Universal workflow, language, Git, SemVer, Python CLI, and single-file build rules are loaded via `$ agents_rules std:python-tool` and `$ agents_rules std:release/single-file-build`.
+Universal workflow, language, Git, SemVer, Python CLI, and single-file build rules are loaded via `.agents_bundle`.
 
 ## Release trigger & local reinstall
 

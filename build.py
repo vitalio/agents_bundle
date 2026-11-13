@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent
 SRC_DIR = ROOT / "src"
 OUT_FILE = ROOT / "agents_bundle"
 
-MODULE_ORDER = ["header.py", "tree.py", "bundle.py", "cli.py"]
+MODULE_ORDER = ["header.py", "tree.py", "rules_engine.py", "bundle.py", "cli.py"]
 
 
 def assemble_source() -> str:

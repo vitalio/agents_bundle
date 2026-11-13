@@ -3,7 +3,8 @@ def agents_markdown(prog: str | None = None) -> str:
     lines = [
         f"## Context bundler (`{cmd}` v{VERSION})",
         "",
-        f"- Build a project context bundle from `{SPEC_FILE_NAME}` to `stdout` via `{cmd} [-p \"<task prompt>\"] [file ...]`.",
+        f"- Build a project context bundle from `{SPEC_FILE_NAME}` (`preset ...`, `rule ...`, and `$ <cmd>` lines) to `stdout` via `{cmd} [-p \"<task prompt>\"] [file ...]`.",
+        f"- Render individual presets/rules via `{cmd} preset <pkg>:<name>` or `{cmd} rule <pkg>:<name>` (inspect available items with `{cmd} --list`).",
         f"- Print a token-budgeted repository file tree via `{cmd} --tree [--max-lines N] [--max-tokens N]`.",
     ]
     return "\n".join(lines)
@@ -12,12 +13,15 @@ def agents_markdown(prog: str | None = None) -> str:
 def default_spec_template(prog: str | None = None) -> str:
     cmd = prog or prog_name()
     lines = [
-        f"# {SPEC_FILE_NAME} — context bundle specification for '{cmd}'",
-        "# Plain lines are UTF-8 file paths relative to this directory.",
-        "# Lines starting with '$ ' (or '! ') are shell commands whose stdout is captured.",
+        f"# {SPEC_FILE_NAME} — root context preset and command bundle for '{cmd}'",
+        "# Directives:",
+        f"#   preset <owner>/<repo>:<name> [-exclude ...] [key=val ...]",
+        f"#   rule <owner>/<repo>:<name> [key=val ...]",
+        "#   $ <shell command>  (use '$ cat <file>' to include a file)",
         "",
-        "AGENTS.md",
+        f"preset {DEFAULT_RULES_PKG}:default",
         "",
+        "$ cat AGENTS.md",
         f"$ {cmd} --tree",
         "$ git status -sb",
         "$ git branch -vv",
@@ -48,6 +52,7 @@ def find_spec_file(start_dir: Path | None = None) -> Path | None:
 
 
 def parse_spec(text: str) -> list[tuple[str, str]]:
+    prog = prog_name()
     entries: list[tuple[str, str]] = []
     for raw_line in text.splitlines():
         line = raw_line.strip()
@@ -59,8 +64,12 @@ def parse_spec(text: str) -> list[tuple[str, str]]:
                 entries.append(("cmd", cmd_str))
         elif line in ("$", "!"):
             continue
+        elif line.startswith("preset ") or line.startswith("rule "):
+            entries.append(("directive", line))
         else:
-            entries.append(("file", line))
+            raise SystemExit(
+                f"{prog}: invalid line in {SPEC_FILE_NAME}: {line!r} (expected 'preset ...', 'rule ...', or '$ <command>')"
+            )
     return entries
 
 
@@ -97,6 +106,7 @@ def build_bundle(
     work_dir: Path | None = None,
     extra_files: list[str] | None = None,
     prompt_text: str | None = None,
+    refresh: bool = False,
 ) -> tuple[str, list[str]]:
     prog = prog_name()
     wdir = (work_dir if work_dir is not None else Path.cwd()).resolve()
@@ -109,29 +119,22 @@ def build_bundle(
     entries = parse_spec(spec_file.read_text(encoding="utf-8"))
     sections: list[tuple[str, str]] = []
     warnings: list[str] = []
-    included_files: set[Path] = set()
-
-    def add_file_section(rel_path: str, base_folder: Path) -> None:
-        clean = rel_path.strip()
-        if not clean:
-            return
-        p = (base_folder / clean).resolve() if not Path(clean).is_absolute() else Path(clean).resolve()
-        if p in included_files:
-            return
-        if not p.is_file():
-            warnings.append(f"missing file: {clean}")
-            return
-        included_files.add(p)
-        try:
-            disp = str(p.relative_to(spec_dir))
-        except ValueError:
-            disp = str(p)
-        content = p.read_text(encoding="utf-8", errors="replace").rstrip()
-        sections.append((f"File: {disp}", content))
 
     for kind, val in entries:
-        if kind == "file":
-            add_file_section(val, spec_dir)
+        if kind == "directive":
+            parts = shlex.split(val)
+            d_kind = parts[0]
+            target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
+            out = render_directive(
+                d_kind,
+                target,
+                excludes=excls,
+                cli_vars=vmap,
+                work_dir=spec_dir,
+                refresh=refresh,
+            )
+            if out.strip():
+                sections.append((val, out.strip()))
         elif kind == "cmd":
             rc, out = _run_spec_command(val, spec_dir)
             if rc != 0:
@@ -139,7 +142,19 @@ def build_bundle(
             sections.append((f"$ {val}", out))
 
     for extra in extra_files or []:
-        add_file_section(extra, wdir)
+        clean = extra.strip()
+        if not clean:
+            continue
+        p = (wdir / clean).resolve() if not Path(clean).is_absolute() else Path(clean).resolve()
+        if not p.is_file():
+            warnings.append(f"missing file: {clean}")
+            continue
+        try:
+            disp = str(p.relative_to(spec_dir))
+        except ValueError:
+            disp = str(p)
+        content = p.read_text(encoding="utf-8", errors="replace").rstrip()
+        sections.append((f"$ cat {disp}", content))
 
     if prompt_text and prompt_text.strip():
         sections.append(("Prompt", prompt_text.strip()))
@@ -153,10 +168,14 @@ def cmd_bundle(argv: list[str]) -> int:
     work_dir: Path | None = None
     prompt_parts: list[str] = []
     extra_files: list[str] = []
+    refresh = False
     i = 0
     while i < len(argv):
         a = argv[i]
-        if a in ("-p", "--prompt"):
+        if a == "--refresh":
+            refresh = True
+            i += 1
+        elif a in ("-p", "--prompt"):
             if i + 1 >= len(argv):
                 raise SystemExit(f"{prog}: {a} requires an argument")
             prompt_parts.append(argv[i + 1])
@@ -173,7 +192,7 @@ def cmd_bundle(argv: list[str]) -> int:
             i += 1
 
     prompt_text = "\n\n".join(prompt_parts) if prompt_parts else None
-    body, warnings = build_bundle(work_dir=work_dir, extra_files=extra_files, prompt_text=prompt_text)
+    body, warnings = build_bundle(work_dir=work_dir, extra_files=extra_files, prompt_text=prompt_text, refresh=refresh)
     for w in warnings:
         sys.stderr.write(f"{prog}: warning: {w}\n")
     sys.stdout.write(body)

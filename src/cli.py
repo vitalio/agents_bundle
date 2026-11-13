@@ -80,6 +80,21 @@ def main(argv: list[str] | None = None) -> int:
     if "--agents" in args:
         sys.stdout.write(agents_markdown(prog) + "\n")
         return 0
+    if args and args[0] in ("preset", "rule"):
+        kind = args[0]
+        refresh = "--refresh" in args[1:]
+        rest_tokens = [a for a in args[1:] if a != "--refresh"]
+        target, excls, vmap = _parse_directive_tokens(rest_tokens, prog)
+        out = render_directive(kind, target, excludes=excls, cli_vars=vmap, refresh=refresh)
+        if out:
+            sys.stdout.write(out + "\n")
+        return 0
+    if args and args[0] in ("--list", "-l"):
+        if len(args) > 2:
+            raise SystemExit(f"{prog}: usage: {prog} --list [package]")
+        return cmd_list_rules(args[1] if len(args) == 2 else DEFAULT_RULES_PKG)
+    if args and args[0] == "--update-cache":
+        return cmd_update_cache()
     if args and args[0] == "--init":
         force = "--force" in args[1:]
         rest = [a for a in args[1:] if a != "--force"]
