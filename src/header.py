@@ -10,7 +10,6 @@
   {prog} --init [--force]                     Create a starter .agents_bundle in the current directory
   {prog} --tree [DIR] [opts]                  Print token-budgeted repository file tree to stdout
                                                 Opts: -x/--exclude DIR, --max-lines N (160), --max-tokens N (1600)
-  {prog} --agents                             Print Markdown instructions for AI agents
   {prog} --update [--force]                   Self-update {prog} from GitHub (vitalio/agents_bundle)
   {prog} --check-update                       Check if a newer version is available
   {prog} -V | --version                       Print version and exit 0
@@ -34,7 +33,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/agents_bundle/main/agents_bundle"
 SPEC_FILE_NAME = ".agents_bundle"

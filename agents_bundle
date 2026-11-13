@@ -10,7 +10,6 @@
   {prog} --init [--force]                     Create a starter .agents_bundle in the current directory
   {prog} --tree [DIR] [opts]                  Print token-budgeted repository file tree to stdout
                                                 Opts: -x/--exclude DIR, --max-lines N (160), --max-tokens N (1600)
-  {prog} --agents                             Print Markdown instructions for AI agents
   {prog} --update [--force]                   Self-update {prog} from GitHub (vitalio/agents_bundle)
   {prog} --check-update                       Check if a newer version is available
   {prog} -V | --version                       Print version and exit 0
@@ -34,7 +33,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/agents_bundle/main/agents_bundle"
 SPEC_FILE_NAME = ".agents_bundle"
@@ -894,18 +893,6 @@ def cmd_update_cache() -> int:
     return 0
 
 
-def agents_markdown(prog: str | None = None) -> str:
-    cmd = prog or prog_name()
-    lines = [
-        f"## Context bundler (`{cmd}` v{VERSION})",
-        "",
-        f"- Build a project context bundle from `{SPEC_FILE_NAME}` (`preset ...`, `rule ...`, `[if key=val] ...`, and `$ <cmd>` lines) to `stdout` via `{cmd} [-p \"<task prompt>\"] [file ...]`.",
-        f"- Render individual presets/rules via `{cmd} preset <pkg>:<name>` or `{cmd} rule <pkg>:<name>` (inspect available items and built-in variables with `{cmd} --list`).",
-        f"- Print a token-budgeted repository file tree via `{cmd} --tree [-x/--exclude DIR] [--max-lines N] [--max-tokens N]`.",
-    ]
-    return "\n".join(lines)
-
-
 def default_spec_template(prog: str | None = None) -> str:
     cmd = prog or prog_name()
     lines = [
@@ -973,8 +960,6 @@ def parse_spec(text: str, work_dir: Path | None = None) -> list[tuple[str, str, 
 def _run_spec_command(cmd_str: str, cwd: Path) -> tuple[int, str]:
     prog = prog_name()
     self_dir = str(Path(__file__).resolve().parent)
-    if re.fullmatch(rf"(?:{re.escape(prog)}|agents_bundle)\s+--agents", cmd_str):
-        return 0, agents_markdown(prog)
     if re.match(rf"^(?:{re.escape(prog)}|agents_bundle)\s+--tree(?:\s+.*)?$", cmd_str):
         try:
             parts = shlex.split(cmd_str)[2:]
@@ -1192,9 +1177,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if "-V" in args or "--version" in args:
         sys.stdout.write(f"{prog} {VERSION}\n")
-        return 0
-    if "--agents" in args:
-        sys.stdout.write(agents_markdown(prog) + "\n")
         return 0
     if args and args[0] in ("preset", "rule"):
         kind = args[0]

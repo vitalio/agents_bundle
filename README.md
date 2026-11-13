@@ -9,15 +9,8 @@ includes any extra files and `-p/--prompt` text, and writes the assembled bundle
 ## `.agents_bundle` Format
 
 ```text
-$ run_block --agents
-$ todo_md --agents
-$ agents_bundle --agents
 
-preset vitalio/agents_rules:workflow
-[if os=linux] rule vitalio/agents_rules:os/linux
-[if os=macos] rule vitalio/agents_rules:os/macos
-[if os=windows] rule vitalio/agents_rules:os/windows
-rule vitalio/agents_rules:vcs/git
+preset vitalio/agents_rules:default
 rule vitalio/agents_rules:release/semver
 rule vitalio/agents_rules:stack/cli
 rule vitalio/agents_rules:stack/python-cli py_min=3.9
@@ -32,8 +25,8 @@ $ git status -sb
 
 ```bash
 agents_bundle --init
-agents_bundle | run_block --start
-agents_bundle -p "Fix issue #12" src/main.py | run_block --start
+agents_bundle | run_block
+agents_bundle -p "Fix issue #12" src/main.py | run_block
 agents_bundle preset vitalio/agents_rules:default os=windows
 agents_bundle rule vitalio/agents_rules:release/single-file-build
 agents_bundle --list

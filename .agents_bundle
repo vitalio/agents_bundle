@@ -1,7 +1,6 @@
-# .agents_bundle — root context preset and command bundle (run: agents_bundle | run_block --start)
+# .agents_bundle — root context preset and command bundle (run: agents_bundle | run_block)
 $ run_block --agents
 $ todo_md --agents
-$ agents_bundle --agents
 
 preset vitalio/agents_rules:default
 rule vitalio/agents_rules:release/semver

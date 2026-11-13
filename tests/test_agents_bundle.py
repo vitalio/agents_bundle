@@ -53,7 +53,7 @@ class TestAgentsBundle(unittest.TestCase):
         (self.tmp / "AGENTS.md").write_text("# Project Rules\n", encoding="utf-8")
         (self.tmp / "extra.txt").write_text("extra content\n", encoding="utf-8")
         (self.tmp / ".agents_bundle").write_text(
-            "preset vitalio/agents_rules:workflow -collab/external lang=Russian\n"
+            "preset vitalio/agents_rules:core lang=Russian\n"
             f"[if os={cur_os}] rule vitalio/agents_rules:os/linux\n"
             f"[if os={other_os}] rule vitalio/agents_rules:os/windows\n"
             f"[if os={cur_os}]\n"
@@ -89,7 +89,7 @@ class TestAgentsBundle(unittest.TestCase):
             check=False,
         )
         self.assertEqual(rb_v.returncode, 0, rb_v.stderr)
-        self.assertIn("# [preset vitalio/agents_rules:workflow -> preset core -> rules/core/start.md]", rb_v.stdout)
+        self.assertIn("# [preset vitalio/agents_rules:core -> rules/core/start.md]", rb_v.stdout)
         self.assertIn(f"# [[if os={cur_os}] rule vitalio/agents_rules:os/linux -> rules/os/linux.md]", rb_v.stdout)
         self.assertIn(f"# [[if os={cur_os}] rule vitalio/agents_rules:stack/python-cli -> rules/stack/python-cli.md] (py_min=3.12)", rb_v.stdout)
 
