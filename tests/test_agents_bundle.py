@@ -49,7 +49,7 @@ class TestAgentsBundle(unittest.TestCase):
         (self.tmp / "AGENTS.md").write_text("# Project Rules\n", encoding="utf-8")
         (self.tmp / "extra.txt").write_text("extra content\n", encoding="utf-8")
         (self.tmp / ".agents_bundle").write_text(
-            "preset vitalio/agents_rules:workflow -core/external lang=Russian\n"
+            "preset vitalio/agents_rules:workflow -collab/external lang=Russian\n"
             "rule vitalio/agents_rules:stack/python-cli py_min=3.12\n"
             "$ cat AGENTS.md\n"
             "$ agents_bundle --tree --max-lines 10\n"
@@ -64,11 +64,23 @@ class TestAgentsBundle(unittest.TestCase):
             check=False,
         )
         self.assertEqual(rb.returncode, 0, rb.stderr)
-        self.assertIn("===== preset vitalio/agents_rules:workflow -core/external lang=Russian =====", rb.stdout)
+        self.assertIn("===== Rules =====", rb.stdout)
+        self.assertNotIn("# [preset", rb.stdout)
         self.assertIn("in **Russian**", rb.stdout)
         self.assertNotIn("Clean external text & two-step external changes:", rb.stdout)
-        self.assertIn("===== rule vitalio/agents_rules:stack/python-cli py_min=3.12 =====", rb.stdout)
         self.assertIn("Python 3.12+ compatibility", rb.stdout)
+
+        # Verify -v / --verbose includes provenance trace comments
+        rb_v = subprocess.run(
+            [str(SCRIPT), "-v"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(rb_v.returncode, 0, rb_v.stderr)
+        self.assertIn("# [preset vitalio/agents_rules:workflow -> preset core -> rules/core/start.md]", rb_v.stdout)
+        self.assertIn("# [rule vitalio/agents_rules:stack/python-cli -> rules/stack/python-cli.md] (py_min=3.12)", rb_v.stdout)
         self.assertIn("===== $ cat AGENTS.md =====", rb.stdout)
         self.assertIn("# Project Rules", rb.stdout)
         self.assertIn("===== $ agents_bundle --tree --max-lines 10 =====", rb.stdout)
@@ -81,7 +93,7 @@ class TestAgentsBundle(unittest.TestCase):
         rl = subprocess.run([str(SCRIPT), "--list"], capture_output=True, text=True, check=False)
         self.assertEqual(rl.returncode, 0, rl.stderr)
         self.assertIn("vitalio/agents_rules:workflow", rl.stdout)
-        self.assertIn("vitalio/agents_rules:core/unix-philosophy", rl.stdout)
+        self.assertIn("vitalio/agents_rules:core/composability", rl.stdout)
 
         rr = subprocess.run([str(SCRIPT), "rule", "vitalio/agents_rules:release/single-file-build"], capture_output=True, text=True, check=False)
         self.assertEqual(rr.returncode, 0, rr.stderr)

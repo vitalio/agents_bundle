@@ -107,6 +107,7 @@ def build_bundle(
     extra_files: list[str] | None = None,
     prompt_text: str | None = None,
     refresh: bool = False,
+    verbose: bool = False,
 ) -> tuple[str, list[str]]:
     prog = prog_name()
     wdir = (work_dir if work_dir is not None else Path.cwd()).resolve()
@@ -119,27 +120,38 @@ def build_bundle(
     entries = parse_spec(spec_file.read_text(encoding="utf-8"))
     sections: list[tuple[str, str]] = []
     warnings: list[str] = []
+    pending_rules: list[tuple[str, str, str]] = []
+
+    def flush_pending_rules() -> None:
+        if not pending_rules:
+            return
+        formatted = format_collected_rules(pending_rules, verbose=verbose).strip()
+        pending_rules.clear()
+        if formatted:
+            sections.append(("Rules", formatted))
 
     for kind, val in entries:
         if kind == "directive":
             parts = shlex.split(val)
             d_kind = parts[0]
             target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
-            out = render_directive(
-                d_kind,
-                target,
-                excludes=excls,
-                cli_vars=vmap,
-                work_dir=spec_dir,
-                refresh=refresh,
+            pending_rules.extend(
+                collect_directive_items(
+                    d_kind,
+                    target,
+                    excludes=excls,
+                    cli_vars=vmap,
+                    work_dir=spec_dir,
+                    refresh=refresh,
+                )
             )
-            if out.strip():
-                sections.append((val, out.strip()))
         elif kind == "cmd":
+            flush_pending_rules()
             rc, out = _run_spec_command(val, spec_dir)
             if rc != 0:
                 warnings.append(f"command exited {rc}: {val}")
             sections.append((f"$ {val}", out))
+    flush_pending_rules()
 
     for extra in extra_files or []:
         clean = extra.strip()
@@ -169,11 +181,15 @@ def cmd_bundle(argv: list[str]) -> int:
     prompt_parts: list[str] = []
     extra_files: list[str] = []
     refresh = False
+    verbose = False
     i = 0
     while i < len(argv):
         a = argv[i]
         if a == "--refresh":
             refresh = True
+            i += 1
+        elif a in ("-v", "--verbose"):
+            verbose = True
             i += 1
         elif a in ("-p", "--prompt"):
             if i + 1 >= len(argv):
@@ -192,7 +208,7 @@ def cmd_bundle(argv: list[str]) -> int:
             i += 1
 
     prompt_text = "\n\n".join(prompt_parts) if prompt_parts else None
-    body, warnings = build_bundle(work_dir=work_dir, extra_files=extra_files, prompt_text=prompt_text, refresh=refresh)
+    body, warnings = build_bundle(work_dir=work_dir, extra_files=extra_files, prompt_text=prompt_text, refresh=refresh, verbose=verbose)
     for w in warnings:
         sys.stderr.write(f"{prog}: warning: {w}\n")
     sys.stdout.write(body)

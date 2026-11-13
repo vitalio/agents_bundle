@@ -8,7 +8,7 @@ Task heading format: `### <emoji> [<STATUS>] <ID>: <title>`
 
 ## Resume
 
-Written 2026-11-13. Released `agents_bundle` `v0.2.0`: unified `preset ...`, `rule ...`, and `$ <cmd>` directives in `.agents_bundle` with GitHub package caching.
+Written 2026-11-13. Released `agents_bundle` `v0.2.1`: merged consecutive rule/preset directives into a single `Rules` section, added `-v`/`--verbose` provenance trace, and added `os/auto`.
 
 ## Tasks
 

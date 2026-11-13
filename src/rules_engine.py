@@ -5,6 +5,14 @@ def _render_rule_vars(text: str, vars_map: dict[str, str]) -> str:
     return RULE_VAR_RE.sub(lambda m: vars_map.get(m.group(1), m.group(2)), text)
 
 
+def _detect_os_rule() -> str:
+    if os.name == "nt":
+        return "os/windows"
+    if sys.platform == "darwin":
+        return "os/macos"
+    return "os/linux"
+
+
 def _detect_vcs_rule(work_dir: Path | None = None) -> str | None:
     wdir = (work_dir if work_dir is not None else Path.cwd()).resolve()
     cur = wdir
@@ -171,7 +179,7 @@ def _match_rule_in_dict(name: str, rules_dict: dict[str, tuple[str, str]]) -> st
     return None
 
 
-def render_directive(
+def collect_directive_items(
     kind: str,
     target_spec: str,
     excludes: list[str] | None = None,
@@ -179,7 +187,9 @@ def render_directive(
     work_dir: Path | None = None,
     refresh: bool = False,
     default_pkg: str | None = None,
-) -> str:
+    trace_prefix: list[str] | None = None,
+) -> list[tuple[str, str, str]]:
+    """Returns list of (rule_uid, provenance_comment, rendered_body)."""
     prog = prog_name()
     if kind not in ("preset", "rule"):
         raise SystemExit(f"{prog}: directive kind must be 'preset' or 'rule' (got {kind!r})")
@@ -194,6 +204,7 @@ def render_directive(
             excl_set.add(clean_ex)
 
     caller_vars = dict(cli_vars or {})
+    cur_trace = list(trace_prefix or [f"{kind} {target_spec}"])
 
     if pkg_id == "__file__":
         fpath = Path(item_name).expanduser()
@@ -204,35 +215,43 @@ def render_directive(
         raw = fpath.read_text(encoding="utf-8", errors="replace")
         if kind == "preset":
             _, directives = _parse_preset_file(raw, fpath.stem)
-            parts: list[str] = []
+            items_out: list[tuple[str, str, str]] = []
             for sub_kind, sub_target, sub_excls, sub_vars in directives:
-                # Caller vars override preset line vars
                 merged_vars = {**sub_vars, **caller_vars}
                 merged_excls = list(excludes or []) + sub_excls
-                rendered = render_directive(
-                    sub_kind,
-                    sub_target,
-                    excludes=merged_excls,
-                    cli_vars=merged_vars,
-                    work_dir=work_dir,
-                    refresh=refresh,
-                    default_pkg=DEFAULT_RULES_PKG,
+                items_out.extend(
+                    collect_directive_items(
+                        sub_kind,
+                        sub_target,
+                        excludes=merged_excls,
+                        cli_vars=merged_vars,
+                        work_dir=work_dir,
+                        refresh=refresh,
+                        default_pkg=DEFAULT_RULES_PKG,
+                        trace_prefix=[*cur_trace, f"{sub_kind} {sub_target}"],
+                    )
                 )
-                if rendered.strip():
-                    parts.append(rendered.strip())
-            return "\n".join(parts)
+            return items_out
         _, body = _parse_md_text(raw, fpath.stem)
-        return _render_rule_vars(body, caller_vars)
+        rendered = _render_rule_vars(body, caller_vars).strip()
+        if not rendered:
+            return []
+        vars_s = f" ({', '.join(f'{k}={v}' for k, v in caller_vars.items())})" if caller_vars else ""
+        prov = f"# [{' -> '.join(cur_trace)}]{vars_s}"
+        return [(str(fpath), prov, rendered)]
 
     def is_excluded(rk: str) -> bool:
         leaf = rk.rsplit("/", 1)[-1]
         return rk in excl_set or leaf in excl_set
 
     if kind == "rule":
-        if item_name in ("vcs/auto", "auto-vcs"):
+        orig_item = item_name
+        if item_name in ("os/auto", "auto-os"):
+            item_name = _detect_os_rule()
+        elif item_name in ("vcs/auto", "auto-vcs"):
             vcs = _detect_vcs_rule(work_dir)
             if not vcs:
-                return ""
+                return []
             item_name = vcs
         rules_dict, _ = _get_package_catalog(pkg_id, refresh=refresh)
         rk = _match_rule_in_dict(item_name, rules_dict)
@@ -242,8 +261,20 @@ def render_directive(
                 f"{prog}: unknown rule {item_name!r} in package {pkg_id!r} (available rules: {', '.join(avail_r)})"
             )
         if is_excluded(rk):
-            return ""
-        return _render_rule_vars(rules_dict[rk][1].strip(), caller_vars)
+            return []
+        raw_body = rules_dict[rk][1].strip()
+        rendered = _render_rule_vars(raw_body, caller_vars)
+        if not rendered:
+            return []
+        used_keys = {m.group(1) for m in RULE_VAR_RE.finditer(raw_body)}
+        active_vars = {k: v for k, v in caller_vars.items() if k in used_keys}
+        if orig_item != rk:
+            chain = [*cur_trace, f"rules/{rk}.md"]
+        else:
+            chain = [*(cur_trace[:-1] if len(cur_trace) > 1 else cur_trace), f"rules/{rk}.md"]
+        vars_s = f" ({', '.join(f'{k}={v}' for k, v in active_vars.items())})" if active_vars else ""
+        prov = f"# [{' -> '.join(chain)}]{vars_s}"
+        return [(f"{pkg_id}:{rk}", prov, rendered)]
 
     # kind == "preset"
     _, presets_dict = _get_package_catalog(pkg_id, refresh=refresh)
@@ -253,24 +284,60 @@ def render_directive(
             f"{prog}: unknown preset {item_name!r} in package {pkg_id!r} (available presets: {', '.join(avail_p)})"
         )
     _, directives = presets_dict[item_name]
-    out_parts: list[str] = []
+    out_items: list[tuple[str, str, str]] = []
     for sub_kind, sub_target, sub_excls, sub_vars in directives:
-        # Precedence: rule default < inner preset line vars < outer caller vars
         merged_vars = {**sub_vars, **caller_vars}
         merged_excls = list(excludes or []) + sub_excls
-        rendered = render_directive(
-            sub_kind,
-            sub_target,
-            excludes=merged_excls,
-            cli_vars=merged_vars,
-            work_dir=work_dir,
-            refresh=refresh,
-            default_pkg=pkg_id,
+        out_items.extend(
+            collect_directive_items(
+                sub_kind,
+                sub_target,
+                excludes=merged_excls,
+                cli_vars=merged_vars,
+                work_dir=work_dir,
+                refresh=refresh,
+                default_pkg=pkg_id,
+                trace_prefix=[*cur_trace, f"{sub_kind} {sub_target}"],
+            )
         )
-        if rendered.strip():
-            out_parts.append(rendered.strip())
-    return "\n".join(out_parts)
+    return out_items
 
+
+def format_collected_rules(items: list[tuple[str, str, str]], verbose: bool = False) -> str:
+    seen: set[str] = set()
+    chunks: list[str] = []
+    for uid, prov, body in items:
+        if uid in seen:
+            continue
+        seen.add(uid)
+        if verbose:
+            chunks.append(f"{prov}\n{body}")
+        else:
+            chunks.append(body)
+    sep = "\n\n" if verbose else "\n"
+    return sep.join(chunks)
+
+
+def render_directive(
+    kind: str,
+    target_spec: str,
+    excludes: list[str] | None = None,
+    cli_vars: dict[str, str] | None = None,
+    work_dir: Path | None = None,
+    refresh: bool = False,
+    default_pkg: str | None = None,
+    verbose: bool = False,
+) -> str:
+    items = collect_directive_items(
+        kind,
+        target_spec,
+        excludes=excludes,
+        cli_vars=cli_vars,
+        work_dir=work_dir,
+        refresh=refresh,
+        default_pkg=default_pkg,
+    )
+    return format_collected_rules(items, verbose=verbose)
 
 def cmd_list_rules(pkg_id: str = DEFAULT_RULES_PKG) -> int:
     rules_dict, presets_dict = _get_package_catalog(pkg_id)
@@ -283,6 +350,7 @@ def cmd_list_rules(pkg_id: str = DEFAULT_RULES_PKG) -> int:
             var_s = (" " + " ".join(f"{vk}={vv}" for vk, vv in d_vars.items())) if d_vars else ""
             sys.stdout.write(f"  {'':<38}    {d_kind} {d_tgt}{ex_s}{var_s}\n")
     sys.stdout.write(f"\nAtomic rules in '{pkg_id}' (use as 'rule {pkg_id}:<rule>'):\n")
+    sys.stdout.write(f"  {pkg_id + ':os/auto':<38}  Auto-select os/linux, os/macos, or os/windows by active OS\n")
     sys.stdout.write(f"  {pkg_id + ':vcs/auto':<38}  Auto-select vcs/git or vcs/cvs by repository directory\n")
     for k, (desc, _) in rules_dict.items():
         target_tag = f"{pkg_id}:{k}"
