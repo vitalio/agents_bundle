@@ -3,9 +3,9 @@ def agents_markdown(prog: str | None = None) -> str:
     lines = [
         f"## Context bundler (`{cmd}` v{VERSION})",
         "",
-        f"- Build a project context bundle from `{SPEC_FILE_NAME}` (`preset ...`, `rule ...`, and `$ <cmd>` lines) to `stdout` via `{cmd} [-p \"<task prompt>\"] [file ...]`.",
-        f"- Render individual presets/rules via `{cmd} preset <pkg>:<name>` or `{cmd} rule <pkg>:<name>` (inspect available items with `{cmd} --list`).",
-        f"- Print a token-budgeted repository file tree via `{cmd} --tree [--max-lines N] [--max-tokens N]`.",
+        f"- Build a project context bundle from `{SPEC_FILE_NAME}` (`preset ...`, `rule ...`, `[if key=val] ...`, and `$ <cmd>` lines) to `stdout` via `{cmd} [-p \"<task prompt>\"] [file ...]`.",
+        f"- Render individual presets/rules via `{cmd} preset <pkg>:<name>` or `{cmd} rule <pkg>:<name>` (inspect available items and built-in variables with `{cmd} --list`).",
+        f"- Print a token-budgeted repository file tree via `{cmd} --tree [-x/--exclude DIR] [--max-lines N] [--max-tokens N]`.",
     ]
     return "\n".join(lines)
 
@@ -17,6 +17,7 @@ def default_spec_template(prog: str | None = None) -> str:
         "# Directives:",
         f"#   preset <owner>/<repo>:<name> [-exclude ...] [key=val ...]",
         f"#   rule <owner>/<repo>:<name> [key=val ...]",
+        "#   [if os=linux] rule <owner>/<repo>:os/linux  (or multi-line [if ...] ... [/if])",
         "#   $ <shell command>  (use '$ cat <file>' to include a file)",
         "",
         f"preset {DEFAULT_RULES_PKG}:default",
@@ -51,24 +52,24 @@ def find_spec_file(start_dir: Path | None = None) -> Path | None:
     return None
 
 
-def parse_spec(text: str) -> list[tuple[str, str]]:
+def parse_spec(text: str, work_dir: Path | None = None) -> list[tuple[str, str, str | None]]:
     prog = prog_name()
-    entries: list[tuple[str, str]] = []
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
+    bvars = builtin_vars(work_dir)
+    entries: list[tuple[str, str, str | None]] = []
+    for cond_expr, line in strip_if_blocks_and_lines(text, prog):
+        if cond_expr and not eval_if_condition(cond_expr, bvars, prog):
             continue
         if line.startswith("$ ") or line.startswith("! "):
             cmd_str = line[2:].strip()
             if cmd_str:
-                entries.append(("cmd", cmd_str))
+                entries.append(("cmd", cmd_str, cond_expr))
         elif line in ("$", "!"):
             continue
         elif line.startswith("preset ") or line.startswith("rule "):
-            entries.append(("directive", line))
+            entries.append(("directive", line, cond_expr))
         else:
             raise SystemExit(
-                f"{prog}: invalid line in {SPEC_FILE_NAME}: {line!r} (expected 'preset ...', 'rule ...', or '$ <command>')"
+                f"{prog}: invalid line in {SPEC_FILE_NAME}: {line!r} (expected 'preset ...', 'rule ...', '[if ...]', or '$ <command>')"
             )
     return entries
 
@@ -117,7 +118,7 @@ def build_bundle(
         raise SystemExit(2)
 
     spec_dir = spec_file.parent
-    entries = parse_spec(spec_file.read_text(encoding="utf-8"))
+    entries = parse_spec(spec_file.read_text(encoding="utf-8"), work_dir=spec_dir)
     sections: list[tuple[str, str]] = []
     warnings: list[str] = []
     pending_rules: list[tuple[str, str, str]] = []
@@ -130,11 +131,12 @@ def build_bundle(
         if formatted:
             sections.append(("Rules", formatted))
 
-    for kind, val in entries:
+    for kind, val, cond_expr in entries:
         if kind == "directive":
             parts = shlex.split(val)
             d_kind = parts[0]
             target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
+            trace_start = f"[if {cond_expr}] {d_kind} {target}" if cond_expr else f"{d_kind} {target}"
             pending_rules.extend(
                 collect_directive_items(
                     d_kind,
@@ -143,6 +145,7 @@ def build_bundle(
                     cli_vars=vmap,
                     work_dir=spec_dir,
                     refresh=refresh,
+                    trace_prefix=[trace_start],
                 )
             )
         elif kind == "cmd":

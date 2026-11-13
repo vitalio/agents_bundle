@@ -4,7 +4,9 @@ $ todo_md --agents
 $ agents_bundle --agents
 
 preset vitalio/agents_rules:workflow
-rule vitalio/agents_rules:os/auto
+[if os=linux] rule vitalio/agents_rules:os/linux
+[if os=macos] rule vitalio/agents_rules:os/macos
+[if os=windows] rule vitalio/agents_rules:os/windows
 rule vitalio/agents_rules:vcs/git
 rule vitalio/agents_rules:release/semver
 rule vitalio/agents_rules:release/single-file-build

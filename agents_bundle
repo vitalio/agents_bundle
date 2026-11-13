@@ -5,11 +5,11 @@
                                                 Opts: -p/--prompt TEXT, -C/--dir DIR, -v/--verbose, --refresh
   {prog} preset <pkg>:<name> [-excl] [k=v]    Render a preset to stdout
   {prog} rule <pkg>:<name> [k=v]              Render a single rule to stdout
-  {prog} --list | -l [pkg]                    List presets and rules in package (default: {default_pkg})
+  {prog} --list | -l [pkg]                    List presets, rules, and built-in variables (default: {default_pkg})
   {prog} --update-cache                       Refresh cached rule packages in {cache_dir}
   {prog} --init [--force]                     Create a starter .agents_bundle in the current directory
   {prog} --tree [DIR] [opts]                  Print token-budgeted repository file tree to stdout
-                                                Opts: --max-lines N (120), --max-tokens N (1200)
+                                                Opts: -x/--exclude DIR, --max-lines N (160), --max-tokens N (1600)
   {prog} --agents                             Print Markdown instructions for AI agents
   {prog} --update [--force]                   Self-update {prog} from GitHub (vitalio/agents_bundle)
   {prog} --check-update                       Check if a newer version is available
@@ -34,7 +34,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-VERSION = "0.2.1"
+VERSION = "0.3.0"
 REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/agents_bundle/main/agents_bundle"
 SPEC_FILE_NAME = ".agents_bundle"
@@ -87,7 +87,26 @@ _TREE_SKIP_DIRS = {
 }
 
 
-def _collect_repo_files(root: Path) -> list[str]:
+def _normalize_exclude_path(raw: str) -> str:
+    s = Path(raw.strip()).as_posix().strip("/")
+    while s.startswith("./"):
+        s = s[2:].strip("/")
+    return s
+
+
+def _is_under_excluded(rel_posix: str, excluded_set: set[str]) -> str | None:
+    for ex in excluded_set:
+        if rel_posix == ex or rel_posix.startswith(ex + "/"):
+            return ex
+    return None
+
+
+def _collect_repo_files(root: Path, excluded_set: set[str]) -> tuple[list[str], set[str]]:
+    found_excluded: set[str] = set()
+    for ex in excluded_set:
+        if (root / ex).is_dir():
+            found_excluded.add(ex)
+
     try:
         r = subprocess.run(
             ["git", "-C", str(root), "ls-files", "--cached", "--others", "--exclude-standard"],
@@ -103,25 +122,38 @@ def _collect_repo_files(root: Path) -> list[str]:
                 rel = raw.strip()
                 if not rel:
                     continue
-                p = root / rel
+                rel_posix = Path(rel).as_posix()
+                matched_ex = _is_under_excluded(rel_posix, excluded_set)
+                if matched_ex is not None:
+                    found_excluded.add(matched_ex)
+                    continue
+                p = root / rel_posix
                 if p.is_file() and not p.is_symlink():
-                    files.append(Path(rel).as_posix())
-            return sorted(set(files))
+                    files.append(rel_posix)
+            return sorted(set(files)), found_excluded
     except Exception:
         pass
 
     files = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(
-            d for d in dirnames if d not in _TREE_SKIP_DIRS and not d.startswith(".git")
-        )
-        rel_dir = Path(dirpath).relative_to(root)
+        rel_dir_obj = Path(dirpath).relative_to(root)
+        rel_dir_str = "" if str(rel_dir_obj) == "." else rel_dir_obj.as_posix()
+        kept_dirs: list[str] = []
+        for d in sorted(dirnames):
+            if d in _TREE_SKIP_DIRS or d.startswith(".git"):
+                continue
+            cand_rel = f"{rel_dir_str}/{d}" if rel_dir_str else d
+            if cand_rel in excluded_set:
+                found_excluded.add(cand_rel)
+                continue
+            kept_dirs.append(d)
+        dirnames[:] = kept_dirs
         for fn in sorted(filenames):
             p = Path(dirpath) / fn
             if p.is_file() and not p.is_symlink():
-                rel_p = (rel_dir / fn).as_posix() if str(rel_dir) != "." else fn
+                rel_p = f"{rel_dir_str}/{fn}" if rel_dir_str else fn
                 files.append(rel_p)
-    return sorted(set(files))
+    return sorted(set(files)), found_excluded
 
 
 def _inspect_file_meta(path: Path) -> tuple[int, bool, int]:
@@ -141,22 +173,28 @@ def _inspect_file_meta(path: Path) -> tuple[int, bool, int]:
 
 def build_repo_tree(
     root_dir: Path | None = None,
-    max_lines: int = 120,
-    max_tokens: int = 1200,
+    max_lines: int = 160,
+    max_tokens: int = 1600,
+    exclude_dirs: list[str] | None = None,
 ) -> str:
     root = (root_dir if root_dir is not None else Path.cwd()).resolve()
-    rel_files = _collect_repo_files(root)
+    excluded_input = {
+        _normalize_exclude_path(x)
+        for x in (exclude_dirs or [])
+        if _normalize_exclude_path(x)
+    }
+    rel_files, active_excluded = _collect_repo_files(root, excluded_input)
     file_info: dict[str, tuple[int, bool, int]] = {}
     dir_files: dict[str, list[str]] = {"": []}
     dir_subdirs: dict[str, list[str]] = {"": []}
     all_dirs: set[str] = {""}
 
-    for rel in rel_files:
-        info = _inspect_file_meta(root / rel)
-        file_info[rel] = info
-        parts = rel.split("/")
+    def ensure_dir_chain(dir_path: str) -> None:
+        if not dir_path:
+            return
+        parts = dir_path.split("/")
         cur = ""
-        for part in parts[:-1]:
+        for part in parts:
             nxt = f"{cur}/{part}" if cur else part
             if nxt not in all_dirs:
                 all_dirs.add(nxt)
@@ -164,14 +202,28 @@ def build_repo_tree(
                 dir_subdirs[nxt] = []
                 dir_subdirs[cur].append(nxt)
             cur = nxt
-        dir_files[cur].append(rel)
+
+    for ex_dir in sorted(active_excluded):
+        ensure_dir_chain(ex_dir)
+
+    for rel in rel_files:
+        info = _inspect_file_meta(root / rel)
+        file_info[rel] = info
+        parts = rel.split("/")
+        parent_dir = "/".join(parts[:-1])
+        ensure_dir_chain(parent_dir)
+        dir_files[parent_dir].append(rel)
 
     for d in all_dirs:
         dir_subdirs[d].sort()
         dir_files[d].sort()
 
+    dirs_bottom_up = sorted(all_dirs, key=lambda x: (0 if not x else x.count("/") + 1), reverse=True)
     dir_totals: dict[str, tuple[int, int]] = {}
-    for d in sorted(all_dirs, key=lambda x: (0 if not x else x.count("/") + 1), reverse=True):
+    for d in dirs_bottom_up:
+        if d in active_excluded:
+            dir_totals[d] = (0, 0)
+            continue
         f_cnt = len(dir_files[d])
         l_cnt = sum(file_info[f][0] for f in dir_files[d])
         for sub in dir_subdirs[d]:
@@ -180,18 +232,27 @@ def build_repo_tree(
             l_cnt += sl
         dir_totals[d] = (f_cnt, l_cnt)
 
-    def render_dir(d: str, prefix: str, collapsed: set[str], root_file_limit: int | None) -> list[str]:
+    def render_dir(
+        d: str,
+        prefix: str,
+        collapsed: set[str],
+        file_limits: dict[str, int],
+    ) -> list[str]:
         out: list[str] = []
         subs = dir_subdirs[d]
         files = dir_files[d]
+        limit = file_limits.get(d)
         extra_files = 0
-        if d == "" and root_file_limit is not None and len(files) > root_file_limit:
-            extra_files = len(files) - root_file_limit
-            files = files[:root_file_limit]
+        extra_lines = 0
+        if limit is not None and len(files) > limit:
+            hidden = files[limit:]
+            extra_files = len(hidden)
+            extra_lines = sum(file_info[f][0] for f in hidden)
+            files = files[:limit]
 
         entries: list[tuple[str, str]] = [("dir", s) for s in subs] + [("file", f) for f in files]
         if extra_files > 0:
-            entries.append(("more", f"... (+{extra_files} more files)"))
+            entries.append(("more", f"... (+{extra_files} more file{'s' if extra_files != 1 else ''}, {extra_lines:,}L)"))
 
         for idx, (kind, item) in enumerate(entries):
             is_last = idx == len(entries) - 1
@@ -199,12 +260,14 @@ def build_repo_tree(
             child_prefix = prefix + ("    " if is_last else "│   ")
             if kind == "dir":
                 name = item.rsplit("/", 1)[-1]
-                if item in collapsed:
+                if item in active_excluded:
+                    out.append(f"{prefix}{conn}{name}/ (excluded)")
+                elif item in collapsed:
                     fc, lc = dir_totals[item]
                     out.append(f"{prefix}{conn}{name}/ ({fc} file{'s' if fc != 1 else ''}, {lc:,}L)")
                 else:
                     out.append(f"{prefix}{conn}{name}/")
-                    out.extend(render_dir(item, child_prefix, collapsed, None))
+                    out.extend(render_dir(item, child_prefix, collapsed, file_limits))
             elif kind == "file":
                 name = item.rsplit("/", 1)[-1]
                 lines_n, is_bin, sz = file_info[item]
@@ -215,39 +278,73 @@ def build_repo_tree(
         return out
 
     collapsed: set[str] = set()
-    root_limit: int | None = None
+    file_limits: dict[str, int] = {}
     total_f, total_l = dir_totals[""]
+    footer = f"# Total: {total_f} file{'s' if total_f != 1 else ''}, {total_l:,} lines"
+
+    def is_visible_dir(d: str) -> bool:
+        if d == "" or d in active_excluded or d in collapsed:
+            return False
+        cur = d
+        while "/" in cur:
+            cur = cur.rsplit("/", 1)[0]
+            if cur in collapsed or cur in active_excluded:
+                return False
+        return True
 
     while True:
-        body = [f"{root.name}/"] + render_dir("", "", collapsed, root_limit)
-        footer = f"# Total: {total_f} file{'s' if total_f != 1 else ''}, {total_l:,} lines"
+        body = [f"{root.name}/"] + render_dir("", "", collapsed, file_limits)
         full_lines = body + [footer]
         tok = approx_tokens("\n".join(full_lines))
         if len(full_lines) <= max_lines and tok <= max_tokens:
             return "\n".join(full_lines) + "\n"
 
-        candidates = [
+        # Stage 1: collapse nested subdirectories (depth >= 1) first, deepest first.
+        # Include single-file deep chains when they have subdirectories or files inside.
+        deep_candidates = [
             d for d in all_dirs
-            if d != "" and d not in collapsed and not any(
-                d.startswith(c + "/") for c in collapsed
-            ) and dir_totals[d][0] > 1
+            if "/" in d and is_visible_dir(d) and (len(dir_subdirs[d]) + len(dir_files[d]) > 0)
         ]
-        if candidates:
-            best = max(candidates, key=lambda d: (d.count("/"), dir_totals[d][0]))
-            collapsed.add(best)
+        if deep_candidates:
+            best_deep = max(deep_candidates, key=lambda d: (d.count("/"), dir_totals[d][0]))
+            collapsed.add(best_deep)
+            # Clean up any child collapses under best_deep so set stays small
+            prefix_slash = best_deep + "/"
+            collapsed = {c for c in collapsed if not c.startswith(prefix_slash)}
             continue
 
-        cur_root_files = len(dir_files[""]) if root_limit is None else root_limit
-        if cur_root_files > 5:
-            root_limit = max(5, cur_root_files // 2)
+        # Stage 2: truncate file lists in visible directories (down to 8, then 5) before collapsing top-level dirs
+        trunc_candidates = []
+        for d in all_dirs:
+            if d != "" and not is_visible_dir(d):
+                continue
+            cur_lim = file_limits.get(d, len(dir_files[d]))
+            if len(dir_files[d]) > 6 and cur_lim > 5:
+                trunc_candidates.append((cur_lim, len(dir_files[d]), d))
+        if trunc_candidates:
+            _, _, best_trunc = max(trunc_candidates)
+            cur_lim = file_limits.get(best_trunc, len(dir_files[best_trunc]))
+            file_limits[best_trunc] = 8 if cur_lim > 10 else 5
             continue
+
+        # Stage 3: collapse top-level directories if still over budget
+        top_candidates = [
+            d for d in dir_subdirs[""]
+            if is_visible_dir(d) and (len(dir_subdirs[d]) + len(dir_files[d]) > 0)
+        ]
+        if top_candidates:
+            best_top = max(top_candidates, key=lambda d: dir_totals[d][0])
+            collapsed.add(best_top)
+            continue
+
         return "\n".join(full_lines[: max(2, max_lines - 1)] + [footer]) + "\n"
 
 
 def _tree_from_args(argv: list[str], default_dir: Path | None = None) -> str:
     prog = prog_name()
-    max_lines = 120
-    max_tokens = 1200
+    max_lines = 160
+    max_tokens = 1600
+    exclude_dirs: list[str] = []
     target_dir: Path | None = default_dir
     i = 0
     while i < len(argv):
@@ -280,8 +377,22 @@ def _tree_from_args(argv: list[str], default_dir: Path | None = None) -> str:
             except ValueError:
                 raise SystemExit(f"{prog}: invalid --max-tokens value: {a!r}")
             i += 1
+        elif a in ("-x", "--exclude"):
+            if i + 1 >= len(argv):
+                raise SystemExit(f"{prog}: {a} requires a directory name")
+            for part in argv[i + 1].split(","):
+                if part.strip():
+                    exclude_dirs.append(part.strip())
+            i += 2
+        elif a.startswith("--exclude="):
+            for part in a.split("=", 1)[1].split(","):
+                if part.strip():
+                    exclude_dirs.append(part.strip())
+            i += 1
         elif a.startswith("-"):
-            raise SystemExit(f"{prog}: usage: {prog} --tree [DIR] [--max-lines N] [--max-tokens N]")
+            raise SystemExit(
+                f"{prog}: usage: {prog} --tree [DIR] [-x/--exclude DIR] [--max-lines N] [--max-tokens N]"
+            )
         else:
             p = Path(a).expanduser()
             if default_dir is not None and not p.is_absolute():
@@ -290,7 +401,12 @@ def _tree_from_args(argv: list[str], default_dir: Path | None = None) -> str:
                 raise SystemExit(f"{prog}: directory not found: {a}")
             target_dir = p
             i += 1
-    return build_repo_tree(root_dir=target_dir, max_lines=max_lines, max_tokens=max_tokens)
+    return build_repo_tree(
+        root_dir=target_dir,
+        max_lines=max_lines,
+        max_tokens=max_tokens,
+        exclude_dirs=exclude_dirs,
+    )
 
 
 def cmd_tree(argv: list[str]) -> int:
@@ -299,32 +415,98 @@ def cmd_tree(argv: list[str]) -> int:
 
 
 RULE_VAR_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*):([^{}]*)\}")
+IF_PREFIX_RE = re.compile(r"^\[if\s+([^\]]+)\]\s*(.*)$")
 
 
 def _render_rule_vars(text: str, vars_map: dict[str, str]) -> str:
     return RULE_VAR_RE.sub(lambda m: vars_map.get(m.group(1), m.group(2)), text)
 
 
-def _detect_os_rule() -> str:
+def _detect_os_name() -> str:
     if os.name == "nt":
-        return "os/windows"
+        return "windows"
     if sys.platform == "darwin":
-        return "os/macos"
-    return "os/linux"
+        return "macos"
+    return "linux"
 
 
-def _detect_vcs_rule(work_dir: Path | None = None) -> str | None:
+def _detect_vcs_name(work_dir: Path | None = None) -> str:
     wdir = (work_dir if work_dir is not None else Path.cwd()).resolve()
     cur = wdir
     while True:
         if (cur / ".git").exists():
-            return "vcs/git"
+            return "git"
         if (cur / "CVS").is_dir():
-            return "vcs/cvs"
+            return "cvs"
         if cur.parent == cur:
             break
         cur = cur.parent
-    return None
+    return ""
+
+
+def builtin_vars(work_dir: Path | None = None) -> dict[str, str]:
+    return {
+        "os": _detect_os_name(),
+        "vcs": _detect_vcs_name(work_dir),
+    }
+
+
+def eval_if_condition(cond_expr: str, vars_map: dict[str, str], prog: str | None = None) -> bool:
+    p = prog or prog_name()
+    tokens = shlex.split(cond_expr.strip())
+    if not tokens:
+        raise SystemExit(f"{p}: empty [if ...] condition")
+    for tok in tokens:
+        if "!=" in tok:
+            k, expected = tok.split("!=", 1)
+            k = k.strip()
+            allowed = {v.strip() for v in expected.split(",")}
+            actual = vars_map.get(k, "")
+            if actual in allowed:
+                return False
+        elif "=" in tok:
+            k, expected = tok.split("=", 1)
+            k = k.strip()
+            allowed = {v.strip() for v in expected.split(",")}
+            actual = vars_map.get(k, "")
+            if actual not in allowed:
+                return False
+        else:
+            raise SystemExit(f"{p}: invalid condition token {tok!r} in '[if {cond_expr}]' (expected key=val or key!=val)")
+    return True
+
+
+def strip_if_blocks_and_lines(raw_text: str, prog: str | None = None) -> list[tuple[str | None, str]]:
+    """Parses raw lines supporting '[if cond] <line>' and '[if cond] ... [/if]' blocks.
+    Returns list of (cond_expr_or_None, inner_line).
+    """
+    p = prog or prog_name()
+    out: list[tuple[str | None, str]] = []
+    block_stack: list[str] = []
+    for raw_line in raw_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.lower() in ("[/if]", "[endif]"):
+            if not block_stack:
+                raise SystemExit(f"{p}: unexpected {line!r} without matching '[if ...]'")
+            block_stack.pop()
+            continue
+        m = IF_PREFIX_RE.match(line)
+        if m:
+            cond_s = m.group(1).strip()
+            rest = m.group(2).strip()
+            if not rest:
+                block_stack.append(cond_s)
+                continue
+            combined = " ".join([*block_stack, cond_s])
+            out.append((combined, rest))
+            continue
+        combined = " ".join(block_stack) if block_stack else None
+        out.append((combined, line))
+    if block_stack:
+        raise SystemExit(f"{p}: unclosed '[if {block_stack[-1]}]' block (missing '[/if]')")
+    return out
 
 
 def _parse_md_text(raw_text: str, fallback_desc: str) -> tuple[str, str]:
@@ -360,31 +542,38 @@ def _parse_directive_tokens(tokens: list[str], prog: str) -> tuple[str, list[str
     return target, excludes, vars_map
 
 
-def _parse_preset_file(raw_text: str, fallback_desc: str) -> tuple[str, list[tuple[str, str, list[str], dict[str, str]]]]:
+def _parse_preset_file(
+    raw_text: str,
+    fallback_desc: str,
+) -> tuple[str, list[tuple[str | None, str, str, list[str], dict[str, str]]]]:
     prog = prog_name()
     desc = fallback_desc
-    directives: list[tuple[str, str, list[str], dict[str, str]]] = []
     for raw_line in raw_text.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        if line.startswith("# Description:"):
-            desc = line.split(":", 1)[1].strip()
-            continue
-        if line.startswith("#"):
-            continue
+        s = raw_line.strip()
+        if s.startswith("# Description:"):
+            desc = s.split(":", 1)[1].strip()
+            break
+    directives: list[tuple[str | None, str, str, list[str], dict[str, str]]] = []
+    for cond_expr, line in strip_if_blocks_and_lines(raw_text, prog):
         parts = shlex.split(line)
         if not parts or parts[0] not in ("preset", "rule"):
-            raise SystemExit(f"{prog}: invalid line in preset {fallback_desc!r}: {line!r} (expected 'preset ...' or 'rule ...')")
+            raise SystemExit(
+                f"{prog}: invalid line in preset {fallback_desc!r}: {line!r} (expected 'preset ...' or 'rule ...')"
+            )
         kind = parts[0]
         target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
-        directives.append((kind, target, excls, vmap))
+        directives.append((cond_expr, kind, target, excls, vmap))
     return desc, directives
 
 
-def _load_package_from_dir(pkg_dir: Path) -> tuple[dict[str, tuple[str, str]], dict[str, tuple[str, list[tuple[str, str, list[str], dict[str, str]]]]]]:
+def _load_package_from_dir(
+    pkg_dir: Path,
+) -> tuple[
+    dict[str, tuple[str, str]],
+    dict[str, tuple[str, list[tuple[str | None, str, str, list[str], dict[str, str]]]]],
+]:
     rules: dict[str, tuple[str, str]] = {}
-    presets: dict[str, tuple[str, list[tuple[str, str, list[str], dict[str, str]]]]] = {}
+    presets: dict[str, tuple[str, list[tuple[str | None, str, str, list[str], dict[str, str]]]]] = {}
     r_root = pkg_dir / "rules" if (pkg_dir / "rules").is_dir() else (pkg_dir / "src/rules")
     p_root = pkg_dir / "presets" if (pkg_dir / "presets").is_dir() else (pkg_dir / "src/presets")
     if r_root.is_dir():
@@ -402,7 +591,6 @@ def _load_package_from_dir(pkg_dir: Path) -> tuple[dict[str, tuple[str, str]], d
 
 def _ensure_remote_package(pkg_spec: str, refresh: bool = False) -> Path:
     prog = prog_name()
-    # Check if local override directory exists (e.g. ~/agents_rules when developing locally)
     local_override = os.environ.get("AGENTS_BUNDLE_LOCAL_PKG_DIR")
     if local_override and pkg_spec == DEFAULT_RULES_PKG and Path(local_override).is_dir():
         return Path(local_override)
@@ -441,7 +629,13 @@ def _ensure_remote_package(pkg_spec: str, refresh: bool = False) -> Path:
     return cdir
 
 
-def _get_package_catalog(pkg_id: str, refresh: bool = False) -> tuple[dict[str, tuple[str, str]], dict[str, tuple[str, list[tuple[str, str, list[str], dict[str, str]]]]]]:
+def _get_package_catalog(
+    pkg_id: str,
+    refresh: bool = False,
+) -> tuple[
+    dict[str, tuple[str, str]],
+    dict[str, tuple[str, list[tuple[str | None, str, str, list[str], dict[str, str]]]]],
+]:
     local_dir = Path(pkg_id).expanduser()
     if local_dir.is_dir():
         return _load_package_from_dir(local_dir)
@@ -503,7 +697,7 @@ def collect_directive_items(
         if clean_ex:
             excl_set.add(clean_ex)
 
-    caller_vars = dict(cli_vars or {})
+    effective_vars = {**builtin_vars(work_dir), **(cli_vars or {})}
     cur_trace = list(trace_prefix or [f"{kind} {target_spec}"])
 
     if pkg_id == "__file__":
@@ -516,9 +710,12 @@ def collect_directive_items(
         if kind == "preset":
             _, directives = _parse_preset_file(raw, fpath.stem)
             items_out: list[tuple[str, str, str]] = []
-            for sub_kind, sub_target, sub_excls, sub_vars in directives:
-                merged_vars = {**sub_vars, **caller_vars}
+            for cond_expr, sub_kind, sub_target, sub_excls, sub_vars in directives:
+                merged_vars = {**effective_vars, **sub_vars, **(cli_vars or {})}
+                if cond_expr and not eval_if_condition(cond_expr, merged_vars, prog):
+                    continue
                 merged_excls = list(excludes or []) + sub_excls
+                step_label = f"[if {cond_expr}] {sub_kind} {sub_target}" if cond_expr else f"{sub_kind} {sub_target}"
                 items_out.extend(
                     collect_directive_items(
                         sub_kind,
@@ -528,15 +725,17 @@ def collect_directive_items(
                         work_dir=work_dir,
                         refresh=refresh,
                         default_pkg=DEFAULT_RULES_PKG,
-                        trace_prefix=[*cur_trace, f"{sub_kind} {sub_target}"],
+                        trace_prefix=[*cur_trace, step_label],
                     )
                 )
             return items_out
         _, body = _parse_md_text(raw, fpath.stem)
-        rendered = _render_rule_vars(body, caller_vars).strip()
+        rendered = _render_rule_vars(body, effective_vars).strip()
         if not rendered:
             return []
-        vars_s = f" ({', '.join(f'{k}={v}' for k, v in caller_vars.items())})" if caller_vars else ""
+        used_keys = {m.group(1) for m in RULE_VAR_RE.finditer(body)}
+        active_vars = {k: v for k, v in effective_vars.items() if k in used_keys}
+        vars_s = f" ({', '.join(f'{k}={v}' for k, v in active_vars.items())})" if active_vars else ""
         prov = f"# [{' -> '.join(cur_trace)}]{vars_s}"
         return [(str(fpath), prov, rendered)]
 
@@ -545,14 +744,6 @@ def collect_directive_items(
         return rk in excl_set or leaf in excl_set
 
     if kind == "rule":
-        orig_item = item_name
-        if item_name in ("os/auto", "auto-os"):
-            item_name = _detect_os_rule()
-        elif item_name in ("vcs/auto", "auto-vcs"):
-            vcs = _detect_vcs_rule(work_dir)
-            if not vcs:
-                return []
-            item_name = vcs
         rules_dict, _ = _get_package_catalog(pkg_id, refresh=refresh)
         rk = _match_rule_in_dict(item_name, rules_dict)
         if rk is None:
@@ -563,15 +754,12 @@ def collect_directive_items(
         if is_excluded(rk):
             return []
         raw_body = rules_dict[rk][1].strip()
-        rendered = _render_rule_vars(raw_body, caller_vars)
+        rendered = _render_rule_vars(raw_body, effective_vars)
         if not rendered:
             return []
         used_keys = {m.group(1) for m in RULE_VAR_RE.finditer(raw_body)}
-        active_vars = {k: v for k, v in caller_vars.items() if k in used_keys}
-        if orig_item != rk:
-            chain = [*cur_trace, f"rules/{rk}.md"]
-        else:
-            chain = [*(cur_trace[:-1] if len(cur_trace) > 1 else cur_trace), f"rules/{rk}.md"]
+        active_vars = {k: v for k, v in effective_vars.items() if k in used_keys}
+        chain = [*cur_trace, f"rules/{rk}.md"] if (len(cur_trace) > 1 and cur_trace[-1].startswith("[if ")) else [*(cur_trace[:-1] if len(cur_trace) > 1 else cur_trace), f"rules/{rk}.md"]
         vars_s = f" ({', '.join(f'{k}={v}' for k, v in active_vars.items())})" if active_vars else ""
         prov = f"# [{' -> '.join(chain)}]{vars_s}"
         return [(f"{pkg_id}:{rk}", prov, rendered)]
@@ -585,9 +773,12 @@ def collect_directive_items(
         )
     _, directives = presets_dict[item_name]
     out_items: list[tuple[str, str, str]] = []
-    for sub_kind, sub_target, sub_excls, sub_vars in directives:
-        merged_vars = {**sub_vars, **caller_vars}
+    for cond_expr, sub_kind, sub_target, sub_excls, sub_vars in directives:
+        merged_vars = {**effective_vars, **sub_vars, **(cli_vars or {})}
+        if cond_expr and not eval_if_condition(cond_expr, merged_vars, prog):
+            continue
         merged_excls = list(excludes or []) + sub_excls
+        step_label = f"[if {cond_expr}] {sub_kind} {sub_target}" if cond_expr else f"{sub_kind} {sub_target}"
         out_items.extend(
             collect_directive_items(
                 sub_kind,
@@ -597,7 +788,7 @@ def collect_directive_items(
                 work_dir=work_dir,
                 refresh=refresh,
                 default_pkg=pkg_id,
-                trace_prefix=[*cur_trace, f"{sub_kind} {sub_target}"],
+                trace_prefix=[*cur_trace, step_label],
             )
         )
     return out_items
@@ -639,19 +830,23 @@ def render_directive(
     )
     return format_collected_rules(items, verbose=verbose)
 
+
 def cmd_list_rules(pkg_id: str = DEFAULT_RULES_PKG) -> int:
     rules_dict, presets_dict = _get_package_catalog(pkg_id)
+    bvars = builtin_vars()
+    sys.stdout.write("Built-in variables (usable in '[if key=val]' conditions and rule templates):\n")
+    sys.stdout.write(f"  {'os':<38}  Active operating system (linux, macos, windows; current: {bvars['os']!r})\n")
+    sys.stdout.write(f"  {'vcs':<38}  Detected repository VCS (git, cvs, or ''; current: {bvars['vcs']!r})\n\n")
     sys.stdout.write(f"Presets in '{pkg_id}' (use as 'preset {pkg_id}:<preset>'):\n")
     for k, (desc, directives) in presets_dict.items():
         target_tag = f"{pkg_id}:{k}"
         sys.stdout.write(f"  {target_tag:<38}  {desc}\n")
-        for d_kind, d_tgt, d_ex, d_vars in directives:
+        for cond_expr, d_kind, d_tgt, d_ex, d_vars in directives:
+            cond_s = f"[if {cond_expr}] " if cond_expr else ""
             ex_s = (" " + " ".join(f"-{e}" for e in d_ex)) if d_ex else ""
             var_s = (" " + " ".join(f"{vk}={vv}" for vk, vv in d_vars.items())) if d_vars else ""
-            sys.stdout.write(f"  {'':<38}    {d_kind} {d_tgt}{ex_s}{var_s}\n")
+            sys.stdout.write(f"  {'':<38}    {cond_s}{d_kind} {d_tgt}{ex_s}{var_s}\n")
     sys.stdout.write(f"\nAtomic rules in '{pkg_id}' (use as 'rule {pkg_id}:<rule>'):\n")
-    sys.stdout.write(f"  {pkg_id + ':os/auto':<38}  Auto-select os/linux, os/macos, or os/windows by active OS\n")
-    sys.stdout.write(f"  {pkg_id + ':vcs/auto':<38}  Auto-select vcs/git or vcs/cvs by repository directory\n")
     for k, (desc, _) in rules_dict.items():
         target_tag = f"{pkg_id}:{k}"
         sys.stdout.write(f"  {target_tag:<38}  {desc}\n")
@@ -681,9 +876,9 @@ def agents_markdown(prog: str | None = None) -> str:
     lines = [
         f"## Context bundler (`{cmd}` v{VERSION})",
         "",
-        f"- Build a project context bundle from `{SPEC_FILE_NAME}` (`preset ...`, `rule ...`, and `$ <cmd>` lines) to `stdout` via `{cmd} [-p \"<task prompt>\"] [file ...]`.",
-        f"- Render individual presets/rules via `{cmd} preset <pkg>:<name>` or `{cmd} rule <pkg>:<name>` (inspect available items with `{cmd} --list`).",
-        f"- Print a token-budgeted repository file tree via `{cmd} --tree [--max-lines N] [--max-tokens N]`.",
+        f"- Build a project context bundle from `{SPEC_FILE_NAME}` (`preset ...`, `rule ...`, `[if key=val] ...`, and `$ <cmd>` lines) to `stdout` via `{cmd} [-p \"<task prompt>\"] [file ...]`.",
+        f"- Render individual presets/rules via `{cmd} preset <pkg>:<name>` or `{cmd} rule <pkg>:<name>` (inspect available items and built-in variables with `{cmd} --list`).",
+        f"- Print a token-budgeted repository file tree via `{cmd} --tree [-x/--exclude DIR] [--max-lines N] [--max-tokens N]`.",
     ]
     return "\n".join(lines)
 
@@ -695,6 +890,7 @@ def default_spec_template(prog: str | None = None) -> str:
         "# Directives:",
         f"#   preset <owner>/<repo>:<name> [-exclude ...] [key=val ...]",
         f"#   rule <owner>/<repo>:<name> [key=val ...]",
+        "#   [if os=linux] rule <owner>/<repo>:os/linux  (or multi-line [if ...] ... [/if])",
         "#   $ <shell command>  (use '$ cat <file>' to include a file)",
         "",
         f"preset {DEFAULT_RULES_PKG}:default",
@@ -729,24 +925,24 @@ def find_spec_file(start_dir: Path | None = None) -> Path | None:
     return None
 
 
-def parse_spec(text: str) -> list[tuple[str, str]]:
+def parse_spec(text: str, work_dir: Path | None = None) -> list[tuple[str, str, str | None]]:
     prog = prog_name()
-    entries: list[tuple[str, str]] = []
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
+    bvars = builtin_vars(work_dir)
+    entries: list[tuple[str, str, str | None]] = []
+    for cond_expr, line in strip_if_blocks_and_lines(text, prog):
+        if cond_expr and not eval_if_condition(cond_expr, bvars, prog):
             continue
         if line.startswith("$ ") or line.startswith("! "):
             cmd_str = line[2:].strip()
             if cmd_str:
-                entries.append(("cmd", cmd_str))
+                entries.append(("cmd", cmd_str, cond_expr))
         elif line in ("$", "!"):
             continue
         elif line.startswith("preset ") or line.startswith("rule "):
-            entries.append(("directive", line))
+            entries.append(("directive", line, cond_expr))
         else:
             raise SystemExit(
-                f"{prog}: invalid line in {SPEC_FILE_NAME}: {line!r} (expected 'preset ...', 'rule ...', or '$ <command>')"
+                f"{prog}: invalid line in {SPEC_FILE_NAME}: {line!r} (expected 'preset ...', 'rule ...', '[if ...]', or '$ <command>')"
             )
     return entries
 
@@ -795,7 +991,7 @@ def build_bundle(
         raise SystemExit(2)
 
     spec_dir = spec_file.parent
-    entries = parse_spec(spec_file.read_text(encoding="utf-8"))
+    entries = parse_spec(spec_file.read_text(encoding="utf-8"), work_dir=spec_dir)
     sections: list[tuple[str, str]] = []
     warnings: list[str] = []
     pending_rules: list[tuple[str, str, str]] = []
@@ -808,11 +1004,12 @@ def build_bundle(
         if formatted:
             sections.append(("Rules", formatted))
 
-    for kind, val in entries:
+    for kind, val, cond_expr in entries:
         if kind == "directive":
             parts = shlex.split(val)
             d_kind = parts[0]
             target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
+            trace_start = f"[if {cond_expr}] {d_kind} {target}" if cond_expr else f"{d_kind} {target}"
             pending_rules.extend(
                 collect_directive_items(
                     d_kind,
@@ -821,6 +1018,7 @@ def build_bundle(
                     cli_vars=vmap,
                     work_dir=spec_dir,
                     refresh=refresh,
+                    trace_prefix=[trace_start],
                 )
             )
         elif kind == "cmd":

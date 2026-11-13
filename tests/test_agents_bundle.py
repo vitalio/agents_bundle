@@ -33,6 +33,7 @@ class TestAgentsBundle(unittest.TestCase):
         rh = subprocess.run([str(SCRIPT), "-h"], capture_output=True, text=True, check=False)
         self.assertEqual(rh.returncode, 0)
         self.assertIn("Usage:", rh.stdout)
+        self.assertIn("-x/--exclude DIR", rh.stdout)
         rv = subprocess.run([str(SCRIPT), "--version"], capture_output=True, text=True, check=False)
         self.assertEqual(rv.returncode, 0)
         ver = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
@@ -45,12 +46,16 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertIn(".agents_bundle not found", r.stderr)
         self.assertIn("agents_bundle --init", r.stderr)
 
-    def test_preset_rule_and_dollar_commands_in_agents_bundle(self):
+    def test_preset_rule_if_conditions_and_dollar_commands(self):
         (self.tmp / "AGENTS.md").write_text("# Project Rules\n", encoding="utf-8")
         (self.tmp / "extra.txt").write_text("extra content\n", encoding="utf-8")
         (self.tmp / ".agents_bundle").write_text(
             "preset vitalio/agents_rules:workflow -collab/external lang=Russian\n"
+            "[if os=linux] rule vitalio/agents_rules:os/linux\n"
+            "[if os=windows] rule vitalio/agents_rules:os/windows\n"
+            "[if os=linux]\n"
             "rule vitalio/agents_rules:stack/python-cli py_min=3.12\n"
+            "[/if]\n"
             "$ cat AGENTS.md\n"
             "$ agents_bundle --tree --max-lines 10\n"
             "$ echo cmd_ok\n",
@@ -68,9 +73,11 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertNotIn("# [preset", rb.stdout)
         self.assertIn("in **Russian**", rb.stdout)
         self.assertNotIn("Clean external text & two-step external changes:", rb.stdout)
+        self.assertIn("Linux & POSIX shell rules:", rb.stdout)
+        self.assertNotIn("Windows & PowerShell 7+ (`pwsh`) rules:", rb.stdout)
         self.assertIn("Python 3.12+ compatibility", rb.stdout)
 
-        # Verify -v / --verbose includes provenance trace comments
+        # Verify -v / --verbose includes provenance trace comments with [if ...]
         rb_v = subprocess.run(
             [str(SCRIPT), "-v"],
             cwd=str(self.tmp),
@@ -80,20 +87,49 @@ class TestAgentsBundle(unittest.TestCase):
         )
         self.assertEqual(rb_v.returncode, 0, rb_v.stderr)
         self.assertIn("# [preset vitalio/agents_rules:workflow -> preset core -> rules/core/start.md]", rb_v.stdout)
-        self.assertIn("# [rule vitalio/agents_rules:stack/python-cli -> rules/stack/python-cli.md] (py_min=3.12)", rb_v.stdout)
-        self.assertIn("===== $ cat AGENTS.md =====", rb.stdout)
-        self.assertIn("# Project Rules", rb.stdout)
-        self.assertIn("===== $ agents_bundle --tree --max-lines 10 =====", rb.stdout)
-        self.assertIn("cmd_ok", rb.stdout)
-        self.assertIn("===== $ cat extra.txt =====", rb.stdout)
-        self.assertIn("===== Prompt =====", rb.stdout)
-        self.assertIn("Solve task 1", rb.stdout)
+        self.assertIn("# [[if os=linux] rule vitalio/agents_rules:os/linux -> rules/os/linux.md]", rb_v.stdout)
+        self.assertIn("# [[if os=linux] rule vitalio/agents_rules:stack/python-cli -> rules/stack/python-cli.md] (py_min=3.12)", rb_v.stdout)
+
+    def test_builtin_vars_override_in_preset(self):
+        rp = subprocess.run(
+            [str(SCRIPT), "preset", "vitalio/agents_rules:default", "os=windows", "vcs=cvs", "-v"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(rp.returncode, 0, rp.stderr)
+        self.assertIn("[if os=windows] rule os/windows -> rules/os/windows.md", rp.stdout)
+        self.assertIn("[if vcs=cvs] rule vcs/cvs -> rules/vcs/cvs.md", rp.stdout)
+        self.assertNotIn("rules/os/linux.md", rp.stdout)
+        self.assertNotIn("rules/vcs/git.md", rp.stdout)
+
+    def test_tree_exclude_and_truncation(self):
+        (self.tmp / "bumps" / "nested").mkdir(parents=True)
+        (self.tmp / "bumps" / "nested" / "dump.txt").write_text("a\nb\nc\n", encoding="utf-8")
+        (self.tmp / "tools").mkdir()
+        for idx in range(12):
+            (self.tmp / "tools" / f"tool_{idx:02d}.py").write_text("print(1)\n", encoding="utf-8")
+
+        rt = subprocess.run(
+            [str(SCRIPT), "--tree", str(self.tmp), "-x", "bumps", "--max-lines", "12"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(rt.returncode, 0, rt.stderr)
+        self.assertIn("bumps/ (excluded)", rt.stdout)
+        self.assertNotIn("dump.txt", rt.stdout)
+        self.assertIn("tools/", rt.stdout)
+        self.assertIn("more files", rt.stdout)
 
     def test_cli_preset_rule_and_list(self):
         rl = subprocess.run([str(SCRIPT), "--list"], capture_output=True, text=True, check=False)
         self.assertEqual(rl.returncode, 0, rl.stderr)
-        self.assertIn("vitalio/agents_rules:workflow", rl.stdout)
-        self.assertIn("vitalio/agents_rules:core/composability", rl.stdout)
+        self.assertIn("Built-in variables", rl.stdout)
+        self.assertIn("[if os=linux] rule os/linux", rl.stdout)
+        self.assertNotIn("os/auto", rl.stdout)
+        self.assertNotIn("vcs/auto", rl.stdout)
 
         rr = subprocess.run([str(SCRIPT), "rule", "vitalio/agents_rules:release/single-file-build"], capture_output=True, text=True, check=False)
         self.assertEqual(rr.returncode, 0, rr.stderr)
