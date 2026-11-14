@@ -74,5 +74,5 @@ if ($UserPath -notlike "*$Dir*") {
 Write-Host '============================================================'
 python $PyTarget --version
 Write-Host "Installed to: $Dir ($Name)"
-Write-Host "Tip: run '$Name --init-start' and '$Name --start' in any repo to build a session context bundle."
+Write-Host "Tip: run '$Name --init' and '$Name' in any repo to build a context bundle."
 Write-Host '============================================================'

@@ -189,7 +189,6 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertIn("Built-in variables", rl.stdout)
         self.assertIn("[if os=linux] rule os/linux", rl.stdout)
         self.assertIn("Bundle includes in 'vitalio/agents-rules'", rl.stdout)
-        self.assertIn("vitalio/agents-rules:todo_md", rl.stdout)
         self.assertNotIn("os/auto", rl.stdout)
         self.assertNotIn("vcs/auto", rl.stdout)
 

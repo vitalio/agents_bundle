@@ -162,5 +162,5 @@ case ":${PATH:-}:" in
         fi
         ;;
 esac
-echo "Tip: run '$CMD_NAME --init-start' and '$CMD_NAME --start' in any repo to build a session context bundle."
+echo "Tip: run '$CMD_NAME --init' and '$CMD_NAME' in any repo to build a context bundle."
 echo "============================================================"
