@@ -53,7 +53,7 @@ class TestAgentsBundle(unittest.TestCase):
         (self.tmp / "AGENTS.md").write_text("# Project Rules\n", encoding="utf-8")
         (self.tmp / "extra.txt").write_text("extra content\n", encoding="utf-8")
         (self.tmp / ".agents_bundle").write_text(
-            "preset vitalio/agents-rules:core lang=Russian\n"
+            "preset vitalio/agents-rules:core lang=Spanish\n"
             f"[if os={cur_os}] rule vitalio/agents-rules:os/linux\n"
             f"[if os={other_os}] rule vitalio/agents-rules:os/windows\n"
             f"[if os={cur_os}]\n"
@@ -75,7 +75,7 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertIn('Bundle-Command: agents_bundle [key=val ...] [-p "<prompt>"] [file ...]', rb.stdout)
         self.assertIn("===== Rules =====", rb.stdout)
         self.assertNotIn("# [preset", rb.stdout)
-        self.assertIn("in **Russian**", rb.stdout)
+        self.assertIn("in Spanish", rb.stdout)
         self.assertNotIn("Clean external text & two-step external changes:", rb.stdout)
         self.assertIn("Linux & POSIX shell rules:", rb.stdout)
         self.assertNotIn("Windows & PowerShell 7+ (`pwsh`) rules:", rb.stdout)
@@ -148,7 +148,7 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertEqual(r_foc.returncode, 0, r_foc.stderr)
         self.assertIn("focused_task_A2", r_foc.stdout)
         self.assertNotIn("all_tasks", r_foc.stdout)
-        self.assertIn("in **German**", r_foc.stdout)
+        self.assertIn("in German", r_foc.stdout)
         self.assertIn("===== Prompt =====\nMode: IMPLEMENTATION (A2)\n\nFocus on edge cases", r_foc.stdout)
 
     def test_builtin_vars_override_in_preset(self):
@@ -220,6 +220,32 @@ class TestAgentsBundle(unittest.TestCase):
         )
         self.assertEqual(r_tree.returncode, 0)
         self.assertIn("AGENTS.md", r_tree.stdout)
+
+        # Verify comment stripping in rules and dynamic {role:} target resolution in presets
+        role_dir = self.tmp / "pkg_repo" / "rules" / "role"
+        role_dir.mkdir(parents=True)
+        (role_dir / "audit.md").write_text(
+            "# Description: Auditor\n# Maintainer comment that must be stripped\n<!-- html comment -->\n- Role (Auditor): Check consistency.\n",
+            encoding="utf-8",
+        )
+        p_dir = self.tmp / "pkg_repo" / "presets"
+        p_dir.mkdir(parents=True)
+        (p_dir / "default.preset").write_text(
+            "# Description: Default\nrule core/ssot\n[if role!=] rule role/{role:}\n",
+            encoding="utf-8",
+        )
+        env = {**os.environ, "AGENTS_BUNDLE_LOCAL_PKG_DIR": str(self.tmp / "pkg_repo")}
+        r_role = subprocess.run(
+            [str(SCRIPT), "preset", "vitalio/agents-rules:default", "role=audit"],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        self.assertEqual(r_role.returncode, 0)
+        self.assertIn("- Role (Auditor): Check consistency.", r_role.stdout)
+        self.assertNotIn("Maintainer comment", r_role.stdout)
+        self.assertNotIn("html comment", r_role.stdout)
 
 
 if __name__ == "__main__":

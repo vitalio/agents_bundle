@@ -94,12 +94,21 @@ def strip_if_blocks_and_lines(raw_text: str, prog: str | None = None) -> list[tu
 
 
 def _parse_md_text(raw_text: str, fallback_desc: str) -> tuple[str, str]:
-    lines = raw_text.splitlines()
+    cleaned = re.sub(r"<!--.*?-->", "", raw_text, flags=re.DOTALL)
+    lines = cleaned.splitlines()
     desc = fallback_desc
-    body_lines = lines
-    if lines and lines[0].startswith("# Description:"):
-        desc = lines[0].split(":", 1)[1].strip()
-        body_lines = lines[1:]
+    body_lines: list[str] = []
+    in_fence = False
+    for idx, line in enumerate(lines):
+        s = line.strip()
+        if idx == 0 and s.startswith("# Description:"):
+            desc = s.split(":", 1)[1].strip()
+            continue
+        if s.startswith("```"):
+            in_fence = not in_fence
+        if not in_fence and s.startswith("#"):
+            continue
+        body_lines.append(line)
     return desc, "\n".join(body_lines).strip()
 
 
@@ -332,6 +341,8 @@ def collect_directive_items(
     if kind not in ("preset", "rule"):
         raise SystemExit(f"{prog}: directive kind must be 'preset' or 'rule' (got {kind!r})")
 
+    effective_vars = {**builtin_vars(work_dir), **(cli_vars or {})}
+    target_spec = _render_rule_vars(target_spec, effective_vars)
     pkg_id, item_name = _parse_target_spec(target_spec, default_pkg=default_pkg)
     excl_set: set[str] = set()
     for ex in excludes or []:
@@ -340,8 +351,6 @@ def collect_directive_items(
             _, clean_ex = clean_ex.split(":", 1)
         if clean_ex:
             excl_set.add(clean_ex)
-
-    effective_vars = {**builtin_vars(work_dir), **(cli_vars or {})}
     cur_trace = list(trace_prefix or [f"{kind} {target_spec}"])
 
     if pkg_id in ("__file__", "__url__"):
