@@ -155,11 +155,14 @@ def _load_package_from_dir(
 ) -> tuple[
     dict[str, tuple[str, str]],
     dict[str, tuple[str, list[tuple[str | None, str, str, list[str], dict[str, str]]]]],
+    dict[str, tuple[str, str]],
 ]:
     rules: dict[str, tuple[str, str]] = {}
     presets: dict[str, tuple[str, list[tuple[str | None, str, str, list[str], dict[str, str]]]]] = {}
+    includes: dict[str, tuple[str, str]] = {}
     r_root = pkg_dir / "rules" if (pkg_dir / "rules").is_dir() else (pkg_dir / "src/rules")
     p_root = pkg_dir / "presets" if (pkg_dir / "presets").is_dir() else (pkg_dir / "src/presets")
+    i_root = pkg_dir / "includes" if (pkg_dir / "includes").is_dir() else (pkg_dir / "src/includes")
     if r_root.is_dir():
         for p in sorted(r_root.rglob("*.md")):
             if p.is_file():
@@ -170,7 +173,12 @@ def _load_package_from_dir(
             if p.is_file():
                 rel = p.relative_to(p_root).with_suffix("").as_posix().lower()
                 presets[rel] = _parse_preset_file(p.read_text(encoding="utf-8", errors="replace"), rel)
-    return rules, presets
+    if i_root.is_dir():
+        for p in sorted(i_root.rglob("*.bundle")):
+            if p.is_file():
+                rel = p.relative_to(i_root).with_suffix("").as_posix().lower()
+                includes[rel] = _parse_md_text(p.read_text(encoding="utf-8", errors="replace"), rel)
+    return rules, presets, includes
 
 
 def _ensure_remote_package(pkg_spec: str, refresh: bool = False) -> Path:
@@ -178,7 +186,7 @@ def _ensure_remote_package(pkg_spec: str, refresh: bool = False) -> Path:
     local_override = os.environ.get("AGENTS_BUNDLE_LOCAL_PKG_DIR")
     if local_override and pkg_spec == DEFAULT_RULES_PKG and Path(local_override).is_dir():
         return Path(local_override)
-    home_candidate = Path.home() / "agents_rules"
+    home_candidate = Path.home() / "agents-rules"
     if pkg_spec == DEFAULT_RULES_PKG and not refresh and (home_candidate / "rules").is_dir() and (home_candidate / "presets").is_dir():
         cdir_chk = cache_dir_path() / "packages" / pkg_spec
         if not cdir_chk.is_dir():
@@ -219,6 +227,7 @@ def _get_package_catalog(
 ) -> tuple[
     dict[str, tuple[str, str]],
     dict[str, tuple[str, list[tuple[str | None, str, str, list[str], dict[str, str]]]]],
+    dict[str, tuple[str, str]],
 ]:
     local_dir = Path(pkg_id).expanduser()
     if local_dir.is_dir():
@@ -251,7 +260,7 @@ def _parse_target_spec(spec: str, default_pkg: str | None = None) -> tuple[str, 
     if spec.startswith(("http://", "https://", "file://")):
         idx = spec.rfind(":")
         scheme_end = spec.find("://") + 2
-        if idx <= scheme_end or spec.endswith((".md", ".preset")):
+        if idx <= scheme_end or spec.endswith((".md", ".preset", ".bundle")):
             return "__url__", spec
         return spec[:idx], spec[idx + 1:].strip().lower()
     if ":" not in spec:
@@ -269,10 +278,43 @@ def _parse_target_spec(spec: str, default_pkg: str | None = None) -> tuple[str, 
 def _match_rule_in_dict(name: str, rules_dict: dict[str, tuple[str, str]]) -> str | None:
     if name in rules_dict:
         return name
-    matches = [k for k in rules_dict if k.rsplit("/", 1)[-1] == name]
+    norm = name.replace("-", "_")
+    for k in rules_dict:
+        if k.replace("-", "_") == norm:
+            return k
+    matches = [k for k in rules_dict if k.rsplit("/", 1)[-1].replace("-", "_") == norm]
     if len(matches) == 1:
         return matches[0]
     return None
+
+
+def resolve_include_text(
+    target_spec: str,
+    work_dir: Path | None = None,
+    refresh: bool = False,
+    default_pkg: str | None = DEFAULT_RULES_PKG,
+) -> str:
+    prog = prog_name()
+    pkg_id, item_name = _parse_target_spec(target_spec, default_pkg=default_pkg)
+    if pkg_id in ("__file__", "__url__"):
+        if pkg_id == "__url__":
+            fpath = _fetch_url_file(item_name, refresh=refresh)
+        else:
+            fpath = Path(item_name).expanduser()
+            if work_dir is not None and not fpath.is_absolute():
+                fpath = (work_dir / fpath).resolve()
+            if not fpath.is_file():
+                raise SystemExit(f"{prog}: include file not found: {item_name}")
+        raw = fpath.read_text(encoding="utf-8", errors="replace")
+        return _parse_md_text(raw, fpath.stem)[1]
+    _, _, includes_dict = _get_package_catalog(pkg_id, refresh=refresh)
+    ik = _match_rule_in_dict(item_name, includes_dict)
+    if ik is None:
+        avail_i = sorted(includes_dict.keys())
+        raise SystemExit(
+            f"{prog}: unknown include {item_name!r} in package {pkg_id!r} (available includes: {', '.join(avail_i)})"
+        )
+    return includes_dict[ik][1]
 
 
 def collect_directive_items(
@@ -351,7 +393,7 @@ def collect_directive_items(
         return rk in excl_set or leaf in excl_set
 
     if kind == "rule":
-        rules_dict, _ = _get_package_catalog(pkg_id, refresh=refresh)
+        rules_dict, _, _ = _get_package_catalog(pkg_id, refresh=refresh)
         rk = _match_rule_in_dict(item_name, rules_dict)
         if rk is None:
             avail_r = sorted(rules_dict.keys())
@@ -372,7 +414,7 @@ def collect_directive_items(
         return [(f"{pkg_id}:{rk}", prov, rendered)]
 
     # kind == "preset"
-    _, presets_dict = _get_package_catalog(pkg_id, refresh=refresh)
+    _, presets_dict, _ = _get_package_catalog(pkg_id, refresh=refresh)
     if item_name not in presets_dict:
         avail_p = sorted(presets_dict.keys())
         raise SystemExit(
@@ -439,7 +481,7 @@ def render_directive(
 
 
 def cmd_list_rules(pkg_id: str = DEFAULT_RULES_PKG) -> int:
-    rules_dict, presets_dict = _get_package_catalog(pkg_id)
+    rules_dict, presets_dict, includes_dict = _get_package_catalog(pkg_id)
     bvars = builtin_vars()
     sys.stdout.write("Built-in variables (usable in '[if key=val]' conditions and rule templates):\n")
     sys.stdout.write(f"  {'os':<38}  Active operating system (linux, macos, windows; current: {bvars['os']!r})\n")
@@ -457,6 +499,11 @@ def cmd_list_rules(pkg_id: str = DEFAULT_RULES_PKG) -> int:
     for k, (desc, _) in rules_dict.items():
         target_tag = f"{pkg_id}:{k}"
         sys.stdout.write(f"  {target_tag:<38}  {desc}\n")
+    if includes_dict:
+        sys.stdout.write(f"\nBundle includes in '{pkg_id}' (use as 'include {pkg_id}:<include>'):\n")
+        for k, (desc, _) in includes_dict.items():
+            target_tag = f"{pkg_id}:{k}"
+            sys.stdout.write(f"  {target_tag:<38}  {desc}\n")
     return 0
 
 

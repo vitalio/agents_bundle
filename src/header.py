@@ -5,7 +5,7 @@
                                                 Opts: -p/--prompt TEXT, -C/--dir DIR, -v/--verbose, --refresh
   {prog} preset <pkg>:<name> [-excl] [k=v]    Render a preset to stdout
   {prog} rule <pkg>:<name> [k=v]              Render a single rule to stdout
-  {prog} --list | -l [pkg]                    List presets, rules, and built-in variables (default: {default_pkg})
+  {prog} --list | -l [pkg]                    List presets, rules, includes, and built-in variables (default: {default_pkg})
   {prog} --update-cache                       Refresh cached rule packages in {cache_dir}
   {prog} --init [--force]                     Create a starter .agents_bundle in the current directory
   {prog} --tree [DIR] [opts]                  Print token-budgeted repository file tree to stdout
@@ -33,8 +33,8 @@ import time
 import urllib.request
 from pathlib import Path
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/agents_bundle/main/agents_bundle"
 SPEC_FILE_NAME = ".agents_bundle"
-DEFAULT_RULES_PKG = "vitalio/agents_rules"
+DEFAULT_RULES_PKG = "vitalio/agents-rules"

@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "agents_bundle"
 BUILD_PY = ROOT / "build.py"
 INSTALL_SH = ROOT / "install.sh"
-AR_REPO = Path("/home/vitaly/agents_rules")
+AR_REPO = Path("/home/vitaly/agents-rules")
 
 
 class TestAgentsBundle(unittest.TestCase):
@@ -53,11 +53,11 @@ class TestAgentsBundle(unittest.TestCase):
         (self.tmp / "AGENTS.md").write_text("# Project Rules\n", encoding="utf-8")
         (self.tmp / "extra.txt").write_text("extra content\n", encoding="utf-8")
         (self.tmp / ".agents_bundle").write_text(
-            "preset vitalio/agents_rules:core lang=Russian\n"
-            f"[if os={cur_os}] rule vitalio/agents_rules:os/linux\n"
-            f"[if os={other_os}] rule vitalio/agents_rules:os/windows\n"
+            "preset vitalio/agents-rules:core lang=Russian\n"
+            f"[if os={cur_os}] rule vitalio/agents-rules:os/linux\n"
+            f"[if os={other_os}] rule vitalio/agents-rules:os/windows\n"
             f"[if os={cur_os}]\n"
-            "rule vitalio/agents_rules:stack/python-cli py_min=3.12\n"
+            "rule vitalio/agents-rules:stack/python-cli py_min=3.12\n"
             "[/if]\n"
             "$ cat AGENTS.md\n"
             "$ agents_bundle --tree --max-lines 10\n"
@@ -89,9 +89,9 @@ class TestAgentsBundle(unittest.TestCase):
             check=False,
         )
         self.assertEqual(rb_v.returncode, 0, rb_v.stderr)
-        self.assertIn("# [preset vitalio/agents_rules:core -> rules/core/start.md]", rb_v.stdout)
-        self.assertIn(f"# [[if os={cur_os}] rule vitalio/agents_rules:os/linux -> rules/os/linux.md]", rb_v.stdout)
-        self.assertIn(f"# [[if os={cur_os}] rule vitalio/agents_rules:stack/python-cli -> rules/stack/python-cli.md] (py_min=3.12)", rb_v.stdout)
+        self.assertIn("# [preset vitalio/agents-rules:core -> rules/core/start.md]", rb_v.stdout)
+        self.assertIn(f"# [[if os={cur_os}] rule vitalio/agents-rules:os/linux -> rules/os/linux.md]", rb_v.stdout)
+        self.assertIn(f"# [[if os={cur_os}] rule vitalio/agents-rules:stack/python-cli -> rules/stack/python-cli.md] (py_min=3.12)", rb_v.stdout)
 
         # Verify direct URL rule and preset loading
         url_rule = self.tmp / "custom_url_rule.md"
@@ -108,27 +108,51 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertEqual(r_url.returncode, 0, r_url.stderr)
         self.assertIn("Loaded from URL 99.", r_url.stdout)
 
-        # Verify CLI key=val variables in .agents_bundle ([if task=...] and {task:})
-        (self.tmp / ".agents_bundle").write_text(
-            "preset vitalio/agents_rules:core\n"
-            "[if task=] $ echo all_tasks\n"
-            "[if task!=] $ echo focused_task_{task:}\n",
+        # Verify include directive, CLI key=val variables, and prompt directives in .agents_bundle
+        inc_file = self.tmp / "task_flow.bundle"
+        inc_file.write_text(
+            "# Description: Custom task flow include\n"
+            "[if task!=]\n"
+            "[if task=plan] $ echo all_tasks\n"
+            "[if task!=,plan] $ echo focused_task_{task:}\n"
+            "[if task=plan] prompt Mode: PLANNING\n"
+            "[if task!=,plan] prompt Mode: IMPLEMENTATION ({task:})\n"
+            "[/if]\n",
             encoding="utf-8",
         )
-        r_all = subprocess.run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
-        self.assertEqual(r_all.returncode, 0, r_all.stderr)
-        self.assertIn("all_tasks", r_all.stdout)
-        self.assertNotIn("focused_task_", r_all.stdout)
+        (self.tmp / ".agents_bundle").write_text(
+            "preset vitalio/agents-rules:core\n"
+            f"include {inc_file.as_posix()}\n",
+            encoding="utf-8",
+        )
+        r_none = subprocess.run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self.assertEqual(r_none.returncode, 0, r_none.stderr)
+        self.assertNotIn("all_tasks", r_none.stdout)
+        self.assertNotIn("focused_task_", r_none.stdout)
+        self.assertNotIn("===== Prompt =====", r_none.stdout)
 
-        r_foc = subprocess.run([str(SCRIPT), "task=A2", "lang=German"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        r_plan = subprocess.run([str(SCRIPT), "task=plan"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self.assertEqual(r_plan.returncode, 0, r_plan.stderr)
+        self.assertIn("all_tasks", r_plan.stdout)
+        self.assertNotIn("focused_task_", r_plan.stdout)
+        self.assertIn("===== Prompt =====\nMode: PLANNING", r_plan.stdout)
+
+        r_foc = subprocess.run(
+            [str(SCRIPT), "task=A2", "lang=German", "-p", "Focus on edge cases"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         self.assertEqual(r_foc.returncode, 0, r_foc.stderr)
         self.assertIn("focused_task_A2", r_foc.stdout)
         self.assertNotIn("all_tasks", r_foc.stdout)
         self.assertIn("in **German**", r_foc.stdout)
+        self.assertIn("===== Prompt =====\nMode: IMPLEMENTATION (A2)\n\nFocus on edge cases", r_foc.stdout)
 
     def test_builtin_vars_override_in_preset(self):
         rp = subprocess.run(
-            [str(SCRIPT), "preset", "vitalio/agents_rules:default", "os=windows", "vcs=cvs", "-v"],
+            [str(SCRIPT), "preset", "vitalio/agents-rules:default", "os=windows", "vcs=cvs", "-v"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -164,10 +188,12 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertEqual(rl.returncode, 0, rl.stderr)
         self.assertIn("Built-in variables", rl.stdout)
         self.assertIn("[if os=linux] rule os/linux", rl.stdout)
+        self.assertIn("Bundle includes in 'vitalio/agents-rules'", rl.stdout)
+        self.assertIn("vitalio/agents-rules:todo_md", rl.stdout)
         self.assertNotIn("os/auto", rl.stdout)
         self.assertNotIn("vcs/auto", rl.stdout)
 
-        rr = subprocess.run([str(SCRIPT), "rule", "vitalio/agents_rules:release/single-file-build"], capture_output=True, text=True, check=False)
+        rr = subprocess.run([str(SCRIPT), "rule", "vitalio/agents-rules:release/single-file-build"], capture_output=True, text=True, check=False)
         self.assertEqual(rr.returncode, 0, rr.stderr)
         self.assertIn("Single-file build from modular `src/`:", rr.stdout)
 

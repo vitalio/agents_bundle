@@ -5,6 +5,8 @@ def default_spec_template(prog: str | None = None) -> str:
         "# Directives:",
         f"#   preset <owner>/<repo>:<name> [-exclude ...] [key=val ...]",
         f"#   rule <owner>/<repo>:<name> [key=val ...]",
+        f"#   include <owner>/<repo>:<name> [key=val ...]",
+        "#   prompt <text>",
         "#   [if os=linux] rule <owner>/<repo>:os/linux  (or multi-line [if ...] ... [/if])",
         "#   $ <shell command>  (use '$ cat <file>' to include a file)",
         "",
@@ -44,6 +46,7 @@ def parse_spec(
     text: str,
     work_dir: Path | None = None,
     cli_vars: dict[str, str] | None = None,
+    refresh: bool = False,
 ) -> list[tuple[str, str, str | None]]:
     prog = prog_name()
     bvars = {**builtin_vars(work_dir), **(cli_vars or {})}
@@ -60,9 +63,27 @@ def parse_spec(
             continue
         elif line.startswith("preset ") or line.startswith("rule "):
             entries.append(("directive", line, cond_expr))
+        elif line.startswith("include "):
+            parts = shlex.split(line)
+            target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
+            if excls:
+                raise SystemExit(f"{prog}: include directive does not support excludes: {line!r}")
+            inc_text = resolve_include_text(target, work_dir=work_dir, refresh=refresh)
+            merged_cli = {**(cli_vars or {}), **vmap}
+            for sub_kind, sub_val, sub_cond in parse_spec(
+                inc_text, work_dir=work_dir, cli_vars=merged_cli, refresh=refresh
+            ):
+                comb_cond = " ".join(c for c in (cond_expr, sub_cond) if c) or None
+                entries.append((sub_kind, sub_val, comb_cond))
+        elif line.startswith("prompt "):
+            p_str = line[len("prompt ") :].strip()
+            if p_str:
+                entries.append(("prompt", p_str, cond_expr))
+        elif line == "prompt":
+            continue
         else:
             raise SystemExit(
-                f"{prog}: invalid line in {SPEC_FILE_NAME}: {line!r} (expected 'preset ...', 'rule ...', '[if ...]', or '$ <command>')"
+                f"{prog}: invalid line in {SPEC_FILE_NAME}: {line!r} (expected 'preset ...', 'rule ...', 'include ...', 'prompt ...', '[if ...]', or '$ <command>')"
             )
     return entries
 
@@ -110,10 +131,16 @@ def build_bundle(
         raise SystemExit(2)
 
     spec_dir = spec_file.parent
-    entries = parse_spec(spec_file.read_text(encoding="utf-8"), work_dir=spec_dir, cli_vars=cli_vars)
+    entries = parse_spec(
+        spec_file.read_text(encoding="utf-8"),
+        work_dir=spec_dir,
+        cli_vars=cli_vars,
+        refresh=refresh,
+    )
     sections: list[tuple[str, str]] = []
     warnings: list[str] = []
     pending_rules: list[tuple[str, str, str]] = []
+    spec_prompts: list[str] = []
 
     def flush_pending_rules() -> None:
         if not pending_rules:
@@ -147,6 +174,8 @@ def build_bundle(
             if rc != 0:
                 warnings.append(f"command exited {rc}: {val}")
             sections.append((f"$ {val}", out))
+        elif kind == "prompt":
+            spec_prompts.append(val)
     flush_pending_rules()
 
     for extra in extra_files or []:
@@ -164,8 +193,11 @@ def build_bundle(
         content = p.read_text(encoding="utf-8", errors="replace").rstrip()
         sections.append((f"$ cat {disp}", content))
 
+    all_prompts = [*spec_prompts]
     if prompt_text and prompt_text.strip():
-        sections.append(("Prompt", prompt_text.strip()))
+        all_prompts.append(prompt_text.strip())
+    if all_prompts:
+        sections.append(("Prompt", "\n\n".join(all_prompts)))
 
     blocks = [f"===== {title} =====\n{content}\n" for title, content in sections]
     return "\n".join(blocks), warnings
