@@ -165,7 +165,7 @@ def _load_package_from_dir(
     i_root = pkg_dir / "includes" if (pkg_dir / "includes").is_dir() else (pkg_dir / "src/includes")
     if r_root.is_dir():
         for p in sorted(r_root.rglob("*.md")):
-            if p.is_file():
+            if p.is_file() and p.name.upper() not in ("AGENTS.MD", "README.MD"):
                 rel = p.relative_to(r_root).with_suffix("").as_posix().lower()
                 rules[rel] = _parse_md_text(p.read_text(encoding="utf-8", errors="replace"), rel)
     if p_root.is_dir():

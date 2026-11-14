@@ -205,5 +205,22 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertTrue((bin_dir / "agents_bundle").is_file())
 
 
+    def test_tree_pins_agents_md_and_rules_ignore_agents_md(self):
+        sub = self.tmp / "pkg_repo" / "rules" / "core"
+        sub.mkdir(parents=True)
+        (sub / "AGENTS.md").write_text("# Core philosophy\n", encoding="utf-8")
+        (sub / "ssot.md").write_text("# Description: SSOT\n- SSOT rule\n", encoding="utf-8")
+        for idx in range(12):
+            (sub / f"z_file_{idx:02d}.txt").write_text("line\n", encoding="utf-8")
+        r_tree = subprocess.run(
+            [str(SCRIPT), "--tree", str(self.tmp / "pkg_repo"), "--max-lines", "12"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(r_tree.returncode, 0)
+        self.assertIn("AGENTS.md", r_tree.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

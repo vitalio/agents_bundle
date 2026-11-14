@@ -171,9 +171,19 @@ def build_repo_tree(
         ensure_dir_chain(parent_dir)
         dir_files[parent_dir].append(rel)
 
+    dirs_with_agents: set[str] = set()
     for d in all_dirs:
         dir_subdirs[d].sort()
-        dir_files[d].sort()
+        dir_files[d].sort(key=lambda f: (0 if f.rsplit("/", 1)[-1] == "AGENTS.md" else 1, f))
+        if any(f.rsplit("/", 1)[-1] == "AGENTS.md" for f in dir_files[d]):
+            cur_a = d
+            while True:
+                dirs_with_agents.add(cur_a)
+                if not cur_a or "/" not in cur_a:
+                    if cur_a:
+                        dirs_with_agents.add("")
+                    break
+                cur_a = cur_a.rsplit("/", 1)[0]
 
     dirs_bottom_up = sorted(all_dirs, key=lambda x: (0 if not x else x.count("/") + 1), reverse=True)
     dir_totals: dict[str, tuple[int, int]] = {}
@@ -221,7 +231,8 @@ def build_repo_tree(
                     out.append(f"{prefix}{conn}{name}/ (excluded)")
                 elif item in collapsed:
                     fc, lc = dir_totals[item]
-                    out.append(f"{prefix}{conn}{name}/ ({fc} file{'s' if fc != 1 else ''}, {lc:,}L)")
+                    ag_note = ", AGENTS.md" if item in dirs_with_agents else ""
+                    out.append(f"{prefix}{conn}{name}/ ({fc} file{'s' if fc != 1 else ''}, {lc:,}L{ag_note})")
                 else:
                     out.append(f"{prefix}{conn}{name}/")
                     out.extend(render_dir(item, child_prefix, collapsed, file_limits))
@@ -263,7 +274,7 @@ def build_repo_tree(
             if "/" in d and is_visible_dir(d) and (len(dir_subdirs[d]) + len(dir_files[d]) > 0)
         ]
         if deep_candidates:
-            best_deep = max(deep_candidates, key=lambda d: (d.count("/"), dir_totals[d][0]))
+            best_deep = max(deep_candidates, key=lambda d: (0 if d in dirs_with_agents else 1, d.count("/"), dir_totals[d][0]))
             collapsed.add(best_deep)
             # Clean up any child collapses under best_deep so set stays small
             prefix_slash = best_deep + "/"
@@ -290,7 +301,7 @@ def build_repo_tree(
             if is_visible_dir(d) and (len(dir_subdirs[d]) + len(dir_files[d]) > 0)
         ]
         if top_candidates:
-            best_top = max(top_candidates, key=lambda d: dir_totals[d][0])
+            best_top = max(top_candidates, key=lambda d: (0 if d in dirs_with_agents else 1, dir_totals[d][0]))
             collapsed.add(best_top)
             continue
 

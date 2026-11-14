@@ -21,7 +21,13 @@ MODULE_ORDER = ["header.py", "tree.py", "rules_engine.py", "bundle.py", "cli.py"
 
 
 def assemble_source() -> str:
-    chunks = [(SRC_DIR / m).read_text(encoding="utf-8").rstrip() for m in MODULE_ORDER]
+    ver = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    chunks: list[str] = []
+    for m in MODULE_ORDER:
+        txt = (SRC_DIR / m).read_text(encoding="utf-8").rstrip()
+        if m == "header.py":
+            txt = txt.replace('VERSION = "__VERSION__"', f'VERSION = "{ver}"')
+        chunks.append(txt)
     source = "\n\n\n".join(chunks) + "\n"
     ast.parse(source)
     return source
