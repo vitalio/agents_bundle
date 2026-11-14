@@ -46,14 +46,14 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertIn(".agents_bundle not found", r.stderr)
         self.assertIn("agents_bundle --init", r.stderr)
 
-    def test_preset_rule_if_conditions_and_dollar_commands(self):
+    def test_ruleset_rule_if_conditions_and_dollar_commands(self):
         import sys
         cur_os = "windows" if os.name == "nt" else ("macos" if sys.platform == "darwin" else "linux")
         other_os = "windows" if cur_os != "windows" else "linux"
         (self.tmp / "AGENTS.md").write_text("# Project Rules\n", encoding="utf-8")
         (self.tmp / "extra.txt").write_text("extra content\n", encoding="utf-8")
         (self.tmp / ".agents_bundle").write_text(
-            "preset vitalio/agents-rules:core lang=Spanish\n"
+            "ruleset vitalio/agents-rules:core lang=Spanish\n"
             f"[if os={cur_os}] rule vitalio/agents-rules:os/linux\n"
             f"[if os={other_os}] rule vitalio/agents-rules:os/windows\n"
             f"[if os={cur_os}]\n"
@@ -74,7 +74,7 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertEqual(rb.returncode, 0, rb.stderr)
         self.assertIn('Bundle-Command: agents_bundle [key=val ...] [-p "<prompt>"] [file ...]', rb.stdout)
         self.assertIn("===== Rules =====", rb.stdout)
-        self.assertNotIn("# [preset", rb.stdout)
+        self.assertNotIn("# [ruleset", rb.stdout)
         self.assertIn("in Spanish", rb.stdout)
         self.assertNotIn("Clean external text & two-step external changes:", rb.stdout)
         self.assertIn("Linux & POSIX shell rules:", rb.stdout)
@@ -90,17 +90,17 @@ class TestAgentsBundle(unittest.TestCase):
             check=False,
         )
         self.assertEqual(rb_v.returncode, 0, rb_v.stderr)
-        self.assertIn("# [preset vitalio/agents-rules:core -> rules/core/start.md]", rb_v.stdout)
+        self.assertIn("# [ruleset vitalio/agents-rules:core -> rules/core/start.md]", rb_v.stdout)
         self.assertIn(f"# [[if os={cur_os}] rule vitalio/agents-rules:os/linux -> rules/os/linux.md]", rb_v.stdout)
         self.assertIn(f"# [[if os={cur_os}] rule vitalio/agents-rules:stack/python-cli -> rules/stack/python-cli.md] (py_min=3.12)", rb_v.stdout)
 
-        # Verify direct URL rule and preset loading
+        # Verify direct URL rule and ruleset loading
         url_rule = self.tmp / "custom_url_rule.md"
         url_rule.write_text("# Description: Direct URL rule\n- **Direct URL invariant:** Loaded from URL {val:42}.\n", encoding="utf-8")
-        url_preset = self.tmp / "custom_url.preset"
-        url_preset.write_text(f"# Description: Direct URL preset\nrule {url_rule.as_uri()} val=99\n", encoding="utf-8")
+        url_ruleset = self.tmp / "custom_url.ruleset"
+        url_ruleset.write_text(f"# Description: Direct URL ruleset\nrule {url_rule.as_uri()} val=99\n", encoding="utf-8")
         r_url = subprocess.run(
-            [str(SCRIPT), "preset", url_preset.as_uri()],
+            [str(SCRIPT), "ruleset", url_ruleset.as_uri()],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -109,10 +109,10 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertEqual(r_url.returncode, 0, r_url.stderr)
         self.assertIn("Loaded from URL 99.", r_url.stdout)
 
-        # Verify include directive, CLI key=val variables, and prompt directives in .agents_bundle
+        # Verify bundle directive, CLI key=val variables, and prompt directives in .agents_bundle
         inc_file = self.tmp / "task_flow.bundle"
         inc_file.write_text(
-            "# Description: Custom task flow include\n"
+            "# Description: Custom task flow bundle\n"
             "[if task!=]\n"
             "[if task=plan] $ echo all_tasks\n"
             "[if task!=,plan] $ echo focused_task_{task:}\n"
@@ -122,8 +122,8 @@ class TestAgentsBundle(unittest.TestCase):
             encoding="utf-8",
         )
         (self.tmp / ".agents_bundle").write_text(
-            "preset vitalio/agents-rules:core\n"
-            f"include {inc_file.as_posix()}\n",
+            "ruleset vitalio/agents-rules:core\n"
+            f"bundle {inc_file.as_posix()}\n",
             encoding="utf-8",
         )
         r_none = subprocess.run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
@@ -151,9 +151,9 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertIn("in German", r_foc.stdout)
         self.assertIn("===== Prompt =====\nMode: IMPLEMENTATION (A2)\n\nFocus on edge cases", r_foc.stdout)
 
-    def test_builtin_vars_override_in_preset(self):
+    def test_builtin_vars_override_in_ruleset(self):
         rp = subprocess.run(
-            [str(SCRIPT), "preset", "vitalio/agents-rules:default", "os=windows", "vcs=cvs", "-v"],
+            [str(SCRIPT), "ruleset", "vitalio/agents-rules:default", "os=windows", "vcs=cvs", "-v"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -184,12 +184,12 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertIn("tools/", rt.stdout)
         self.assertIn("more files", rt.stdout)
 
-    def test_cli_preset_rule_and_list(self):
+    def test_cli_ruleset_rule_and_list(self):
         rl = subprocess.run([str(SCRIPT), "--list"], capture_output=True, text=True, check=False)
         self.assertEqual(rl.returncode, 0, rl.stderr)
         self.assertIn("Built-in variables", rl.stdout)
         self.assertIn("[if os=linux] rule os/linux", rl.stdout)
-        self.assertIn("Bundle includes in 'vitalio/agents-rules'", rl.stdout)
+        self.assertIn("Bundles in 'vitalio/agents-rules'", rl.stdout)
         self.assertNotIn("os/auto", rl.stdout)
         self.assertNotIn("vcs/auto", rl.stdout)
 
@@ -221,22 +221,22 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertEqual(r_tree.returncode, 0)
         self.assertIn("AGENTS.md", r_tree.stdout)
 
-        # Verify comment stripping in rules and dynamic {role:} target resolution in presets
+        # Verify comment stripping in rules and dynamic {role:} target resolution in rulesets
         role_dir = self.tmp / "pkg_repo" / "rules" / "role"
         role_dir.mkdir(parents=True)
         (role_dir / "audit.md").write_text(
             "# Description: Auditor\n# Maintainer comment that must be stripped\n<!-- html comment -->\n- Role (Auditor): Check consistency.\n",
             encoding="utf-8",
         )
-        p_dir = self.tmp / "pkg_repo" / "presets"
+        p_dir = self.tmp / "pkg_repo" / "rulesets"
         p_dir.mkdir(parents=True)
-        (p_dir / "default.preset").write_text(
+        (p_dir / "default.ruleset").write_text(
             "# Description: Default\nrule core/ssot\n[if role!=] rule role/{role:}\n",
             encoding="utf-8",
         )
         env = {**os.environ, "AGENTS_BUNDLE_LOCAL_PKG_DIR": str(self.tmp / "pkg_repo")}
         r_role = subprocess.run(
-            [str(SCRIPT), "preset", "vitalio/agents-rules:default", "role=audit"],
+            [str(SCRIPT), "ruleset", "vitalio/agents-rules:default", "role=audit"],
             capture_output=True,
             text=True,
             env=env,

@@ -1,16 +1,16 @@
 def default_spec_template(prog: str | None = None) -> str:
     cmd = prog or prog_name()
     lines = [
-        f"# {SPEC_FILE_NAME} — root context preset and command bundle for '{cmd}'",
+        f"# {SPEC_FILE_NAME} — root context ruleset and command bundle for '{cmd}'",
         "# Directives:",
-        f"#   preset <owner>/<repo>:<name> [-exclude ...] [key=val ...]",
+        f"#   ruleset <owner>/<repo>:<name> [-exclude ...] [key=val ...]",
         f"#   rule <owner>/<repo>:<name> [key=val ...]",
-        f"#   include <owner>/<repo>:<name> [key=val ...]",
+        f"#   bundle <owner>/<repo>:<name> [key=val ...]",
         "#   prompt <text>",
         "#   [if os=linux] rule <owner>/<repo>:os/linux  (or multi-line [if ...] ... [/if])",
         "#   $ <shell command>  (use '$ cat <file>' to include a file)",
         "",
-        f"preset {DEFAULT_RULES_PKG}:default",
+        f"ruleset {DEFAULT_RULES_PKG}:default",
         "",
         "$ cat AGENTS.md",
         f"$ {cmd} --tree",
@@ -61,14 +61,14 @@ def parse_spec(
                 entries.append(("cmd", cmd_str, cond_expr))
         elif line in ("$", "!"):
             continue
-        elif line.startswith("preset ") or line.startswith("rule "):
+        elif line.startswith("ruleset ") or line.startswith("rule "):
             entries.append(("directive", line, cond_expr))
-        elif line.startswith("include "):
+        elif line.startswith("bundle "):
             parts = shlex.split(line)
             target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
             if excls:
-                raise SystemExit(f"{prog}: include directive does not support excludes: {line!r}")
-            inc_text = resolve_include_text(target, work_dir=work_dir, refresh=refresh)
+                raise SystemExit(f"{prog}: bundle directive does not support excludes: {line!r}")
+            inc_text = resolve_bundle_text(target, work_dir=work_dir, refresh=refresh)
             merged_cli = {**(cli_vars or {}), **vmap}
             for sub_kind, sub_val, sub_cond in parse_spec(
                 inc_text, work_dir=work_dir, cli_vars=merged_cli, refresh=refresh
@@ -83,7 +83,7 @@ def parse_spec(
             continue
         else:
             raise SystemExit(
-                f"{prog}: invalid line in {SPEC_FILE_NAME}: {line!r} (expected 'preset ...', 'rule ...', 'include ...', 'prompt ...', '[if ...]', or '$ <command>')"
+                f"{prog}: invalid line in {SPEC_FILE_NAME}: {line!r} (expected 'ruleset ...', 'rule ...', 'bundle ...', 'prompt ...', '[if ...]', or '$ <command>')"
             )
     return entries
 

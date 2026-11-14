@@ -77,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     if "-V" in args or "--version" in args:
         sys.stdout.write(f"{prog} {VERSION}\n")
         return 0
-    if args and args[0] in ("preset", "rule"):
+    if args and args[0] in ("ruleset", "rule"):
         kind = args[0]
         refresh = "--refresh" in args[1:]
         verbose = "-v" in args[1:] or "--verbose" in args[1:]

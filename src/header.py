@@ -3,9 +3,9 @@
 """Usage:
   {prog} [k=v ...] [-p TEXT] [FILE ...]       Build context bundle from .agents_bundle to stdout
                                                 Opts: -p/--prompt TEXT, -C/--dir DIR, -v/--verbose, --refresh
-  {prog} preset <pkg>:<name> [-excl] [k=v]    Render a preset to stdout
+  {prog} ruleset <pkg>:<name> [-excl] [k=v]   Render a ruleset to stdout
   {prog} rule <pkg>:<name> [k=v]              Render a single rule to stdout
-  {prog} --list | -l [pkg]                    List presets, rules, includes, and built-in variables (default: {default_pkg})
+  {prog} --list | -l [pkg]                    List rulesets, rules, bundles, and built-in variables (default: {default_pkg})
   {prog} --update-cache                       Refresh cached rule packages in {cache_dir}
   {prog} --init [--force]                     Create a starter .agents_bundle in the current directory
   {prog} --tree [DIR] [opts]                  Print token-budgeted repository file tree to stdout

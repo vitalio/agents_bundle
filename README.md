@@ -1,15 +1,15 @@
 # agents_bundle
 
-**Unix-style context bundler, rule/preset engine, and token-budgeted repository file tree for AI coding agents.**
+**Unix-style context bundler, rule/ruleset engine, and token-budgeted repository file tree for AI coding agents.**
 
-`agents_bundle` executes `.agents_bundle` in the current directory (`preset ...`, `rule ...`, `include ...`, `prompt ...`, `[if ...]`, and `$ <cmd>` directives),
+`agents_bundle` executes `.agents_bundle` in the current directory (`ruleset ...`, `rule ...`, `bundle ...`, `prompt ...`, `[if ...]`, and `$ <cmd>` directives),
 includes any extra files and `-p/--prompt` text, and writes the assembled bundle strictly to `stdout`
 (sending warnings or errors to `stderr`) so it composes cleanly via Unix pipes.
 
 ## `.agents_bundle` Format
 
 ```text
-preset vitalio/agents-rules:default
+ruleset vitalio/agents-rules:default
 rule vitalio/agents-rules:release/semver
 rule vitalio/agents-rules:stack/cli
 rule vitalio/agents-rules:stack/python-cli py_min=3.9
@@ -29,7 +29,7 @@ agents_bundle --init
 agents_bundle > bundle.txt
 agents_bundle mode=summary > bundle.txt
 agents_bundle -p "Fix issue #12" src/main.py > bundle.txt
-agents_bundle preset vitalio/agents-rules:default os=windows
+agents_bundle ruleset vitalio/agents-rules:default os=windows
 agents_bundle rule vitalio/agents-rules:release/single-file-build
 agents_bundle --list
 agents_bundle --tree -x bumps -x resolutions --max-lines 160

@@ -1,14 +1,14 @@
-# .agents_bundle — root context preset and command bundle (run: agents_bundle | run_block)
+# .agents_bundle — root context ruleset and command bundle (run: agents_bundle | run_block)
 $ run_block --agents
 
-preset vitalio/agents-rules:default
+ruleset vitalio/agents-rules:default
 rule vitalio/agents-rules:release/semver
 rule vitalio/agents-rules:release/single-file-build
 rule vitalio/agents-rules:stack/cli
 rule vitalio/agents-rules:stack/python-cli py_min=3.9
 
 $ cat AGENTS.md
-include vitalio/agents-rules:todo_md
+bundle vitalio/agents-rules:todo_md
 $ agents_bundle --tree
 $ git status -sb
 $ git branch -vv
