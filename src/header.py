@@ -12,7 +12,6 @@
                                                 Opts: -x/--exclude DIR, --max-lines N (160), --max-tokens N (1600)
   {prog} --update [--force]                   Self-update {prog} from GitHub (vitalio/agents_bundle)
   {prog} --check-update                       Check if a newer version is available
-  {prog} --agents                             Print concise agent usage and .agents_bundle rules
   {prog} -V | --version                       Print version and exit 0
   {prog} -h | --help                          Print this usage and exit 0
 

@@ -127,7 +127,7 @@ def _parse_md_text(raw_text: str, fallback_desc: str) -> tuple[str, str]:
             continue
         if s.startswith("```"):
             in_fence = not in_fence
-        if not in_fence and s.startswith("#"):
+        if not in_fence and re.match(r"^#(?!#)", s):
             continue
         body_lines.append(line)
     return desc, "\n".join(body_lines).strip()
@@ -214,13 +214,22 @@ def _load_package_from_dir(
 def _ensure_remote_package(pkg_spec: str, refresh: bool = False) -> Path:
     prog = prog_name()
     local_override = os.environ.get("AGENTS_BUNDLE_LOCAL_PKG_DIR")
-    if local_override and pkg_spec == DEFAULT_RULES_PKG and Path(local_override).is_dir():
-        return Path(local_override)
-    home_candidate = Path.home() / "agents-rules"
-    if pkg_spec == DEFAULT_RULES_PKG and not refresh and (home_candidate / "rules").is_dir() and (home_candidate / "rulesets").is_dir():
-        cdir_chk = cache_dir_path() / "packages" / pkg_spec
-        if not cdir_chk.is_dir():
-            return home_candidate
+    if local_override and Path(local_override).is_dir():
+        lo_path = Path(local_override)
+        sub_pkg = lo_path / pkg_spec.split("@", 1)[0]
+        if sub_pkg.is_dir():
+            return sub_pkg
+        if pkg_spec == DEFAULT_RULES_PKG or (lo_path / "bundles").is_dir() or (lo_path / "rules").is_dir():
+            return lo_path
+    repo_part_clean = pkg_spec.split("@", 1)[0]
+    if repo_part_clean.startswith("vitalio/") and not refresh:
+        repo_leaf = repo_part_clean.split("/", 1)[1]
+        for cand_name in (repo_leaf, repo_leaf.replace("_", "-"), repo_leaf.replace("-", "_")):
+            hc = Path.home() / cand_name
+            if hc.is_dir() and any((hc / d).is_dir() for d in ("rules", "src/rules", "bundles", "src/bundles")):
+                cdir_chk = cache_dir_path() / "packages" / pkg_spec
+                if not cdir_chk.is_dir():
+                    return hc
 
     ref = ""
     repo_part = pkg_spec
@@ -283,7 +292,11 @@ def _fetch_url_file(url: str, refresh: bool = False) -> Path:
         raise SystemExit(f"{prog}: failed to fetch {url!r}: {exc}")
 
 
-def _parse_target_spec(spec: str, default_pkg: str | None = None) -> tuple[str, str]:
+def _parse_target_spec(
+    spec: str,
+    default_pkg: str | None = None,
+    allow_repo_shorthand: bool = False,
+) -> tuple[str, str]:
     prog = prog_name()
     if ":" not in spec and spec.startswith(("./", "../", "~/", "/")):
         return "__file__", spec
@@ -294,8 +307,12 @@ def _parse_target_spec(spec: str, default_pkg: str | None = None) -> tuple[str, 
             return "__url__", spec
         return spec[:idx], spec[idx + 1:].strip().lower()
     if ":" not in spec:
+        s_clean = spec.strip()
+        if allow_repo_shorthand and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:@[A-Za-z0-9_./-]+)?", s_clean):
+            repo_leaf = s_clean.split("@", 1)[0].rsplit("/", 1)[-1].lower()
+            return s_clean, repo_leaf
         if default_pkg:
-            return default_pkg, spec.strip().lower()
+            return default_pkg, s_clean.lower()
         raise SystemExit(
             f"{prog}: missing package prefix in {spec!r} (expected '<owner>/<repo>:{spec}' or './path')"
         )
@@ -325,7 +342,7 @@ def resolve_bundle_text(
     default_pkg: str | None = DEFAULT_RULES_PKG,
 ) -> str:
     prog = prog_name()
-    pkg_id, item_name = _parse_target_spec(target_spec, default_pkg=default_pkg)
+    pkg_id, item_name = _parse_target_spec(target_spec, default_pkg=default_pkg, allow_repo_shorthand=True)
     if pkg_id in ("__file__", "__url__"):
         if pkg_id == "__url__":
             fpath = _fetch_url_file(item_name, refresh=refresh)

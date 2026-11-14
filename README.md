@@ -27,7 +27,6 @@ $ git status -sb
 
 ```bash
 agents_bundle --init
-agents_bundle --agents
 agents_bundle > bundle.txt
 agents_bundle role=design > bundle.txt
 agents_bundle role=plan > bundle.txt

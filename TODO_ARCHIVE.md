@@ -24,3 +24,5 @@ Target outcome across repositories:
 - Add --agents flag and bundle vitalio/agents-rules:agents_bundle (--agents + conditional --list in role=design).
 - Emit actual invocation in Bundle-Command: and Title-Case variable headers (Role:, Task:, etc.) in bundle header.
 - Define 4 orthogonal roles in vitalio/agents-rules (design, plan, execute, audit) and bind their artifacts in todo_md.bundle.
+
+# ✅ [DONE] F4: Support bundle <owner>/<repo> shorthand, add src/rules & src/bundles, and remove --agents CLI flag — *2026-11-14*

@@ -1,0 +1,3 @@
+# Description: Context bundler instructions and rule catalog for design/planning
+rule vitalio/agents_bundle:agents_bundle
+[if role=design] $ agents_bundle --list

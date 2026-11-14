@@ -47,8 +47,10 @@ def _seed_offline_rules_pkg(pkg_dir: Path) -> None:
         "rules/role/audit.md": "# Description: Universal Auditor role\n- Role (Auditor): Audit the requested scope.\n",
         "rules/stack/python-cli.md": "# Description: Python CLI rules\n- Python CLI engineering invariants: Python {py_min:3.9}+ compatibility.\n",
         "rules/release/single-file-build.md": "# Description: Single-file build\n- Single-file build from modular `src/`: Edit source modules under `src/`.\n",
-        "bundles/agents_bundle.bundle": "# Description: On-demand agents_bundle instructions\n$ agents_bundle --agents\n[if role=design] $ agents_bundle --list\n",
-        "bundles/todo_md.bundle": "# Description: On-demand todo_md bundle\n$ todo_md --agents\n",
+        "rules/agents_bundle.md": "# Description: Bundler rule\n- Context bundler & rules engine (`agents_bundle`): Use `--tree` and `--list`.\n",
+        "bundles/agents_bundle.bundle": "# Description: On-demand agents_bundle instructions\nrule vitalio/agents_bundle:agents_bundle\n[if role=design] $ agents_bundle --list\n",
+        "rules/todo_md.md": "# Description: Task tracker rule\n- Task management (`todo_md`): Manage `TODO.md`.\n",
+        "bundles/todo_md.bundle": "# Description: On-demand todo_md bundle\nrule vitalio/todo_md:todo_md\n",
     }
     for rel, content in files.items():
         p = pkg_dir / rel
@@ -81,13 +83,7 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertEqual(rh.returncode, 0)
         self.assertIn("Usage:", rh.stdout)
         self.assertIn("-x/--exclude DIR", rh.stdout)
-        self.assertIn("--agents", rh.stdout)
-        ra = subprocess.run([str(SCRIPT), "--agents"], capture_output=True, text=True, check=False)
-        self.assertEqual(ra.returncode, 0, ra.stderr)
-        self.assertIn("## Context bundler & rules engine (`agents_bundle`)", ra.stdout)
-        self.assertIn("agents_bundle --tree", ra.stdout)
-        self.assertIn("role=design", ra.stdout)
-        self.assertIn("role=execute", ra.stdout)
+        self.assertNotIn("--agents", rh.stdout)
         rv = subprocess.run([str(SCRIPT), "--version"], capture_output=True, text=True, check=False)
         self.assertEqual(rv.returncode, 0)
         ver = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
@@ -168,28 +164,33 @@ class TestAgentsBundle(unittest.TestCase):
         inc_file.write_text(
             "# Description: Custom task flow bundle\n"
             "[if role=plan]\n"
-            "    $ echo all_tasks\n"
+            "    [if task=] $ echo all_tasks\n"
+            "    [if task!=] $ echo focused_task_{task:}\n"
             "    prompt Mode: PLANNING\n"
             "[/if]\n"
-            "[if task!=]\n"
-            "    [if task=next]\n"
+            "[if role=execute]\n"
+            "    [if task=]\n"
             "        $ echo all_tasks\n"
-            "        prompt Mode: IMPLEMENTATION (next)\n"
+            "        prompt Mode: EXECUTION\n"
             "    [/if]\n"
-            "    [if task!=,next]\n"
+            "    [if task!=]\n"
             "        $ echo focused_task_{task:}\n"
-            "        prompt Mode: IMPLEMENTATION ({task:})\n"
+            "        prompt Mode: EXECUTION ({task:})\n"
             "    [/if]\n"
             "[/if]\n",
             encoding="utf-8",
         )
         (self.tmp / ".agents_bundle").write_text(
+            "bundle vitalio/agents_bundle\n"
             "ruleset vitalio/agents-rules:core\n"
+            "bundle vitalio/todo_md\n"
             f"bundle {inc_file.as_posix()}\n",
             encoding="utf-8",
         )
         r_none = subprocess.run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
         self.assertEqual(r_none.returncode, 0, r_none.stderr)
+        self.assertIn("Context bundler & rules engine", r_none.stdout)
+        self.assertIn("Task management (`todo_md`)", r_none.stdout)
         self.assertNotIn("all_tasks", r_none.stdout)
         self.assertNotIn("focused_task_", r_none.stdout)
         self.assertNotIn("===== Prompt =====", r_none.stdout)
@@ -201,26 +202,27 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertNotIn("focused_task_", r_plan.stdout)
         self.assertIn("===== Prompt =====\nMode: PLANNING", r_plan.stdout)
 
-        r_next = subprocess.run([str(SCRIPT), "task=next"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
-        self.assertEqual(r_next.returncode, 0, r_next.stderr)
-        self.assertIn("all_tasks", r_next.stdout)
-        self.assertNotIn("focused_task_", r_next.stdout)
-        self.assertIn("===== Prompt =====\nMode: IMPLEMENTATION (next)", r_next.stdout)
+        r_exec = subprocess.run([str(SCRIPT), "role=execute"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self.assertEqual(r_exec.returncode, 0, r_exec.stderr)
+        self.assertIn("Bundle-Command: agents_bundle role=execute\nRole: execute\n", r_exec.stdout)
+        self.assertIn("all_tasks", r_exec.stdout)
+        self.assertNotIn("focused_task_", r_exec.stdout)
+        self.assertIn("===== Prompt =====\nMode: EXECUTION", r_exec.stdout)
 
         r_foc = subprocess.run(
-            [str(SCRIPT), "task=A2", "lang=German", "-p", "Focus on edge cases"],
+            [str(SCRIPT), "role=execute", "task=A2", "lang=German", "-p", "Focus on edge cases"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
             check=False,
         )
         self.assertEqual(r_foc.returncode, 0, r_foc.stderr)
-        self.assertIn("Bundle-Command: agents_bundle task=A2 lang=German -p 'Focus on edge cases'", r_foc.stdout)
-        self.assertIn("Task: A2\nLang: German\n", r_foc.stdout)
+        self.assertIn("Bundle-Command: agents_bundle role=execute task=A2 lang=German -p 'Focus on edge cases'", r_foc.stdout)
+        self.assertIn("Role: execute\nTask: A2\nLang: German\n", r_foc.stdout)
         self.assertIn("focused_task_A2", r_foc.stdout)
         self.assertNotIn("all_tasks", r_foc.stdout)
         self.assertIn("in German", r_foc.stdout)
-        self.assertIn("===== Prompt =====\nMode: IMPLEMENTATION (A2)\n\nFocus on edge cases", r_foc.stdout)
+        self.assertIn("===== Prompt =====\nMode: EXECUTION (A2)\n\nFocus on edge cases", r_foc.stdout)
 
     def test_builtin_vars_override_in_ruleset(self):
         rp = subprocess.run(

@@ -1,17 +1,3 @@
-def agents_text(prog: str | None = None) -> str:
-    cmd = prog or prog_name()
-    lines = [
-        f"## Context bundler & rules engine (`{cmd}`)",
-        "",
-        f"- Assemble session bundle: `{cmd} [key=val ...] [-p \"<prompt>\"] [file ...] | run_block` (roles: `role=design`, `role=plan`, `role=execute`, `role=audit`; task focus: `task=<ID>` or `task=next`)",
-        f"- Inspect repository file tree: `{cmd} --tree [DIR] [-x DIR] [--max-lines N] [--max-tokens N]` (use instead of `find`/`ls` for directory structure; pins `AGENTS.md`)",
-        f"- Discover rulesets, rules, and bundles: `{cmd} --list [pkg]`, `{cmd} ruleset <pkg>:<name> [k=v]`, `{cmd} rule <pkg>:<name> [k=v]`",
-        f"- Maintain `{SPEC_FILE_NAME}` and `.bundle` files: directives `ruleset`, `rule`, `bundle`, `prompt`, `[if key=val]`, and `$ <cmd>` (single-line `[if ...] <line>` needs no `[/if]`; indent nested lines inside multi-line `[if ...] ... [/if]` blocks by 4 spaces). During design or planning, keep `{SPEC_FILE_NAME}` updated with the rulesets, stack rules, and bundles required by the project (`{cmd} --init` bootstraps a new `{SPEC_FILE_NAME}`).",
-        "",
-    ]
-    return "\n".join(lines)
-
-
 def default_spec_template(prog: str | None = None) -> str:
     cmd = prog or prog_name()
     lines = [
@@ -19,12 +5,13 @@ def default_spec_template(prog: str | None = None) -> str:
         "# Directives:",
         f"#   ruleset <owner>/<repo>:<name> [-exclude ...] [key=val ...]",
         f"#   rule <owner>/<repo>:<name> [key=val ...]",
-        f"#   bundle <owner>/<repo>:<name> [key=val ...]",
+        f"#   bundle <owner>/<repo>[:<name>] [key=val ...]",
         "#   prompt <text>",
         "#   [if os=linux] rule <owner>/<repo>:os/linux  (or multi-line [if ...] ... [/if])",
         "#   $ <shell command>  (use '$ cat <file>' to include a file)",
         "",
-        f"$ {cmd} --agents",
+        "bundle vitalio/run_block",
+        "bundle vitalio/agents_bundle",
         "",
         f"ruleset {DEFAULT_RULES_PKG}:default",
         "",
@@ -107,8 +94,6 @@ def parse_spec(
 def _run_spec_command(cmd_str: str, cwd: Path) -> tuple[int, str]:
     prog = prog_name()
     self_dir = str(Path(__file__).resolve().parent)
-    if re.match(rf"^(?:{re.escape(prog)}|agents_bundle)\s+--agents$", cmd_str):
-        return 0, agents_text(prog).rstrip()
     if re.match(rf"^(?:{re.escape(prog)}|agents_bundle)\s+--tree(?:\s+.*)?$", cmd_str):
         try:
             parts = shlex.split(cmd_str)[2:]

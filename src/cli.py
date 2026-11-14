@@ -74,11 +74,6 @@ def main(argv: list[str] | None = None) -> int:
     if "-h" in args or "--help" in args:
         sys.stdout.write(usage_text())
         return 0
-    if "--agents" in args:
-        if len(args) > 1:
-            raise SystemExit(f"{prog}: usage: {prog} --agents")
-        sys.stdout.write(agents_text(prog))
-        return 0
     if "-V" in args or "--version" in args:
         sys.stdout.write(f"{prog} {VERSION}\n")
         return 0
