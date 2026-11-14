@@ -13,15 +13,54 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "agents_bundle"
 BUILD_PY = ROOT / "build.py"
 INSTALL_SH = ROOT / "install.sh"
-AR_REPO = Path("/home/vitaly/agents-rules")
+
+
+def _seed_offline_rules_pkg(pkg_dir: Path) -> None:
+    files = {
+        "rulesets/core.ruleset": (
+            "# Description: Core axioms\n"
+            "rule core/start\n"
+            "rule core/ssot\n"
+            "rule core/lang lang=English\n"
+        ),
+        "rulesets/default.ruleset": (
+            "# Description: Default project rules\n"
+            "ruleset core\n"
+            "[if os=linux] rule os/linux\n"
+            "[if os=macos] rule os/macos\n"
+            "[if os=windows] rule os/windows\n"
+            "[if vcs=git] rule vcs/git\n"
+            "[if vcs=cvs] rule vcs/cvs\n"
+            "[if role!=] rule role/{role:}\n"
+        ),
+        "rules/core/start.md": "# Description: Start priority\n- Start priority, instruction self-audit & dates: Format dates as `{chat_date_fmt:DD/MM/YYYY}`.\n",
+        "rules/core/ssot.md": "# Description: SSOT\n- Single source of truth & DRY: Define every version in one place.\n",
+        "rules/core/lang.md": "# Description: Language policy\n- Language policy: Write chat prose in {chat_lang:the language the user writes in}; keep code and docs in {lang:English}.\n",
+        "rules/os/linux.md": "# Description: Linux shell rules\n- Linux & POSIX shell rules: Enable `set -euo pipefail` in mutating scripts.\n",
+        "rules/os/macos.md": "# Description: macOS rules\n- macOS & BSD userland rules: Account for BSD userland differences.\n",
+        "rules/os/windows.md": "# Description: Windows rules\n- Windows & PowerShell rules: Enable `$ErrorActionPreference = 'Stop'`.\n",
+        "rules/vcs/git.md": "# Description: Git workflow\n- Git workflow & safety: Push to `origin {main_branch:main}`.\n",
+        "rules/vcs/cvs.md": "# Description: CVS workflow\n- CVS workflow & safety: Inspect status via `cvs -nq update` and `cvs diff -u`.\n",
+        "rules/role/audit.md": "# Description: Universal Auditor role\n- Role (Auditor): Audit the requested scope.\n",
+        "rules/role/plan.md": "# Description: Universal Planner role\n- Role (Planner): Analyze architecture and open tasks.\n",
+        "rules/stack/python-cli.md": "# Description: Python CLI rules\n- Python CLI engineering invariants: Python {py_min:3.9}+ compatibility.\n",
+        "rules/release/single-file-build.md": "# Description: Single-file build\n- Single-file build from modular `src/`: Edit source modules under `src/`.\n",
+        "bundles/todo_md.bundle": "# Description: On-demand todo_md bundle\n$ todo_md --agents\n",
+    }
+    for rel, content in files.items():
+        p = pkg_dir / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
 
 
 class TestAgentsBundle(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="ab_test_"))
         self._saved_env_vars = os.environ.pop("AGENTS_BUNDLE_VARS", None)
+        pkg_dir = self.tmp / "offline_rules_pkg"
+        _seed_offline_rules_pkg(pkg_dir)
         os.environ["AGENTS_BUNDLE_CACHE_DIR"] = str(self.tmp / "cache")
-        os.environ["AGENTS_BUNDLE_LOCAL_PKG_DIR"] = str(AR_REPO)
+        os.environ["AGENTS_BUNDLE_LOCAL_PKG_DIR"] = str(pkg_dir)
 
     def tearDown(self):
         os.environ.pop("AGENTS_BUNDLE_CACHE_DIR", None)
