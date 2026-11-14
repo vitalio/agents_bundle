@@ -118,11 +118,15 @@ class TestAgentsBundle(unittest.TestCase):
         inc_file = self.tmp / "task_flow.bundle"
         inc_file.write_text(
             "# Description: Custom task flow bundle\n"
+            "[if role=plan]\n"
+            "$ echo all_tasks\n"
+            "prompt Mode: PLANNING\n"
+            "[/if]\n"
             "[if task!=]\n"
-            "[if task=plan] $ echo all_tasks\n"
-            "[if task!=,plan] $ echo focused_task_{task:}\n"
-            "[if task=plan] prompt Mode: PLANNING\n"
-            "[if task!=,plan] prompt Mode: IMPLEMENTATION ({task:})\n"
+            "[if task=next] $ echo all_tasks\n"
+            "[if task!=,next] $ echo focused_task_{task:}\n"
+            "[if task=next] prompt Mode: IMPLEMENTATION (next)\n"
+            "[if task!=,next] prompt Mode: IMPLEMENTATION ({task:})\n"
             "[/if]\n",
             encoding="utf-8",
         )
@@ -137,11 +141,17 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertNotIn("focused_task_", r_none.stdout)
         self.assertNotIn("===== Prompt =====", r_none.stdout)
 
-        r_plan = subprocess.run([str(SCRIPT), "task=plan"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        r_plan = subprocess.run([str(SCRIPT), "role=plan"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
         self.assertEqual(r_plan.returncode, 0, r_plan.stderr)
         self.assertIn("all_tasks", r_plan.stdout)
         self.assertNotIn("focused_task_", r_plan.stdout)
         self.assertIn("===== Prompt =====\nMode: PLANNING", r_plan.stdout)
+
+        r_next = subprocess.run([str(SCRIPT), "task=next"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self.assertEqual(r_next.returncode, 0, r_next.stderr)
+        self.assertIn("all_tasks", r_next.stdout)
+        self.assertNotIn("focused_task_", r_next.stdout)
+        self.assertIn("===== Prompt =====\nMode: IMPLEMENTATION (next)", r_next.stdout)
 
         r_foc = subprocess.run(
             [str(SCRIPT), "task=A2", "lang=German", "-p", "Focus on edge cases"],
