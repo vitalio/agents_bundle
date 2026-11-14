@@ -72,6 +72,7 @@ class TestAgentsBundle(unittest.TestCase):
             check=False,
         )
         self.assertEqual(rb.returncode, 0, rb.stderr)
+        self.assertIn('Bundle-Command: agents_bundle [key=val ...] [-p "<prompt>"] [file ...]', rb.stdout)
         self.assertIn("===== Rules =====", rb.stdout)
         self.assertNotIn("# [preset", rb.stdout)
         self.assertIn("in **Russian**", rb.stdout)

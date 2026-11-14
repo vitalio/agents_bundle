@@ -199,7 +199,8 @@ def build_bundle(
     if all_prompts:
         sections.append(("Prompt", "\n\n".join(all_prompts)))
 
-    blocks = [f"===== {title} =====\n{content}\n" for title, content in sections]
+    header = f'Bundle-Command: {prog} [key=val ...] [-p "<prompt>"] [file ...]\n'
+    blocks = [header, *(f"===== {title} =====\n{content}\n" for title, content in sections)]
     return "\n".join(blocks), warnings
 
 
