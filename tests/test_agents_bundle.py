@@ -33,7 +33,7 @@ def _seed_offline_rules_pkg(pkg_dir: Path) -> None:
             "[if vcs=cvs] rule vcs/cvs\n"
             "[if role!=] rule role/{role:}\n"
         ),
-        "rules/core/start.md": "# Description: Start priority\n- Start priority, instruction self-audit & dates: Format dates as `{chat_date_fmt:DD/MM/YYYY}`.\n",
+        "rules/core/start.md": "# Description: Start priority\n- Start priority, instruction self-audit & dates: Format dates as `{chat_date_fmt:DD/MM/YYYY}`; in files, commits, headers, and logs always use UTC with ISO `YYYY-MM-DD`.\n",
         "rules/core/ssot.md": "# Description: SSOT\n- Single source of truth & DRY: Define every version in one place.\n",
         "rules/core/lang.md": "# Description: Language policy\n- Language policy: Write chat prose in {chat_lang:the language the user writes in}; keep code and docs in {lang:English}.\n",
         "rules/os/linux.md": "# Description: Linux shell rules\n- Linux & POSIX shell rules: Enable `set -euo pipefail` in mutating scripts.\n",
@@ -41,10 +41,13 @@ def _seed_offline_rules_pkg(pkg_dir: Path) -> None:
         "rules/os/windows.md": "# Description: Windows rules\n- Windows & PowerShell rules: Enable `$ErrorActionPreference = 'Stop'`.\n",
         "rules/vcs/git.md": "# Description: Git workflow\n- Git workflow & safety: Push to `origin {main_branch:main}`.\n",
         "rules/vcs/cvs.md": "# Description: CVS workflow\n- CVS workflow & safety: Inspect status via `cvs -nq update` and `cvs diff -u`.\n",
+        "rules/role/design.md": "# Description: Universal Designer role\n- Role (Designer): Explore problem space and architecture.\n",
+        "rules/role/plan.md": "# Description: Universal Planner role\n- Role (Planner): Decompose and prioritize tasks.\n",
+        "rules/role/execute.md": "# Description: Universal Executor role\n- Role (Executor): Focus strictly on delivering the target task.\n",
         "rules/role/audit.md": "# Description: Universal Auditor role\n- Role (Auditor): Audit the requested scope.\n",
-        "rules/role/plan.md": "# Description: Universal Planner role\n- Role (Planner): Analyze architecture and open tasks.\n",
         "rules/stack/python-cli.md": "# Description: Python CLI rules\n- Python CLI engineering invariants: Python {py_min:3.9}+ compatibility.\n",
         "rules/release/single-file-build.md": "# Description: Single-file build\n- Single-file build from modular `src/`: Edit source modules under `src/`.\n",
+        "bundles/agents_bundle.bundle": "# Description: On-demand agents_bundle instructions\n$ agents_bundle --agents\n[if role=design] $ agents_bundle --list\n",
         "bundles/todo_md.bundle": "# Description: On-demand todo_md bundle\n$ todo_md --agents\n",
     }
     for rel, content in files.items():
@@ -78,6 +81,13 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertEqual(rh.returncode, 0)
         self.assertIn("Usage:", rh.stdout)
         self.assertIn("-x/--exclude DIR", rh.stdout)
+        self.assertIn("--agents", rh.stdout)
+        ra = subprocess.run([str(SCRIPT), "--agents"], capture_output=True, text=True, check=False)
+        self.assertEqual(ra.returncode, 0, ra.stderr)
+        self.assertIn("## Context bundler & rules engine (`agents_bundle`)", ra.stdout)
+        self.assertIn("agents_bundle --tree", ra.stdout)
+        self.assertIn("role=design", ra.stdout)
+        self.assertIn("role=execute", ra.stdout)
         rv = subprocess.run([str(SCRIPT), "--version"], capture_output=True, text=True, check=False)
         self.assertEqual(rv.returncode, 0)
         ver = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
@@ -101,7 +111,7 @@ class TestAgentsBundle(unittest.TestCase):
             f"[if os={cur_os}] rule vitalio/agents-rules:os/linux\n"
             f"[if os={other_os}] rule vitalio/agents-rules:os/windows\n"
             f"[if os={cur_os}]\n"
-            "rule vitalio/agents-rules:stack/python-cli py_min=3.12\n"
+            "    rule vitalio/agents-rules:stack/python-cli py_min=3.12\n"
             "[/if]\n"
             "$ cat AGENTS.md\n"
             "$ agents_bundle --tree --max-lines 10\n"
@@ -116,7 +126,7 @@ class TestAgentsBundle(unittest.TestCase):
             check=False,
         )
         self.assertEqual(rb.returncode, 0, rb.stderr)
-        self.assertIn('Bundle-Command: agents_bundle [key=val ...] [-p "<prompt>"] [file ...]', rb.stdout)
+        self.assertIn("Bundle-Command: agents_bundle extra.txt -p 'Solve task 1'", rb.stdout)
         self.assertIn("===== Rules =====", rb.stdout)
         self.assertNotIn("# [ruleset", rb.stdout)
         self.assertIn("in Spanish", rb.stdout)
@@ -158,14 +168,18 @@ class TestAgentsBundle(unittest.TestCase):
         inc_file.write_text(
             "# Description: Custom task flow bundle\n"
             "[if role=plan]\n"
-            "$ echo all_tasks\n"
-            "prompt Mode: PLANNING\n"
+            "    $ echo all_tasks\n"
+            "    prompt Mode: PLANNING\n"
             "[/if]\n"
             "[if task!=]\n"
-            "[if task=next] $ echo all_tasks\n"
-            "[if task!=,next] $ echo focused_task_{task:}\n"
-            "[if task=next] prompt Mode: IMPLEMENTATION (next)\n"
-            "[if task!=,next] prompt Mode: IMPLEMENTATION ({task:})\n"
+            "    [if task=next]\n"
+            "        $ echo all_tasks\n"
+            "        prompt Mode: IMPLEMENTATION (next)\n"
+            "    [/if]\n"
+            "    [if task!=,next]\n"
+            "        $ echo focused_task_{task:}\n"
+            "        prompt Mode: IMPLEMENTATION ({task:})\n"
+            "    [/if]\n"
             "[/if]\n",
             encoding="utf-8",
         )
@@ -182,6 +196,7 @@ class TestAgentsBundle(unittest.TestCase):
 
         r_plan = subprocess.run([str(SCRIPT), "role=plan"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
         self.assertEqual(r_plan.returncode, 0, r_plan.stderr)
+        self.assertIn("Bundle-Command: agents_bundle role=plan\nRole: plan\n", r_plan.stdout)
         self.assertIn("all_tasks", r_plan.stdout)
         self.assertNotIn("focused_task_", r_plan.stdout)
         self.assertIn("===== Prompt =====\nMode: PLANNING", r_plan.stdout)
@@ -200,6 +215,8 @@ class TestAgentsBundle(unittest.TestCase):
             check=False,
         )
         self.assertEqual(r_foc.returncode, 0, r_foc.stderr)
+        self.assertIn("Bundle-Command: agents_bundle task=A2 lang=German -p 'Focus on edge cases'", r_foc.stdout)
+        self.assertIn("Task: A2\nLang: German\n", r_foc.stdout)
         self.assertIn("focused_task_A2", r_foc.stdout)
         self.assertNotIn("all_tasks", r_foc.stdout)
         self.assertIn("in German", r_foc.stdout)
@@ -310,6 +327,7 @@ class TestAgentsBundle(unittest.TestCase):
         env = {**os.environ, "AGENTS_BUNDLE_VARS": "lang=Spanish mode=custom chat_lang=French"}
         r_env = subprocess.run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, env=env, check=False)
         self.assertEqual(r_env.returncode, 0, r_env.stderr)
+        self.assertIn("Bundle-Command: agents_bundle\nLang: Spanish\nMode: custom\nChat-Lang: French\n", r_env.stdout)
         self.assertIn("in Spanish", r_env.stdout)
         self.assertIn("Custom mode active (French)", r_env.stdout)
 

@@ -15,19 +15,24 @@ rule vitalio/agents-rules:stack/cli
 rule vitalio/agents-rules:stack/python-cli py_min=3.9
 
 $ cat AGENTS.md
-[if mode=summary] $ git shortlog -sn
 $ agents_bundle --tree -x archive_dir
 $ git status -sb
-
-[if mode=summary] prompt Summarize recent repository activity.
+[if mode=summary]
+    $ git shortlog -sn
+    prompt Summarize recent repository activity.
+[/if]
 ```
 
 ## CLI Usage
 
 ```bash
 agents_bundle --init
+agents_bundle --agents
 agents_bundle > bundle.txt
-agents_bundle mode=summary > bundle.txt
+agents_bundle role=design > bundle.txt
+agents_bundle role=plan > bundle.txt
+agents_bundle role=execute task=F1 > bundle.txt
+agents_bundle role=audit > bundle.txt
 AGENTS_BUNDLE_VARS="chat_lang=Spanish" agents_bundle > bundle.txt
 agents_bundle -p "Fix issue #12" src/main.py > bundle.txt
 agents_bundle ruleset vitalio/agents-rules:default os=windows

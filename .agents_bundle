@@ -1,5 +1,6 @@
 # .agents_bundle — root context ruleset and command bundle (run: agents_bundle | run_block)
 $ run_block --agents
+bundle vitalio/agents-rules:agents_bundle
 
 ruleset vitalio/agents-rules:default
 rule vitalio/agents-rules:release/semver

@@ -1,3 +1,17 @@
+def agents_text(prog: str | None = None) -> str:
+    cmd = prog or prog_name()
+    lines = [
+        f"## Context bundler & rules engine (`{cmd}`)",
+        "",
+        f"- Assemble session bundle: `{cmd} [key=val ...] [-p \"<prompt>\"] [file ...] | run_block` (roles: `role=design`, `role=plan`, `role=execute`, `role=audit`; task focus: `task=<ID>` or `task=next`)",
+        f"- Inspect repository file tree: `{cmd} --tree [DIR] [-x DIR] [--max-lines N] [--max-tokens N]` (use instead of `find`/`ls` for directory structure; pins `AGENTS.md`)",
+        f"- Discover rulesets, rules, and bundles: `{cmd} --list [pkg]`, `{cmd} ruleset <pkg>:<name> [k=v]`, `{cmd} rule <pkg>:<name> [k=v]`",
+        f"- Maintain `{SPEC_FILE_NAME}` and `.bundle` files: directives `ruleset`, `rule`, `bundle`, `prompt`, `[if key=val]`, and `$ <cmd>` (single-line `[if ...] <line>` needs no `[/if]`; indent nested lines inside multi-line `[if ...] ... [/if]` blocks by 4 spaces). During design or planning, keep `{SPEC_FILE_NAME}` updated with the rulesets, stack rules, and bundles required by the project (`{cmd} --init` bootstraps a new `{SPEC_FILE_NAME}`).",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def default_spec_template(prog: str | None = None) -> str:
     cmd = prog or prog_name()
     lines = [
@@ -9,6 +23,8 @@ def default_spec_template(prog: str | None = None) -> str:
         "#   prompt <text>",
         "#   [if os=linux] rule <owner>/<repo>:os/linux  (or multi-line [if ...] ... [/if])",
         "#   $ <shell command>  (use '$ cat <file>' to include a file)",
+        "",
+        f"$ {cmd} --agents",
         "",
         f"ruleset {DEFAULT_RULES_PKG}:default",
         "",
@@ -91,6 +107,8 @@ def parse_spec(
 def _run_spec_command(cmd_str: str, cwd: Path) -> tuple[int, str]:
     prog = prog_name()
     self_dir = str(Path(__file__).resolve().parent)
+    if re.match(rf"^(?:{re.escape(prog)}|agents_bundle)\s+--agents$", cmd_str):
+        return 0, agents_text(prog).rstrip()
     if re.match(rf"^(?:{re.escape(prog)}|agents_bundle)\s+--tree(?:\s+.*)?$", cmd_str):
         try:
             parts = shlex.split(cmd_str)[2:]
@@ -122,6 +140,7 @@ def build_bundle(
     refresh: bool = False,
     verbose: bool = False,
     cli_vars: dict[str, str] | None = None,
+    raw_argv: list[str] | None = None,
 ) -> tuple[str, list[str]]:
     prog = prog_name()
     wdir = (work_dir if work_dir is not None else Path.cwd()).resolve()
@@ -199,7 +218,13 @@ def build_bundle(
     if all_prompts:
         sections.append(("Prompt", "\n\n".join(all_prompts)))
 
-    header = f'Bundle-Command: {prog} [key=val ...] [-p "<prompt>"] [file ...]\n'
+    cmd_line = shlex.join([prog, *raw_argv]) if raw_argv else prog
+    header_lines = [f"Bundle-Command: {cmd_line}"]
+    for k, v in (cli_vars or {}).items():
+        if v != "":
+            hdr_key = "-".join(part.capitalize() for part in k.split("_") if part)
+            header_lines.append(f"{hdr_key}: {v}")
+    header = "\n".join(header_lines) + "\n"
     blocks = [header, *(f"===== {title} =====\n{content}\n" for title, content in sections)]
     return "\n".join(blocks), warnings
 
@@ -249,6 +274,7 @@ def cmd_bundle(argv: list[str]) -> int:
         refresh=refresh,
         verbose=verbose,
         cli_vars=cli_vars,
+        raw_argv=argv,
     )
     for w in warnings:
         sys.stderr.write(f"{prog}: warning: {w}\n")
