@@ -83,7 +83,8 @@ def main(argv: list[str] | None = None) -> int:
         verbose = "-v" in args[1:] or "--verbose" in args[1:]
         rest_tokens = [a for a in args[1:] if a not in ("--refresh", "-v", "--verbose")]
         target, excls, vmap = _parse_directive_tokens(rest_tokens, prog)
-        out = render_directive(kind, target, excludes=excls, cli_vars=vmap, refresh=refresh, verbose=verbose)
+        merged_vmap = {**env_vars(prog), **vmap}
+        out = render_directive(kind, target, excludes=excls, cli_vars=merged_vmap, refresh=refresh, verbose=verbose)
         if out:
             sys.stdout.write(out + "\n")
         return 0

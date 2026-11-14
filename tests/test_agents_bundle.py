@@ -19,12 +19,17 @@ AR_REPO = Path("/home/vitaly/agents-rules")
 class TestAgentsBundle(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="ab_test_"))
+        self._saved_env_vars = os.environ.pop("AGENTS_BUNDLE_VARS", None)
         os.environ["AGENTS_BUNDLE_CACHE_DIR"] = str(self.tmp / "cache")
         os.environ["AGENTS_BUNDLE_LOCAL_PKG_DIR"] = str(AR_REPO)
 
     def tearDown(self):
         os.environ.pop("AGENTS_BUNDLE_CACHE_DIR", None)
         os.environ.pop("AGENTS_BUNDLE_LOCAL_PKG_DIR", None)
+        if self._saved_env_vars is not None:
+            os.environ["AGENTS_BUNDLE_VARS"] = self._saved_env_vars
+        else:
+            os.environ.pop("AGENTS_BUNDLE_VARS", None)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_build_check_help_and_version(self):
@@ -246,6 +251,60 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertIn("- Role (Auditor): Check consistency.", r_role.stdout)
         self.assertNotIn("Maintainer comment", r_role.stdout)
         self.assertNotIn("html comment", r_role.stdout)
+
+    def test_agents_bundle_vars_env_and_cli_override(self):
+        (self.tmp / ".agents_bundle").write_text(
+            "ruleset vitalio/agents-rules:core lang=English\n"
+            "[if mode=custom] prompt Custom mode active ({chat_lang:default})\n",
+            encoding="utf-8",
+        )
+        env = {**os.environ, "AGENTS_BUNDLE_VARS": "lang=Spanish mode=custom chat_lang=French"}
+        r_env = subprocess.run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, env=env, check=False)
+        self.assertEqual(r_env.returncode, 0, r_env.stderr)
+        self.assertIn("in Spanish", r_env.stdout)
+        self.assertIn("Custom mode active (French)", r_env.stdout)
+
+        # CLI key=val overrides AGENTS_BUNDLE_VARS
+        r_cli = subprocess.run(
+            [str(SCRIPT), "lang=German", "chat_lang=Italian"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        self.assertEqual(r_cli.returncode, 0, r_cli.stderr)
+        self.assertIn("in German", r_cli.stdout)
+        self.assertIn("Custom mode active (Italian)", r_cli.stdout)
+
+        # Subcommand ruleset/rule also respects AGENTS_BUNDLE_VARS and CLI override
+        r_sub = subprocess.run(
+            [str(SCRIPT), "rule", "vitalio/agents-rules:core/lang"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        self.assertEqual(r_sub.returncode, 0, r_sub.stderr)
+        self.assertIn("in Spanish", r_sub.stdout)
+
+        r_sub_cli = subprocess.run(
+            [str(SCRIPT), "rule", "vitalio/agents-rules:core/lang", "lang=Japanese"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        self.assertEqual(r_sub_cli.returncode, 0, r_sub_cli.stderr)
+        self.assertIn("in Japanese", r_sub_cli.stdout)
+
+        # Invalid AGENTS_BUNDLE_VARS token fails explicitly
+        bad_env = {**os.environ, "AGENTS_BUNDLE_VARS": "not_a_pair"}
+        r_bad = subprocess.run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, env=bad_env, check=False)
+        self.assertNotEqual(r_bad.returncode, 0)
+        self.assertIn("AGENTS_BUNDLE_VARS", r_bad.stderr)
 
 
 if __name__ == "__main__":

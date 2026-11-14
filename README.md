@@ -28,6 +28,7 @@ $ git status -sb
 agents_bundle --init
 agents_bundle > bundle.txt
 agents_bundle mode=summary > bundle.txt
+AGENTS_BUNDLE_VARS="chat_lang=Spanish" agents_bundle > bundle.txt
 agents_bundle -p "Fix issue #12" src/main.py > bundle.txt
 agents_bundle ruleset vitalio/agents-rules:default os=windows
 agents_bundle rule vitalio/agents-rules:release/single-file-build

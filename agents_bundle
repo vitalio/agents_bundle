@@ -14,6 +14,9 @@
   {prog} --check-update                       Check if a newer version is available
   {prog} -V | --version                       Print version and exit 0
   {prog} -h | --help                          Print this usage and exit 0
+
+Environment:
+  AGENTS_BUNDLE_VARS                          Default key=val pairs (overridden by CLI key=val)
 """
 from __future__ import annotations
 
@@ -33,7 +36,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-VERSION = "0.8.0"
+VERSION = "0.9.0"
 REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/agents_bundle/main/agents_bundle"
 SPEC_FILE_NAME = ".agents_bundle"
@@ -459,6 +462,27 @@ def builtin_vars(work_dir: Path | None = None) -> dict[str, str]:
         "os": _detect_os_name(),
         "vcs": _detect_vcs_name(work_dir),
     }
+
+
+def env_vars(prog: str | None = None) -> dict[str, str]:
+    raw = os.environ.get("AGENTS_BUNDLE_VARS", "").strip()
+    if not raw:
+        return {}
+    p = prog or prog_name()
+    try:
+        tokens = shlex.split(raw)
+    except ValueError as exc:
+        raise SystemExit(f"{p}: invalid AGENTS_BUNDLE_VARS={raw!r}: {exc}")
+    out: dict[str, str] = {}
+    for tok in tokens:
+        if "=" not in tok:
+            raise SystemExit(f"{p}: invalid entry {tok!r} in AGENTS_BUNDLE_VARS (expected key=val)")
+        k, v = tok.split("=", 1)
+        k_clean = k.strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k_clean):
+            raise SystemExit(f"{p}: invalid variable name {k_clean!r} in AGENTS_BUNDLE_VARS")
+        out[k_clean] = v.strip()
+    return out
 
 
 def eval_if_condition(cond_expr: str, vars_map: dict[str, str], prog: str | None = None) -> bool:
@@ -1171,7 +1195,7 @@ def cmd_bundle(argv: list[str]) -> int:
     work_dir: Path | None = None
     prompt_parts: list[str] = []
     extra_files: list[str] = []
-    cli_vars: dict[str, str] = {}
+    cli_vars: dict[str, str] = env_vars(prog)
     refresh = False
     verbose = False
     i = 0
@@ -1303,7 +1327,8 @@ def main(argv: list[str] | None = None) -> int:
         verbose = "-v" in args[1:] or "--verbose" in args[1:]
         rest_tokens = [a for a in args[1:] if a not in ("--refresh", "-v", "--verbose")]
         target, excls, vmap = _parse_directive_tokens(rest_tokens, prog)
-        out = render_directive(kind, target, excludes=excls, cli_vars=vmap, refresh=refresh, verbose=verbose)
+        merged_vmap = {**env_vars(prog), **vmap}
+        out = render_directive(kind, target, excludes=excls, cli_vars=merged_vmap, refresh=refresh, verbose=verbose)
         if out:
             sys.stdout.write(out + "\n")
         return 0

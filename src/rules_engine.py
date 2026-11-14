@@ -35,6 +35,27 @@ def builtin_vars(work_dir: Path | None = None) -> dict[str, str]:
     }
 
 
+def env_vars(prog: str | None = None) -> dict[str, str]:
+    raw = os.environ.get("AGENTS_BUNDLE_VARS", "").strip()
+    if not raw:
+        return {}
+    p = prog or prog_name()
+    try:
+        tokens = shlex.split(raw)
+    except ValueError as exc:
+        raise SystemExit(f"{p}: invalid AGENTS_BUNDLE_VARS={raw!r}: {exc}")
+    out: dict[str, str] = {}
+    for tok in tokens:
+        if "=" not in tok:
+            raise SystemExit(f"{p}: invalid entry {tok!r} in AGENTS_BUNDLE_VARS (expected key=val)")
+        k, v = tok.split("=", 1)
+        k_clean = k.strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k_clean):
+            raise SystemExit(f"{p}: invalid variable name {k_clean!r} in AGENTS_BUNDLE_VARS")
+        out[k_clean] = v.strip()
+    return out
+
+
 def eval_if_condition(cond_expr: str, vars_map: dict[str, str], prog: str | None = None) -> bool:
     p = prog or prog_name()
     tokens = shlex.split(cond_expr.strip())

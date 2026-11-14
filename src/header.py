@@ -14,6 +14,9 @@
   {prog} --check-update                       Check if a newer version is available
   {prog} -V | --version                       Print version and exit 0
   {prog} -h | --help                          Print this usage and exit 0
+
+Environment:
+  AGENTS_BUNDLE_VARS                          Default key=val pairs (overridden by CLI key=val)
 """
 from __future__ import annotations
 

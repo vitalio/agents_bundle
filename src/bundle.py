@@ -209,7 +209,7 @@ def cmd_bundle(argv: list[str]) -> int:
     work_dir: Path | None = None
     prompt_parts: list[str] = []
     extra_files: list[str] = []
-    cli_vars: dict[str, str] = {}
+    cli_vars: dict[str, str] = env_vars(prog)
     refresh = False
     verbose = False
     i = 0
