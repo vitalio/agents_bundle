@@ -14,3 +14,7 @@ Target outcome across repositories:
    - Rebuild, test, reinstall locally, refresh cached packages, and release a new version (commit, tag, and push).
 3. **Dependent `.agents_bundle` files:**
    - Update `preset` -> `ruleset` and `include` -> `bundle` in `~/chrome/canary/.agents_bundle` (gitignored, do not commit) and in `~/todo_md/.agents_bundle`, `~/run_block/.agents_bundle`, and `~/co_turn/.agents_bundle` (commit and push each repository).
+
+# ⚪ [NEW] F2: Support AGENTS_BUNDLE_VARS environment variable for personal default key=val overrides
+
+- Parse key=val pairs from AGENTS_BUNDLE_VARS in the environment as user-level defaults (overridable by CLI key=val arguments) so personal settings such as chat_lang=Russian do not need to be committed into repository .agents_bundle files.
