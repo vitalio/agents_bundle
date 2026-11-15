@@ -14,3 +14,10 @@
 - Support explicit relative file paths inside a package (owner/repo[@ref]:path/to/file) and local relative paths (./..., ../...).
 - Fix _ensure_remote_package so explicit @<ref> on vitalio/* packages fetches the requested ref instead of returning the unpinned local ~/repo working tree.
 - Move src/rules/agents_bundle.md and src/bundles/agents_bundle.bundle into agents/ and keep AGENTS.md, README.md, src/header.py, and unit tests in sync.
+
+# ⚪ [NEW] F10: Enforce command allowlist policy in .agents_bundle for external bundles
+
+- Support an explicit allowlist directive in root .agents_bundle (e.g. 'allow <cmd1> <cmd2> ...' or per-bundle 'bundle <pkg> allow=...') defining which executables external bundles are permitted to run via '$' commands and 'var x=$(...)' subshells.
+- Statically inspect all parsed commands from included bundles before executing any shell command; fail fast with a clear error naming the blocked command and originating bundle if any command executable is not in the user's allowlist.
+- Restrict 'include' paths from external bundles to files inside the repository root (spec_dir) so external bundles cannot read arbitrary host paths outside the workspace.
+- Update src/bundle.py, src/header.py (--help), src/rules/agents_bundle.md, README.md, and unit tests in tests/test_agents_bundle.py.
