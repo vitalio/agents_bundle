@@ -1,3 +1,9 @@
+# ✅ [DONE] F5: Emit a single Rules section before commands and group bundles at top — *2026-11-15, Emit a single Rules section before commands and group bundles at top*
+
+- Collect all rule lines from `bundle`, `ruleset`, and `rule` directives into a single `===== Rules =====` section in `src/bundle.py` before executing and rendering any `$ <cmd>` sections so bundles containing commands never split `===== Rules =====` into multiple sections.
+- Update `default_spec_template()` in `src/bundle.py` (`agents_bundle --init`) and repository `.agents_bundle` to group all `bundle` directives together at the top before `ruleset`, `rule`, and `$ <cmd>` directives.
+- Add unit tests in `tests/test_agents_bundle.py` verifying a single `Rules` section when bundles contain commands.
+
 # ✅ [DONE] F8: Support dynamic task resolution, task file auto-inclusion, and todo_md stdin pipeline in bundles — *2026-11-15, Support dynamic var/include directives and piped task stdin inference in bundles*
 
 - Depends on: todo_md:F8

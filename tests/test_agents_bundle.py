@@ -474,6 +474,54 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertIn("PWSH_ARGS:-Command|git status -sb", r.stdout)
         self.assertIn("===== $ cat pkg/mod.py =====\nX = 1\n", r.stdout)
 
+    def test_single_rules_section_when_bundles_contain_commands(self):
+        b1 = self.tmp / "first.bundle"
+        b1.write_text(
+            "rule vitalio/agents-rules:core/start\n"
+            "$ echo cmd_from_b1\n",
+            encoding="utf-8",
+        )
+        b2 = self.tmp / "second.bundle"
+        b2.write_text(
+            "rule vitalio/agents-rules:core/ssot\n"
+            "$ echo cmd_from_b2\n",
+            encoding="utf-8",
+        )
+        (self.tmp / ".agents_bundle").write_text(
+            f"bundle {b1.as_posix()}\n"
+            "$ echo middle_cmd\n"
+            f"bundle {b2.as_posix()}\n"
+            "rule vitalio/agents-rules:core/lang\n",
+            encoding="utf-8",
+        )
+        r = subprocess.run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.count("===== Rules ====="), 1)
+        rules_pos = r.stdout.index("===== Rules =====")
+        cmd1_pos = r.stdout.index("===== $ echo cmd_from_b1 =====")
+        mid_pos = r.stdout.index("===== $ echo middle_cmd =====")
+        cmd2_pos = r.stdout.index("===== $ echo cmd_from_b2 =====")
+        self.assertLess(rules_pos, cmd1_pos)
+        self.assertLess(cmd1_pos, mid_pos)
+        self.assertLess(mid_pos, cmd2_pos)
+        self.assertIn("Start priority", r.stdout)
+        self.assertIn("Single source of truth", r.stdout)
+        self.assertIn("Language policy", r.stdout)
+
+        init_dir = self.tmp / "init_proj"
+        init_dir.mkdir()
+        ri = subprocess.run([str(SCRIPT), "--init"], cwd=str(init_dir), capture_output=True, text=True, check=False)
+        self.assertEqual(ri.returncode, 0, ri.stderr)
+        init_lines = [
+            ln.strip()
+            for ln in (init_dir / ".agents_bundle").read_text(encoding="utf-8").splitlines()
+            if ln.strip() and not ln.strip().startswith("#")
+        ]
+        bundle_idxs = [idx for idx, ln in enumerate(init_lines) if ln.startswith("bundle ")]
+        non_bundle_idxs = [idx for idx, ln in enumerate(init_lines) if not ln.startswith("bundle ")]
+        self.assertGreaterEqual(len(bundle_idxs), 3)
+        self.assertLess(max(bundle_idxs), min(non_bundle_idxs))
+
 
 if __name__ == "__main__":
     unittest.main()

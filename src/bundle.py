@@ -14,6 +14,7 @@ def default_spec_template(prog: str | None = None) -> str:
         "",
         "bundle vitalio/run_block",
         "bundle vitalio/agents_bundle",
+        "bundle vitalio/todo_md",
         "",
         f"ruleset {DEFAULT_RULES_PKG}:default",
         "",
@@ -228,16 +229,9 @@ def build_bundle(
     sections: list[tuple[str, str]] = []
     warnings: list[str] = []
     pending_rules: list[tuple[str, str, str]] = []
+    pending_cmds: list[str] = []
     spec_prompts: list[str] = []
     included_files: list[tuple[str, bool]] = []
-
-    def flush_pending_rules() -> None:
-        if not pending_rules:
-            return
-        formatted = format_collected_rules(pending_rules, verbose=verbose).strip()
-        pending_rules.clear()
-        if formatted:
-            sections.append(("Rules", formatted))
 
     for kind, val, cond_expr in entries:
         if kind == "directive":
@@ -258,16 +252,22 @@ def build_bundle(
                 )
             )
         elif kind == "cmd":
-            flush_pending_rules()
-            rc, out = _run_spec_command(val, spec_dir)
-            if rc != 0:
-                warnings.append(f"command exited {rc}: {val}")
-            sections.append((f"$ {val}", out))
+            pending_cmds.append(val)
         elif kind == "include":
             included_files.append((val, False))
         elif kind == "prompt":
             spec_prompts.append(val)
-    flush_pending_rules()
+
+    if pending_rules:
+        formatted = format_collected_rules(pending_rules, verbose=verbose).strip()
+        if formatted:
+            sections.append(("Rules", formatted))
+
+    for cmd_val in pending_cmds:
+        rc, out = _run_spec_command(cmd_val, spec_dir)
+        if rc != 0:
+            warnings.append(f"command exited {rc}: {cmd_val}")
+        sections.append((f"$ {cmd_val}", out))
 
     for extra in extra_files or []:
         included_files.append((extra, True))
