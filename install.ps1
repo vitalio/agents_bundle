@@ -3,8 +3,7 @@
 Installs or updates agents_bundle on Windows.
 .DESCRIPTION
 Checks Python 3 and Bash, checks for command name conflicts in PATH,
-installs agents_bundle and a .cmd shim into $HOME\.local\bin, and prints
-the AI agent instructions (--agents-md).
+and installs agents_bundle and a .cmd shim into $HOME\.local\bin.
 #>
 param(
     [string]$Name = $env:AGENTS_BUNDLE_NAME,

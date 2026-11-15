@@ -1,9 +1,3 @@
-# 🎯 [NEXT] F9: Add Quick Installation instructions and update commands to README.md
-
-- Add a Quick Installation section to README.md with one-liner install commands for Linux/macOS (install.sh) and Windows PowerShell 7+ (install.ps1), plus custom --name/--dir options and --update/--check-update CLI usage.
-- Remove the obsolete --agents-md reference from the comment header in install.ps1.
-- Verify python3 build.py --check and unit tests, and bump PATCH version in VERSION.
-
 # 🎯 [NEXT] F8: Support dynamic task resolution, task file auto-inclusion, and todo_md stdin pipeline in bundles
 
 - Depends on: todo_md:F8

@@ -6,6 +6,33 @@
 includes any extra files and `-p/--prompt` text, and writes the assembled bundle strictly to `stdout`
 (sending warnings or errors to `stderr`) so it composes cleanly via Unix pipes.
 
+## Quick Installation
+
+**Linux / macOS:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vitalio/agents_bundle/main/install.sh | sh
+```
+
+**Windows (PowerShell 7+):**
+
+```powershell
+irm https://raw.githubusercontent.com/vitalio/agents_bundle/main/install.ps1 | iex
+```
+
+Custom command name or install directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vitalio/agents_bundle/main/install.sh | sh -s -- --name ab --dir ~/.local/bin
+```
+
+Check for updates or self-update in place:
+
+```bash
+agents_bundle --check-update
+agents_bundle --update
+```
+
 ## `.agents_bundle` Format
 
 ```text
