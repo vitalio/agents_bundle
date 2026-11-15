@@ -375,6 +375,71 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertNotEqual(r_bad.returncode, 0)
         self.assertIn("AGENTS_BUNDLE_VARS", r_bad.stderr)
 
+    def test_dynamic_var_include_and_stdin_pipe(self):
+        (self.tmp / "src").mkdir()
+        (self.tmp / "src/target.py").write_text("VALUE = 42\n", encoding="utf-8")
+        (self.tmp / ".agents_bundle").write_text(
+            "ruleset vitalio/agents-rules:core\n"
+            "[if role=execute]\n"
+            "    var task=$(printf 'F7')\n"
+            "    include $(printf 'src/target.py\\nmissing/file.py\\n')\n"
+            "    prompt Executing {task:}\n"
+            "[/if]\n",
+            encoding="utf-8",
+        )
+        # Dynamic var resolution and include directive without explicit task=<ID>
+        r_dyn = subprocess.run(
+            [str(SCRIPT), "role=execute"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(r_dyn.returncode, 0, r_dyn.stderr)
+        self.assertIn("Role: execute\nTask: F7\n", r_dyn.stdout)
+        self.assertIn("===== $ cat src/target.py =====\nVALUE = 42\n", r_dyn.stdout)
+        self.assertIn("===== Prompt =====\nExecuting F7\n", r_dyn.stdout)
+        self.assertEqual(r_dyn.stderr, "")
+
+        # Explicit task=<ID> overrides var directive fallback
+        r_explicit = subprocess.run(
+            [str(SCRIPT), "role=execute", "task=F9"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(r_explicit.returncode, 0, r_explicit.stderr)
+        self.assertIn("Role: execute\nTask: F9\n", r_explicit.stdout)
+        self.assertIn("===== Prompt =====\nExecuting F9\n", r_explicit.stdout)
+
+        # Piped todo_md task section on stdin infers task ID and includes piped context in Prompt
+        piped_task = "# 🎯 [NEXT] F12: Piped task title\n\n- Target file: `src/target.py`\n"
+        r_pipe = subprocess.run(
+            [str(SCRIPT), "role=execute"],
+            cwd=str(self.tmp),
+            input=piped_task,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(r_pipe.returncode, 0, r_pipe.stderr)
+        self.assertIn("Role: execute\nTask: F12\n", r_pipe.stdout)
+        self.assertIn("===== Prompt =====\nExecuting F12\n\n# 🎯 [NEXT] F12: Piped task title", r_pipe.stdout)
+
+        # Piped bare task ID on stdin infers task ID without polluting Prompt
+        r_pipe_id = subprocess.run(
+            [str(SCRIPT), "role=execute"],
+            cwd=str(self.tmp),
+            input="F15\n",
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(r_pipe_id.returncode, 0, r_pipe_id.stderr)
+        self.assertIn("Role: execute\nTask: F15\n", r_pipe_id.stdout)
+        self.assertIn("===== Prompt =====\nExecuting F15\n", r_pipe_id.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

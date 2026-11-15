@@ -36,6 +36,9 @@ agents_bundle --update
 ## `.agents_bundle` Format
 
 ```text
+bundle vitalio/run_block
+bundle vitalio/agents_bundle
+
 ruleset vitalio/agents-rules:default
 rule vitalio/agents-rules:release/semver
 rule vitalio/agents-rules:stack/cli
@@ -44,6 +47,10 @@ rule vitalio/agents-rules:stack/python-cli py_min=3.9
 $ cat AGENTS.md
 $ agents_bundle --tree -x archive_dir
 $ git status -sb
+[if role=execute]
+    var task=$(todo_md next-id)
+    include $(todo_md files {task:})
+[/if]
 [if mode=summary]
     $ git shortlog -sn
     prompt Summarize recent repository activity.
@@ -57,7 +64,9 @@ agents_bundle --init
 agents_bundle > bundle.txt
 agents_bundle role=design > bundle.txt
 agents_bundle role=plan > bundle.txt
+agents_bundle role=execute > bundle.txt
 agents_bundle role=execute task=F1 > bundle.txt
+todo_md F1 | agents_bundle role=execute > bundle.txt
 agents_bundle role=audit > bundle.txt
 AGENTS_BUNDLE_VARS="chat_lang=Spanish" agents_bundle > bundle.txt
 agents_bundle -p "Fix issue #12" src/main.py > bundle.txt

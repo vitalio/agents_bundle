@@ -6,6 +6,8 @@ def default_spec_template(prog: str | None = None) -> str:
         f"#   ruleset <owner>/<repo>:<name> [-exclude ...] [key=val ...]",
         f"#   rule <owner>/<repo>:<name> [key=val ...]",
         f"#   bundle <owner>/<repo>[:<name>] [key=val ...]",
+        "#   var <name>=$(<shell command>)  (or var <name>=<value>; sets variable if not already passed)",
+        "#   include $(<shell command>)  (includes existing repository files listed by command or path)",
         "#   prompt <text>",
         "#   [if os=linux] rule <owner>/<repo>:os/linux  (or multi-line [if ...] ... [/if])",
         "#   $ <shell command>  (use '$ cat <file>' to include a file)",
@@ -45,20 +47,80 @@ def find_spec_file(start_dir: Path | None = None) -> Path | None:
     return None
 
 
+def _eval_dynamic_expr(expr: str, work_dir: Path | None = None) -> str:
+    s = expr.strip()
+    if s.startswith("$(") and s.endswith(")") and len(s) >= 3:
+        cmd = s[2:-1].strip()
+        if not cmd:
+            return ""
+        cwd = (work_dir if work_dir is not None else Path.cwd()).resolve()
+        rc, out = _run_spec_command(cmd, cwd)
+        if rc != 0:
+            return ""
+        return out.strip()
+    return s
+
+
+def _parse_stdin_pipe(stdin_text: str) -> tuple[dict[str, str], str]:
+    raw = stdin_text.strip()
+    if not raw:
+        return {}, ""
+    inferred_vars: dict[str, str] = {}
+    lines = raw.splitlines()
+    if len(lines) == 1 and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", lines[0].strip()):
+        inferred_vars["task"] = lines[0].strip()
+        return inferred_vars, ""
+    m = re.search(
+        r"^#\s*(?:🔵\s*\[WIP\]|🎯\s*\[NEXT\]|❓\s*\[QUESTION\]|⚪\s*\[NEW\]|⏸️\s*\[HOLD\]|✅\s*\[DONE\]|❌\s*\[CANCELED\])\s+([A-Za-z][A-Za-z0-9_-]*):",
+        raw,
+        flags=re.MULTILINE,
+    )
+    if m:
+        inferred_vars["task"] = m.group(1)
+    return inferred_vars, raw
+
+
 def parse_spec(
     text: str,
     work_dir: Path | None = None,
     cli_vars: dict[str, str] | None = None,
     refresh: bool = False,
+    resolved_vars: dict[str, str] | None = None,
 ) -> list[tuple[str, str, str | None]]:
     prog = prog_name()
-    bvars = {**builtin_vars(work_dir), **(cli_vars or {})}
+    active_vars: dict[str, str] = dict(cli_vars) if cli_vars is not None else {}
+    bvars = {**builtin_vars(work_dir), **active_vars}
     entries: list[tuple[str, str, str | None]] = []
     for cond_expr, raw_line in strip_if_blocks_and_lines(text, prog):
         if cond_expr and not eval_if_condition(cond_expr, bvars, prog):
             continue
         line = _render_rule_vars(raw_line, bvars).strip()
-        if line.startswith("$ ") or line.startswith("! "):
+        if line.startswith("var "):
+            assign = line[len("var ") :].strip()
+            if "=" not in assign:
+                raise SystemExit(f"{prog}: invalid var directive in {SPEC_FILE_NAME}: {line!r} (expected 'var key=val')")
+            k, v_expr = assign.split("=", 1)
+            k_clean = k.strip()
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k_clean):
+                raise SystemExit(f"{prog}: invalid variable name {k_clean!r} in {line!r}")
+            if not active_vars.get(k_clean):
+                val = _eval_dynamic_expr(v_expr, work_dir=work_dir)
+                if val:
+                    active_vars[k_clean] = val
+                    bvars[k_clean] = val
+                    if resolved_vars is not None:
+                        resolved_vars[k_clean] = val
+        elif line.startswith("include "):
+            inc_expr = line[len("include ") :].strip()
+            if inc_expr:
+                resolved_inc = _eval_dynamic_expr(inc_expr, work_dir=work_dir)
+                for item in resolved_inc.splitlines():
+                    clean_item = item.strip()
+                    if clean_item:
+                        entries.append(("include", clean_item, cond_expr))
+        elif line == "include":
+            continue
+        elif line.startswith("$ ") or line.startswith("! "):
             cmd_str = line[2:].strip()
             if cmd_str:
                 entries.append(("cmd", cmd_str, cond_expr))
@@ -72,12 +134,23 @@ def parse_spec(
             if excls:
                 raise SystemExit(f"{prog}: bundle directive does not support excludes: {line!r}")
             inc_text = resolve_bundle_text(target, work_dir=work_dir, refresh=refresh)
-            merged_cli = {**(cli_vars or {}), **vmap}
+            merged_cli = {**active_vars, **vmap}
+            sub_resolved: dict[str, str] = {}
             for sub_kind, sub_val, sub_cond in parse_spec(
-                inc_text, work_dir=work_dir, cli_vars=merged_cli, refresh=refresh
+                inc_text,
+                work_dir=work_dir,
+                cli_vars=merged_cli,
+                refresh=refresh,
+                resolved_vars=sub_resolved,
             ):
                 comb_cond = " ".join(c for c in (cond_expr, sub_cond) if c) or None
                 entries.append((sub_kind, sub_val, comb_cond))
+            for rk, rv in sub_resolved.items():
+                if not active_vars.get(rk):
+                    active_vars[rk] = rv
+                    bvars[rk] = rv
+                    if resolved_vars is not None:
+                        resolved_vars[rk] = rv
         elif line.startswith("prompt "):
             p_str = line[len("prompt ") :].strip()
             if p_str:
@@ -86,7 +159,7 @@ def parse_spec(
             continue
         else:
             raise SystemExit(
-                f"{prog}: invalid line in {SPEC_FILE_NAME}: {line!r} (expected 'ruleset ...', 'rule ...', 'bundle ...', 'prompt ...', '[if ...]', or '$ <command>')"
+                f"{prog}: invalid line in {SPEC_FILE_NAME}: {line!r} (expected 'ruleset ...', 'rule ...', 'bundle ...', 'var ...', 'include ...', 'prompt ...', '[if ...]', or '$ <command>')"
             )
     return entries
 
@@ -135,16 +208,21 @@ def build_bundle(
         raise SystemExit(2)
 
     spec_dir = spec_file.parent
+    effective_cli_vars: dict[str, str] = dict(cli_vars or {})
+    resolved_vars: dict[str, str] = {}
     entries = parse_spec(
         spec_file.read_text(encoding="utf-8"),
         work_dir=spec_dir,
-        cli_vars=cli_vars,
+        cli_vars=effective_cli_vars,
         refresh=refresh,
+        resolved_vars=resolved_vars,
     )
+    effective_cli_vars.update(resolved_vars)
     sections: list[tuple[str, str]] = []
     warnings: list[str] = []
     pending_rules: list[tuple[str, str, str]] = []
     spec_prompts: list[str] = []
+    included_files: list[tuple[str, bool]] = []
 
     def flush_pending_rules() -> None:
         if not pending_rules:
@@ -160,7 +238,7 @@ def build_bundle(
             d_kind = parts[0]
             target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
             trace_start = f"[if {cond_expr}] {d_kind} {target}" if cond_expr else f"{d_kind} {target}"
-            merged_vmap = {**vmap, **(cli_vars or {})}
+            merged_vmap = {**vmap, **effective_cli_vars}
             pending_rules.extend(
                 collect_directive_items(
                     d_kind,
@@ -178,18 +256,28 @@ def build_bundle(
             if rc != 0:
                 warnings.append(f"command exited {rc}: {val}")
             sections.append((f"$ {val}", out))
+        elif kind == "include":
+            included_files.append((val, False))
         elif kind == "prompt":
             spec_prompts.append(val)
     flush_pending_rules()
 
     for extra in extra_files or []:
-        clean = extra.strip()
+        included_files.append((extra, True))
+
+    seen_files: set[Path] = set()
+    for raw_file, warn_missing in included_files:
+        clean = raw_file.strip()
         if not clean:
             continue
         p = (wdir / clean).resolve() if not Path(clean).is_absolute() else Path(clean).resolve()
         if not p.is_file():
-            warnings.append(f"missing file: {clean}")
+            if warn_missing:
+                warnings.append(f"missing file: {clean}")
             continue
+        if p in seen_files:
+            continue
+        seen_files.add(p)
         try:
             disp = str(p.relative_to(spec_dir))
         except ValueError:
@@ -205,7 +293,7 @@ def build_bundle(
 
     cmd_line = shlex.join([prog, *raw_argv]) if raw_argv else prog
     header_lines = [f"Bundle-Command: {cmd_line}"]
-    for k, v in (cli_vars or {}).items():
+    for k, v in effective_cli_vars.items():
         if v != "":
             hdr_key = "-".join(part.capitalize() for part in k.split("_") if part)
             header_lines.append(f"{hdr_key}: {v}")
@@ -250,6 +338,19 @@ def cmd_bundle(argv: list[str]) -> int:
         else:
             extra_files.append(a)
             i += 1
+
+    if not sys.stdin.isatty():
+        try:
+            piped_raw = sys.stdin.read()
+        except Exception:
+            piped_raw = ""
+        if piped_raw.strip():
+            inferred_vars, piped_prompt = _parse_stdin_pipe(piped_raw)
+            for ik, iv in inferred_vars.items():
+                if not cli_vars.get(ik):
+                    cli_vars[ik] = iv
+            if piped_prompt:
+                prompt_parts.insert(0, piped_prompt)
 
     prompt_text = "\n\n".join(prompt_parts) if prompt_parts else None
     body, warnings = build_bundle(
