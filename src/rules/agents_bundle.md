@@ -1,7 +1,7 @@
 # Description: Context bundler CLI, file tree, rule discovery, and .agents_bundle maintenance
 - Context bundler & rules engine (`{cmd:agents_bundle}`):
   - Assemble session bundle: `{cmd:agents_bundle} [key=val ...] [-p "<prompt>"] [file ...] | run_block`
-    (roles: `role=design`, `role=plan`, `role=execute`, `role=audit`; task focus: `task=<ID>`, or pipe `todo_md [<ID>] | {cmd:agents_bundle} | run_block` to auto-resolve the active task and preload target files).
+    (roles: `role=design`, `role=plan`, `role=execute`, `role=audit`; task focus: `task=<ID>`, or pipe `<cmd> | {cmd:agents_bundle} | run_block` to infer `task=<ID>` and prepend piped context).
   - Inspect repository file tree: `{cmd:agents_bundle} --tree [DIR] [-x DIR] [--max-lines N] [--max-tokens N]`
     (use instead of `find`/`ls` for directory structure; pins `AGENTS.md`).
   - Discover rulesets, rules, and bundles: `{cmd:agents_bundle} --list [pkg]`,
@@ -14,3 +14,8 @@
     blocks by 4 spaces). During design or planning, keep `.agents_bundle`
     updated with the rulesets, stack rules, and bundles required by the project
     (`{cmd:agents_bundle} --init` bootstraps a new `.agents_bundle`).
+  - Keep `.agents_bundle` and `.bundle` files cross-platform across Linux, macOS,
+    and Windows (`pwsh`): avoid POSIX-only shell syntax (`&&`, shell variables,
+    `for`/`while` loops) in shared `$ <cmd>` lines; use declarative `var`,
+    `include`, and single cross-platform commands, or guard OS-specific
+    commands with `[if os=windows]` and `[if os!=windows]`.

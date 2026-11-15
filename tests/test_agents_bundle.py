@@ -440,6 +440,40 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertIn("Role: execute\nTask: F15\n", r_pipe_id.stdout)
         self.assertIn("===== Prompt =====\nExecuting F15\n", r_pipe_id.stdout)
 
+    def test_windows_default_pwsh_shell_and_posix_include_paths(self):
+        fake_bin = self.tmp / "fake_bin"
+        fake_bin.mkdir()
+        pwsh_shim = fake_bin / "pwsh"
+        pwsh_shim.write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys\n"
+            "print('PWSH_ARGS:' + '|'.join(sys.argv[1:]))\n",
+            encoding="utf-8",
+        )
+        pwsh_shim.chmod(0o755)
+        sub = self.tmp / "pkg"
+        sub.mkdir()
+        (sub / "mod.py").write_text("X = 1\n", encoding="utf-8")
+        (self.tmp / ".agents_bundle").write_text(
+            "ruleset vitalio/agents-rules:core\n"
+            "include pkg/mod.py\n"
+            "$ git status -sb\n",
+            encoding="utf-8",
+        )
+        # Verify pwsh uses -Command flag when configured via AGENTS_BUNDLE_SHELL
+        env = {**os.environ, "AGENTS_BUNDLE_SHELL": str(pwsh_shim)}
+        r = subprocess.run(
+            [str(SCRIPT)],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("PWSH_ARGS:-Command|git status -sb", r.stdout)
+        self.assertIn("===== $ cat pkg/mod.py =====\nX = 1\n", r.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

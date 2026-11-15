@@ -174,12 +174,19 @@ def _run_spec_command(cmd_str: str, cwd: Path) -> tuple[int, str]:
         except SystemExit as exc:
             return 1, str(exc)
 
-    shell_bin = os.environ.get("AGENTS_BUNDLE_SHELL", "bash").strip() or "bash"
+    env_shell = os.environ.get("AGENTS_BUNDLE_SHELL", "").strip()
+    if env_shell:
+        shell_bin = env_shell
+    elif os.name == "nt":
+        shell_bin = "pwsh" if shutil.which("pwsh") else "powershell"
+    else:
+        shell_bin = "bash"
+    shell_flag = "-Command" if Path(shell_bin).stem.lower() in ("pwsh", "powershell") else "-c"
     env = {**os.environ, "PYTHONUTF8": "1"}
     env["PATH"] = f"{self_dir}{os.pathsep}{Path.home() / '.local/bin'}{os.pathsep}{env.get('PATH', '')}"
     try:
         r = subprocess.run(
-            [shell_bin, "-c", cmd_str],
+            [shell_bin, shell_flag, cmd_str],
             cwd=str(cwd),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -279,9 +286,9 @@ def build_bundle(
             continue
         seen_files.add(p)
         try:
-            disp = str(p.relative_to(spec_dir))
+            disp = p.relative_to(spec_dir).as_posix()
         except ValueError:
-            disp = str(p)
+            disp = p.as_posix()
         content = p.read_text(encoding="utf-8", errors="replace").rstrip()
         sections.append((f"$ cat {disp}", content))
 
