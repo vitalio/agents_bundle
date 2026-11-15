@@ -35,3 +35,8 @@
 - Move `prog_name()`, `cache_dir_path()`, and `usage_text()` out of `src/tree.py` into `src/header.py` (or a dedicated `src/core.py` in `MODULE_ORDER`) so `src/tree.py` handles only repository tree generation.
 - Make each module under `src/` valid, standalone-importable Python for IDE/linter analysis while updating `build.py` to strip internal cross-module imports when assembling the single-file `agents_bundle` executable.
 - Keep `AGENTS.md`, `build.py`, and unit tests in `tests/test_agents_bundle.py` in sync.
+
+# ⚪ [NEW] F14: Document bundle header and body output contract in README.md and AGENTS.md
+
+- Document the standard output contract of `agents_bundle` (`Key: Value` metadata headers followed by a blank line and `===== ... =====` body sections) in `README.md` so downstream consumers like `run_block` can separate session metadata from the LLM prompt body.
+- Record the header-block output invariant in `AGENTS.md` under `src/bundle.py` module boundaries.
