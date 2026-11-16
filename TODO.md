@@ -40,3 +40,9 @@
 
 - Document the standard output contract of `agents_bundle` (`Key: Value` metadata headers followed by a blank line and `===== ... =====` body sections) in `README.md` so downstream consumers like `run_block` can separate session metadata from the LLM prompt body.
 - Record the header-block output invariant in `AGENTS.md` under `src/bundle.py` module boundaries.
+
+# ⚪ [NEW] F15: Unify ruleset into bundle and support logical package directory layout
+
+- Merge `ruleset` into `bundle` across `src/rules_engine.py`, `src/bundle.py`, `src/cli.py`, and `src/header.py` so `bundle` serves as the single composition primitive alongside atomic `rule` files (`.md`), coordinating with `F6`, `F7`, and `F10`.
+- Support logical domain-based package layouts (resolving `.md` rules and `.bundle` presets by relative path without requiring top-level `rules/` vs `rulesets/` splits), defining deprecation or migration behavior for existing `ruleset` references.
+- Keep `README.md`, `src/rules/agents_bundle.md`, and `tests/test_agents_bundle.py` in sync.
