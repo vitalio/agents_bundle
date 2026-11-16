@@ -56,3 +56,16 @@
   `src/header.py`; do not add it to modules under `src/`.
 - Run `python3 -m unittest discover -s tests`; if the progress line shows
   stderr noise, capture it with `contextlib.redirect_stderr` in `tests/`.
+
+# ⚪ [NEW] F18: Use piped Workdir header as the bundle working directory
+
+- In `src/bundle.py` (`_parse_stdin_pipe`, `cmd_bundle`), when piped stdin
+  starts with a `Key: Value` preamble containing `Workdir:`, use that directory
+  as `work_dir` for `.agents_bundle` lookup, `AGENTS.md`, `--tree`, and `$`
+  commands, and strip the preamble from the prompt body.
+- An explicit `-C`/`--dir` option takes priority; a missing or non-existent
+  directory fails with a clear error and a non-zero status.
+- Emit `Workdir: <path>` in the bundle header so downstream consumers such as
+  `run_block` can read it.
+- Keep `src/header.py` (`--help`), `README.md`, `AGENTS.md`, and
+  `tests/test_*.py` in sync.
