@@ -22,3 +22,17 @@ rules are loaded via `.agents_bundle`.
   instructions and conditional rule catalog for `bundle vitalio/agents_bundle`.
 - `src/cli.py` — CLI entrypoint, subcommand routing, and self-update
   (`--update`, `--check-update`).
+
+## Bundle Output Protocol
+
+- Header visibility (`Bundle-*`): Emit `Bundle-Boundary: <nonce>` and
+  `Bundle-Expose: Role, Task` (extensible via `expose`) by default so
+  downstream runners (`run_block`) keep transport headers in session metadata
+  while forwarding exposed headers into the final prompt header.
+- Fragment markers: Wrap emitted rules, commands (`via`, `rc`, `ms`), included
+  files, and prompts in `<!-- bundle:<nonce>:part {...} -->` and
+  `<!-- bundle:<nonce>:end -->` JSON markers using neutral `kind`, `id`/`name`,
+  `group`, `via`, `rc`, and `ms` fields without hardcoding `run_block`
+  internals.
+- Plain output (`--plain`): Omit transport `Bundle-*` headers and fragment
+  markers when pure Markdown/text output is requested.
