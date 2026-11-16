@@ -1,3 +1,16 @@
+# 🎯 [NEXT] F18: Use piped Workdir header as the bundle working directory
+
+- In `src/bundle.py` (`_parse_stdin_pipe`, `cmd_bundle`), when piped stdin
+  starts with a `Key: Value` preamble containing `Workdir:`, use that directory
+  as `work_dir` for `.agents_bundle` lookup, `AGENTS.md`, `--tree`, and `$`
+  commands, and strip the preamble from the prompt body.
+- An explicit `-C`/`--dir` option takes priority; a missing or non-existent
+  directory fails with a clear error and a non-zero status.
+- Emit `Workdir: <path>` in the bundle header so downstream consumers such as
+  `run_block` can read it.
+- Keep `src/header.py` (`--help`), `README.md`, `AGENTS.md`, and
+  `tests/test_*.py` in sync.
+
 # ⚪ [NEW] F6: Add bundle CLI subcommand to render and inspect .bundle files
 
 - Add 'agents_bundle bundle <pkg>[:<name>] [k=v]' CLI subcommand (symmetric with 'ruleset' and 'rule') to render a bundle from the command line.
@@ -44,16 +57,3 @@
 
 - Depends on: agents-rules:F9, agents-rules:F16
 - Replace `role=execute` and `role=audit` usage examples in `README.md` (and any bundled rule/help text if present) with `role=work` and `role=review` once the roles are renamed in `agents-rules`.
-
-# ⚪ [NEW] F18: Use piped Workdir header as the bundle working directory
-
-- In `src/bundle.py` (`_parse_stdin_pipe`, `cmd_bundle`), when piped stdin
-  starts with a `Key: Value` preamble containing `Workdir:`, use that directory
-  as `work_dir` for `.agents_bundle` lookup, `AGENTS.md`, `--tree`, and `$`
-  commands, and strip the preamble from the prompt body.
-- An explicit `-C`/`--dir` option takes priority; a missing or non-existent
-  directory fails with a clear error and a non-zero status.
-- Emit `Workdir: <path>` in the bundle header so downstream consumers such as
-  `run_block` can read it.
-- Keep `src/header.py` (`--help`), `README.md`, `AGENTS.md`, and
-  `tests/test_*.py` in sync.
