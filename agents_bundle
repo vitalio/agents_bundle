@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # agents_bundle-repo: vitalio/agents_bundle
 """Usage:
-  {prog} [k=v ...] [-p TEXT] [FILE ...]       Build context bundle from .agents_bundle to stdout (reads task/prompt from stdin if piped)
-                                                Opts: -p/--prompt TEXT, -C/--dir DIR, -v/--verbose, --refresh (re-fetch each remote at most once per run)
+  {prog} [k=v ...] [-p TEXT] [FILE ...]       Build context bundle from .agents_bundle to stdout (reads task/prompt/Workdir preamble from stdin if piped)
+                                                Opts: -p/--prompt TEXT, -C/--dir DIR (overrides piped Workdir:), -v/--verbose, --refresh (re-fetch each remote at most once per run)
   {prog} ruleset <pkg>:<name> [-excl] [k=v]   Render a ruleset to stdout
   {prog} rule <pkg>:<name> [k=v]              Render a single rule to stdout
   {prog} --list | -l [pkg]                    List rulesets, rules, bundles, and built-in variables (default: {default_pkg})
@@ -38,7 +38,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-VERSION = "0.12.3"
+VERSION = "0.13.0"
 REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/agents_bundle/main/agents_bundle"
 SPEC_FILE_NAME = ".agents_bundle"
@@ -1138,15 +1138,37 @@ def _eval_dynamic_expr(expr: str, work_dir: Path | None = None) -> str:
     return s
 
 
-def _parse_stdin_pipe(stdin_text: str) -> tuple[dict[str, str], str]:
+def _parse_stdin_pipe(stdin_text: str) -> tuple[dict[str, str], str, str | None]:
     raw = stdin_text.strip()
     if not raw:
-        return {}, ""
+        return {}, "", None
     inferred_vars: dict[str, str] = {}
+    piped_workdir: str | None = None
     lines = raw.splitlines()
+
+    preamble: dict[str, str] = {}
+    idx = 0
+    while idx < len(lines):
+        ln = lines[idx]
+        if not ln.strip():
+            break
+        hm = re.fullmatch(r"([A-Za-z][A-Za-z0-9_-]*):(?:[ \t]+(.*)|[ \t]*)", ln)
+        if not hm:
+            break
+        preamble[hm.group(1)] = hm.group(2).strip() if hm.group(2) is not None else ""
+        idx += 1
+
+    workdir_val = next((v for k, v in preamble.items() if k.lower() == "workdir"), None)
+    if workdir_val is not None:
+        piped_workdir = workdir_val
+        raw = "\n".join(lines[idx:]).strip()
+        if not raw:
+            return inferred_vars, "", piped_workdir
+        lines = raw.splitlines()
+
     if len(lines) == 1 and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", lines[0].strip()):
         inferred_vars["task"] = lines[0].strip()
-        return inferred_vars, ""
+        return inferred_vars, "", piped_workdir
     m = re.search(
         r"^#\s*(?:🔵\s*\[WIP\]|🎯\s*\[NEXT\]|❓\s*\[QUESTION\]|⚪\s*\[NEW\]|⏸️\s*\[HOLD\]|✅\s*\[DONE\]|❌\s*\[CANCELED\])\s+([A-Za-z][A-Za-z0-9_-]*):",
         raw,
@@ -1154,7 +1176,7 @@ def _parse_stdin_pipe(stdin_text: str) -> tuple[dict[str, str], str]:
     )
     if m:
         inferred_vars["task"] = m.group(1)
-    return inferred_vars, raw
+    return inferred_vars, raw, piped_workdir
 
 
 def parse_spec(
@@ -1285,7 +1307,17 @@ def build_bundle(
     raw_argv: list[str] | None = None,
 ) -> tuple[str, list[str]]:
     prog = prog_name()
-    wdir = (work_dir if work_dir is not None else Path.cwd()).resolve()
+    if work_dir is not None:
+        resolved_wdir = work_dir.resolve()
+        if not resolved_wdir.exists():
+            sys.stderr.write(f"{prog}: directory not found: {work_dir}\n")
+            raise SystemExit(2)
+        if not resolved_wdir.is_dir():
+            sys.stderr.write(f"{prog}: not a directory: {work_dir}\n")
+            raise SystemExit(2)
+        wdir = resolved_wdir
+    else:
+        wdir = Path.cwd().resolve()
     spec_file = find_spec_file(wdir)
     if spec_file is None:
         sys.stderr.write(f"{prog}: {SPEC_FILE_NAME} not found in {wdir} (run '{prog} --init' to create a starter template)\n")
@@ -1377,9 +1409,10 @@ def build_bundle(
     cmd_line = shlex.join([prog, *raw_argv]) if raw_argv else prog
     header_lines = [f"Bundle-Command: {cmd_line}"]
     for k, v in effective_cli_vars.items():
-        if v != "":
+        if v != "" and k != "workdir":
             hdr_key = "-".join(part.capitalize() for part in k.split("_") if part)
             header_lines.append(f"{hdr_key}: {v}")
+    header_lines.append(f"Workdir: {wdir}")
     header = "\n".join(header_lines) + "\n"
     blocks = [header, *(f"===== {title} =====\n{content}\n" for title, content in sections)]
     return "\n".join(blocks), warnings
@@ -1422,18 +1455,25 @@ def cmd_bundle(argv: list[str]) -> int:
             extra_files.append(a)
             i += 1
 
+    piped_workdir: str | None = None
     if not sys.stdin.isatty():
         try:
             piped_raw = sys.stdin.read()
         except Exception:
             piped_raw = ""
         if piped_raw.strip():
-            inferred_vars, piped_prompt = _parse_stdin_pipe(piped_raw)
+            inferred_vars, piped_prompt, piped_workdir = _parse_stdin_pipe(piped_raw)
             for ik, iv in inferred_vars.items():
                 if not cli_vars.get(ik):
                     cli_vars[ik] = iv
             if piped_prompt:
                 prompt_parts.insert(0, piped_prompt)
+
+    if work_dir is None and piped_workdir is not None:
+        if not piped_workdir:
+            sys.stderr.write(f"{prog}: empty Workdir in piped input\n")
+            return 2
+        work_dir = Path(piped_workdir).expanduser()
 
     prompt_text = "\n\n".join(prompt_parts) if prompt_parts else None
     body, warnings = build_bundle(

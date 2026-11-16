@@ -637,6 +637,125 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertNotIn("Home fallback body", r.stdout)
         self.assertIn("failed to fetch package", r.stderr)
 
+    def test_piped_workdir_preamble_and_dir_priority(self):
+        proj = self.tmp / "target_proj"
+        proj.mkdir()
+        (proj / "AGENTS.md").write_text("# Target Project Rules\n", encoding="utf-8")
+        (proj / "note.txt").write_text("hello from target\n", encoding="utf-8")
+        (proj / ".agents_bundle").write_text(
+            "ruleset vitalio/agents-rules:core\n"
+            "$ cat AGENTS.md\n"
+            "$ agents_bundle --tree\n"
+            "$ pwd\n",
+            encoding="utf-8",
+        )
+
+        # Piped Key: Value preamble with Workdir sets working directory and strips preamble
+        piped = (
+            f"Project: demo\n"
+            f"Workdir: {proj}\n"
+            f"\n"
+            f"# 🎯 [NEXT] F18: Target task\n"
+            f"\n"
+            f"- Details here\n"
+        )
+        r = subprocess.run(
+            [str(SCRIPT), "role=execute"],
+            cwd=str(self.tmp),
+            input=piped,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertIn(f"Workdir: {proj.resolve()}\n", r.stdout)
+        self.assertIn("Task: F18\n", r.stdout)
+        self.assertIn("===== $ cat AGENTS.md =====\n# Target Project Rules\n", r.stdout)
+        self.assertIn("note.txt", r.stdout)
+        self.assertIn(f"===== $ pwd =====\n{proj.resolve()}\n", r.stdout)
+        self.assertIn("===== Prompt =====\n# 🎯 [NEXT] F18: Target task", r.stdout)
+        self.assertNotIn("Project: demo", r.stdout)
+
+        # Piped Workdir with empty body or bare task ID
+        r_empty = subprocess.run(
+            [str(SCRIPT)],
+            cwd=str(self.tmp),
+            input=f"Workdir: {proj}\n",
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(r_empty.returncode, 0, msg=r_empty.stderr)
+        self.assertIn(f"Workdir: {proj.resolve()}\n", r_empty.stdout)
+        self.assertNotIn("===== Prompt =====", r_empty.stdout)
+
+        r_bare_id = subprocess.run(
+            [str(SCRIPT)],
+            cwd=str(self.tmp),
+            input=f"Workdir: {proj}\n\nF21\n",
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(r_bare_id.returncode, 0, msg=r_bare_id.stderr)
+        self.assertIn("Task: F21\n", r_bare_id.stdout)
+        self.assertIn(f"Workdir: {proj.resolve()}\n", r_bare_id.stdout)
+        self.assertNotIn("===== Prompt =====", r_bare_id.stdout)
+
+        # Explicit -C/--dir takes priority over piped Workdir
+        override_proj = self.tmp / "override_proj"
+        override_proj.mkdir()
+        (override_proj / "AGENTS.md").write_text("# Override Rules\n", encoding="utf-8")
+        (override_proj / ".agents_bundle").write_text(
+            "ruleset vitalio/agents-rules:core\n"
+            "$ cat AGENTS.md\n",
+            encoding="utf-8",
+        )
+        r_override = subprocess.run(
+            [str(SCRIPT), "-C", str(override_proj)],
+            cwd=str(self.tmp),
+            input="Workdir: /nonexistent/ignored/path\n\n# 🎯 [NEXT] F19: Override\n",
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(r_override.returncode, 0, msg=r_override.stderr)
+        self.assertIn(f"Workdir: {override_proj.resolve()}\n", r_override.stdout)
+        self.assertIn("# Override Rules", r_override.stdout)
+        self.assertIn("Task: F19\n", r_override.stdout)
+
+        # Non-Workdir Key: Value prompt text is preserved
+        r_note = subprocess.run(
+            [str(SCRIPT), "-C", str(proj)],
+            cwd=str(self.tmp),
+            input="Note: keep this line\n",
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(r_note.returncode, 0, msg=r_note.stderr)
+        self.assertIn("===== Prompt =====\nNote: keep this line\n", r_note.stdout)
+
+        # Missing, empty, or non-directory Workdir fails cleanly
+        missing = self.tmp / "does_not_exist"
+        for label, args, stdin_val in [
+            ("missing_cli", ["-C", str(missing)], None),
+            ("missing_piped", [], f"Workdir: {missing}\n"),
+            ("empty_piped", [], "Workdir:   \n"),
+            ("file_not_dir", ["-C", str(proj / "note.txt")], None),
+        ]:
+            with self.subTest(case=label):
+                r_err = subprocess.run(
+                    [str(SCRIPT), *args],
+                    cwd=str(self.tmp),
+                    input=stdin_val,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertNotEqual(r_err.returncode, 0, msg=r_err.stdout)
+                self.assertTrue(r_err.stderr.strip(), msg="expected error message on stderr")
+
 
 if __name__ == "__main__":
     unittest.main()

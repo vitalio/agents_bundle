@@ -15,8 +15,9 @@ rules are loaded via `.agents_bundle`.
   (`http://`, `https://`, `file://`), and evaluates `[if ...]` conditions
   against `os`, `vcs`, and CLI `key=val` overrides.
 - `src/bundle.py` — parses `.agents_bundle` (`ruleset`, `rule`, `bundle`,
-  `prompt`, `[if ...]`, and `$` directives) and assembles the context bundle to
-  `stdout`.
+  `prompt`, `[if ...]`, and `$` directives), resolves `work_dir` from `-C/--dir`
+  or a piped `Workdir:` preamble, emits `Workdir: <path>` in the bundle header,
+  and assembles the context bundle to `stdout`.
 - `src/rules/agents_bundle.md` & `src/bundles/agents_bundle.bundle` — agent
   instructions and conditional rule catalog for `bundle vitalio/agents_bundle`.
 - `src/cli.py` — CLI entrypoint, subcommand routing, and self-update

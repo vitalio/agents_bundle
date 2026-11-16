@@ -1,3 +1,16 @@
+# ✅ [DONE] F18: Use piped Workdir header as the bundle working directory — *2026-11-17*
+
+- In `src/bundle.py` (`_parse_stdin_pipe`, `cmd_bundle`), when piped stdin
+  starts with a `Key: Value` preamble containing `Workdir:`, use that directory
+  as `work_dir` for `.agents_bundle` lookup, `AGENTS.md`, `--tree`, and `$`
+  commands, and strip the preamble from the prompt body.
+- An explicit `-C`/`--dir` option takes priority; a missing or non-existent
+  directory fails with a clear error and a non-zero status.
+- Emit `Workdir: <path>` in the bundle header so downstream consumers such as
+  `run_block` can read it.
+- Keep `src/header.py` (`--help`), `README.md`, `AGENTS.md`, and
+  `tests/test_*.py` in sync.
+
 # ✅ [DONE] F17: Connect python-stdlib and python-annotations rules in .agents_bundle — *2026-11-16*
 
 - In `.agents_bundle`, remove `py_min=3.9` from `stack/python-cli` and add

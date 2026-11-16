@@ -2,8 +2,9 @@
 
 **Unix-style context bundler, rule/ruleset engine, and token-budgeted repository file tree for AI coding agents.**
 
-`agents_bundle` executes `.agents_bundle` in the current directory (`ruleset ...`, `rule ...`, `bundle ...`, `prompt ...`, `[if ...]`, and `$ <cmd>` directives),
-includes any extra files and `-p/--prompt` text, and writes the assembled bundle strictly to `stdout`
+`agents_bundle` executes `.agents_bundle` in the target working directory (`-C`/`--dir`, a piped `Workdir:` preamble on `stdin`, or the current directory),
+runs `ruleset ...`, `rule ...`, `bundle ...`, `prompt ...`, `[if ...]`, and `$ <cmd>` directives,
+includes any extra files and `-p/--prompt` text, emits `Workdir: <path>` in the bundle header, and writes the assembled bundle strictly to `stdout`
 (sending warnings or errors to `stderr`) so it composes cleanly via Unix pipes.
 
 ## Quick Installation
@@ -67,6 +68,7 @@ agents_bundle role=plan > bundle.txt
 agents_bundle role=execute > bundle.txt
 agents_bundle role=execute task=F1 > bundle.txt
 todo_md F1 | agents_bundle role=execute > bundle.txt
+agents_bundle -C /path/to/project role=execute > bundle.txt
 agents_bundle role=audit > bundle.txt
 AGENTS_BUNDLE_VARS="chat_lang=Spanish" agents_bundle > bundle.txt
 agents_bundle -p "Fix issue #12" src/main.py > bundle.txt
