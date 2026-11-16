@@ -7,7 +7,9 @@ ruleset vitalio/agents-rules:default
 rule vitalio/agents-rules:release/semver
 rule vitalio/agents-rules:release/single-file-build
 rule vitalio/agents-rules:stack/cli
-rule vitalio/agents-rules:stack/python-cli py_min=3.9
+rule vitalio/agents-rules:stack/python-cli
+rule vitalio/agents-rules:stack/python-stdlib
+rule vitalio/agents-rules:stack/python-annotations py_min=3.9
 
 $ cat AGENTS.md
 $ agents_bundle --tree

@@ -1,3 +1,15 @@
+# ✅ [DONE] F17: Connect python-stdlib and python-annotations rules in .agents_bundle — *2026-11-16*
+
+- In `.agents_bundle`, remove `py_min=3.9` from `stack/python-cli` and add
+  `rule vitalio/agents-rules:stack/python-stdlib` and
+  `rule vitalio/agents-rules:stack/python-annotations py_min=3.9`, after the
+  python-cli split is released in agents-rules and the package cache is
+  refreshed.
+- Keep `from __future__ import annotations` only in `build.py` and
+  `src/header.py`; do not add it to modules under `src/`.
+- Run `python3 -m unittest discover -s tests`; if the progress line shows
+  stderr noise, capture it with `contextlib.redirect_stderr` in `tests/`.
+
 # ✅ [DONE] F11: Unify --update-cache, deduplicate --refresh per run, and remove implicit ~/vitalio_* fallback — *2026-11-16*
 
 - Update `cmd_update_cache()` in `src/rules_engine.py` to refresh both Git repositories in `<cache_dir>/packages` (via `git fetch --depth 1` and `git reset --hard FETCH_HEAD` so branches, retagged refs, and force-pushes update cleanly) and cached files in `<cache_dir>/urls`, reporting clear per-item status.

@@ -45,18 +45,6 @@
 - Depends on: agents-rules:F9, agents-rules:F16
 - Replace `role=execute` and `role=audit` usage examples in `README.md` (and any bundled rule/help text if present) with `role=work` and `role=review` once the roles are renamed in `agents-rules`.
 
-# ⚪ [NEW] F17: Connect python-stdlib and python-annotations rules in .agents_bundle
-
-- In `.agents_bundle`, remove `py_min=3.9` from `stack/python-cli` and add
-  `rule vitalio/agents-rules:stack/python-stdlib` and
-  `rule vitalio/agents-rules:stack/python-annotations py_min=3.9`, after the
-  python-cli split is released in agents-rules and the package cache is
-  refreshed.
-- Keep `from __future__ import annotations` only in `build.py` and
-  `src/header.py`; do not add it to modules under `src/`.
-- Run `python3 -m unittest discover -s tests`; if the progress line shows
-  stderr noise, capture it with `contextlib.redirect_stderr` in `tests/`.
-
 # ⚪ [NEW] F18: Use piped Workdir header as the bundle working directory
 
 - In `src/bundle.py` (`_parse_stdin_pipe`, `cmd_bundle`), when piped stdin
