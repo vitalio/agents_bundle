@@ -12,12 +12,12 @@
 
 # ⚪ [NEW] F7: Support agents/ package directory, custom relative paths, and @ref local-resolve fix
 
-- Resolve package rules and bundles from `agents/` (supporting logical domain-based subdirectories as well as flat `agents/*.md` and `agents/*.bundle` in coordination with F15) while keeping fallback compatibility with legacy root `rules/`, `rulesets/`, `bundles/` and `src/` paths.
-printf '%s\n' '__RB_STEP__:39'
+- Standardize `agents/` as the canonical package directory for rules (`.md`) and bundles (`.bundle`) across repositories (supporting logical domain subdirectories, `owner/repo` -> `agents/<repo>.bundle` or `agents/default.bundle`, and `owner/repo:domain` -> `agents/domain/domain.bundle`) while keeping fallback compatibility with legacy root `rules/`, `rulesets/`, `bundles/` and `src/` paths.
+printf '%s\n' '__RB_STEP__:12'
 - Support explicit relative file paths inside a package (`owner/repo[@ref]:path/to/file`) and local relative paths (`./...`, `../...`).
-printf '%s\n' '__RB_STEP__:40'
+printf '%s\n' '__RB_STEP__:13'
 - Fix `_ensure_remote_package` so explicit `@<ref>` on `vitalio/*` packages fetches the requested ref instead of returning the unpinned local working tree.
-printf '%s\n' '__RB_STEP__:41'
+printf '%s\n' '__RB_STEP__:14'
 - Move `src/rules/agents_bundle.md` and `src/bundles/agents_bundle.bundle` into `agents/` and keep `AGENTS.md`, `README.md`, `src/header.py`, and unit tests in sync.
 
 # ⚪ [NEW] F10: Enforce command allowlist policy in .agents_bundle for external bundles
@@ -47,8 +47,10 @@ printf '%s\n' '__RB_STEP__:41'
 # ⚪ [NEW] F15: Unify ruleset into bundle and support logical package directory layout
 
 - Merge `ruleset` into `bundle` across `src/rules_engine.py`, `src/bundle.py`, `src/cli.py`, and `src/header.py` so `bundle` serves as the single composition primitive alongside atomic `rule` files (`.md`), coordinating with `F6`, `F7`, and `F10`.
-- Support logical domain-based package layouts (resolving `.md` rules and `.bundle` presets by relative path without requiring top-level `rules/` vs `rulesets/` splits), defining deprecation or migration behavior for existing `ruleset` references.
-- Keep `README.md`, `src/rules/agents_bundle.md`, and `tests/test_agents_bundle.py` in sync.
+printf '%s\n' '__RB_STEP__:16'
+- Support logical domain-based layouts inside `agents/` (resolving `.md` rules and `.bundle` presets by relative path without requiring top-level `rules/` vs `rulesets/` splits), defining deprecation or migration behavior for existing `ruleset` references and legacy directories.
+printf '%s\n' '__RB_STEP__:17'
+- Keep `README.md`, `agents/agents_bundle.md`, and `tests/test_agents_bundle.py` in sync.
 
 # ⚪ [NEW] F16: Update role=execute and role=audit examples to role=work and role=review
 
