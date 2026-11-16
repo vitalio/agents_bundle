@@ -2,11 +2,11 @@
 # agents_bundle-repo: vitalio/agents_bundle
 """Usage:
   {prog} [k=v ...] [-p TEXT] [FILE ...]       Build context bundle from .agents_bundle to stdout (reads task/prompt from stdin if piped)
-                                                Opts: -p/--prompt TEXT, -C/--dir DIR, -v/--verbose, --refresh
+                                                Opts: -p/--prompt TEXT, -C/--dir DIR, -v/--verbose, --refresh (re-fetch each remote at most once per run)
   {prog} ruleset <pkg>:<name> [-excl] [k=v]   Render a ruleset to stdout
   {prog} rule <pkg>:<name> [k=v]              Render a single rule to stdout
   {prog} --list | -l [pkg]                    List rulesets, rules, bundles, and built-in variables (default: {default_pkg})
-  {prog} --update-cache                       Refresh cached rule packages in {cache_dir}
+  {prog} --update-cache                       Refresh cached git packages and URL files in {cache_dir}
   {prog} --init [--force]                     Create a starter .agents_bundle in the current directory
   {prog} --tree [DIR] [opts]                  Print token-budgeted repository file tree to stdout
                                                 Opts: -x/--exclude DIR, --max-lines N (160), --max-tokens N (1600)
@@ -17,6 +17,8 @@
 
 Environment:
   AGENTS_BUNDLE_VARS                          Default key=val pairs (overridden by CLI key=val)
+  AGENTS_BUNDLE_LOCAL_PKG_DIR                 Use a local package checkout instead of the cache
+  AGENTS_BUNDLE_CACHE_DIR                     Override the cache directory
 """
 from __future__ import annotations
 

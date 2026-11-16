@@ -19,3 +19,7 @@
     `for`/`while` loops) in shared `$ <cmd>` lines; use declarative `var`,
     `include`, and single cross-platform commands, or guard OS-specific
     commands with `[if os=windows]` and `[if os!=windows]`.
+  - Remote package cache: `{cmd:agents_bundle} --update-cache` hard-resets cached
+    git packages and re-downloads cached URL files; `--refresh` re-fetches each
+    remote at most once per run; set `AGENTS_BUNDLE_LOCAL_PKG_DIR` to use a
+    local package checkout (no implicit home-directory lookup).

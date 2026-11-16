@@ -211,6 +211,18 @@ def _load_package_from_dir(
     return rules, rulesets, bundles
 
 
+URL_ORIGIN_SUFFIX = ".origin"
+_REFRESHED: set[str] = set()
+
+
+def _first_refresh(key: str, refresh: bool) -> bool:
+    """Honor a refresh request only once per process for each remote key."""
+    if not refresh or key in _REFRESHED:
+        return False
+    _REFRESHED.add(key)
+    return True
+
+
 def _ensure_remote_package(pkg_spec: str, refresh: bool = False) -> Path:
     prog = prog_name()
     local_override = os.environ.get("AGENTS_BUNDLE_LOCAL_PKG_DIR")
@@ -221,15 +233,7 @@ def _ensure_remote_package(pkg_spec: str, refresh: bool = False) -> Path:
             return sub_pkg
         if pkg_spec == DEFAULT_RULES_PKG or (lo_path / "bundles").is_dir() or (lo_path / "rules").is_dir():
             return lo_path
-    repo_part_clean = pkg_spec.split("@", 1)[0]
-    if repo_part_clean.startswith("vitalio/") and not refresh:
-        repo_leaf = repo_part_clean.split("/", 1)[1]
-        for cand_name in (repo_leaf, repo_leaf.replace("_", "-"), repo_leaf.replace("-", "_")):
-            hc = Path.home() / cand_name
-            if hc.is_dir() and any((hc / d).is_dir() for d in ("rules", "src/rules", "bundles", "src/bundles")):
-                cdir_chk = cache_dir_path() / "packages" / pkg_spec
-                if not cdir_chk.is_dir():
-                    return hc
+    refresh = _first_refresh(f"pkg:{pkg_spec}", refresh)
 
     ref = ""
     repo_part = pkg_spec
@@ -275,21 +279,27 @@ def _get_package_catalog(
     return _load_package_from_dir(pkg_dir)
 
 
+def _download_url_text(url: str) -> str:
+    req = urllib.request.Request(url, headers={"User-Agent": f"agents_bundle/{VERSION}"})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return resp.read().decode("utf-8")
+
+
 def _fetch_url_file(url: str, refresh: bool = False) -> Path:
     prog = prog_name()
     slug = re.sub(r"[^A-Za-z0-9._-]+", "_", url)
     cpath = cache_dir_path() / "urls" / slug
+    refresh = _first_refresh(f"url:{url}", refresh)
     if cpath.is_file() and not refresh:
         return cpath
     cpath.parent.mkdir(parents=True, exist_ok=True)
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": f"agents_bundle/{VERSION}"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = resp.read().decode("utf-8")
+        data = _download_url_text(url)
         cpath.write_text(data, encoding="utf-8")
-        return cpath
+        cpath.with_name(cpath.name + URL_ORIGIN_SUFFIX).write_text(url + "\n", encoding="utf-8")
     except Exception as exc:
         raise SystemExit(f"{prog}: failed to fetch {url!r}: {exc}")
+    return cpath
 
 
 def _parse_target_spec(
@@ -554,19 +564,80 @@ def cmd_list_rules(pkg_id: str = DEFAULT_RULES_PKG) -> int:
     return 0
 
 
+def _git_run(repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(repo_root), *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+
+
+def _git_head(repo_root: Path) -> str:
+    return _git_run(repo_root, "rev-parse", "--short", "HEAD").stdout.strip()
+
+
+def _refresh_cached_repo(repo_root: Path) -> tuple[str, str]:
+    before = _git_head(repo_root)
+    for args in (("fetch", "--depth", "1", "--force", "origin"), ("reset", "--hard", "FETCH_HEAD")):
+        r = _git_run(repo_root, *args)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.strip() or f"git {args[0]} failed")
+    return before, _git_head(repo_root)
+
+
 def cmd_update_cache() -> int:
-    pdir = cache_dir_path() / "packages"
-    if not pdir.is_dir():
-        sys.stdout.write(f"No cached packages in {pdir}\n")
+    prog = prog_name()
+    root = cache_dir_path()
+    pdir = root / "packages"
+    udir = root / "urls"
+    counts = {"updated": 0, "unchanged": 0, "skipped": 0, "failed": 0}
+    if pdir.is_dir():
+        for git_dir in sorted(pdir.rglob(".git")):
+            repo_root = git_dir.parent
+            label = f"package {repo_root.relative_to(pdir).as_posix()}"
+            try:
+                before, after = _refresh_cached_repo(repo_root)
+            except RuntimeError as exc:
+                counts["failed"] += 1
+                sys.stderr.write(f"{prog}: {label}: failed: {exc}\n")
+                continue
+            if before == after:
+                counts["unchanged"] += 1
+                sys.stdout.write(f"{label}: up to date ({after})\n")
+            else:
+                counts["updated"] += 1
+                sys.stdout.write(f"{label}: updated {before} -> {after}\n")
+    if udir.is_dir():
+        cached = sorted(p for p in udir.iterdir() if p.is_file() and not p.name.endswith(URL_ORIGIN_SUFFIX))
+        for cpath in cached:
+            origin = cpath.with_name(cpath.name + URL_ORIGIN_SUFFIX)
+            if not origin.is_file():
+                counts["skipped"] += 1
+                sys.stdout.write(f"url {cpath.name}: skipped (source URL not recorded; re-fetch with --refresh)\n")
+                continue
+            url = origin.read_text(encoding="utf-8").strip()
+            label = f"url {url}"
+            try:
+                data = _download_url_text(url)
+            except Exception as exc:
+                counts["failed"] += 1
+                sys.stderr.write(f"{prog}: {label}: failed: {exc}\n")
+                continue
+            if cpath.read_text(encoding="utf-8", errors="replace") == data:
+                counts["unchanged"] += 1
+                sys.stdout.write(f"{label}: unchanged\n")
+            else:
+                cpath.write_text(data, encoding="utf-8")
+                counts["updated"] += 1
+                sys.stdout.write(f"{label}: updated\n")
+    if sum(counts.values()) == 0:
+        sys.stdout.write(f"No cached packages or URL files in {root}\n")
         return 0
-    updated = 0
-    for git_dir in sorted(pdir.rglob(".git")):
-        repo_root = git_dir.parent
-        r = subprocess.run(["git", "-C", str(repo_root), "pull", "--ff-only"], capture_output=True, text=True, check=False)
-        if r.returncode == 0:
-            updated += 1
-            sys.stdout.write(f"Updated {repo_root.relative_to(pdir)}\n")
-        else:
-            sys.stderr.write(f"Failed to update {repo_root}: {r.stderr.strip()}\n")
-    sys.stdout.write(f"Refreshed {updated} cached package(s).\n")
-    return 0
+    sys.stdout.write(
+        "Refreshed cache: "
+        f"{counts['updated']} updated, {counts['unchanged']} unchanged, "
+        f"{counts['skipped']} skipped, {counts['failed']} failed.\n"
+    )
+    return 1 if counts["failed"] else 0

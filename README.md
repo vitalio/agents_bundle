@@ -72,9 +72,22 @@ AGENTS_BUNDLE_VARS="chat_lang=Spanish" agents_bundle > bundle.txt
 agents_bundle -p "Fix issue #12" src/main.py > bundle.txt
 agents_bundle ruleset vitalio/agents-rules:default os=windows
 agents_bundle rule vitalio/agents-rules:release/single-file-build
+agents_bundle --refresh > bundle.txt
+agents_bundle --update-cache
 agents_bundle --list
 agents_bundle --tree -x bumps -x resolutions --max-lines 160
 ```
+
+## Package Cache
+
+Remote packages are cloned into `<cache_dir>/packages` and URL files are
+saved in `<cache_dir>/urls` (`AGENTS_BUNDLE_CACHE_DIR` overrides the
+location). `--refresh` re-fetches each remote package or URL at most once
+per run. `--update-cache` fetches and hard-resets every cached git package
+to its remote ref and re-downloads every cached URL file, printing one
+status line per item (exit code 1 when any item fails). Set
+`AGENTS_BUNDLE_LOCAL_PKG_DIR` to use a local package checkout instead of the
+cache; there is no implicit lookup in the home directory.
 
 ## License
 

@@ -2,10 +2,12 @@
 """Tests for agents_bundle."""
 from __future__ import annotations
 
+import http.server
 import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -521,6 +523,119 @@ class TestAgentsBundle(unittest.TestCase):
         non_bundle_idxs = [idx for idx, ln in enumerate(init_lines) if not ln.startswith("bundle ")]
         self.assertGreaterEqual(len(bundle_idxs), 3)
         self.assertLess(max(bundle_idxs), min(non_bundle_idxs))
+
+    def _git(self, repo, *args):
+        r = subprocess.run(
+            ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        return r.stdout.strip()
+
+    def test_update_cache_resets_git_packages_to_rewritten_remote(self):
+        upstream = self.tmp / "upstream"
+        upstream.mkdir()
+        self._git(upstream, "init", "-q")
+        self._git(upstream, "symbolic-ref", "HEAD", "refs/heads/main")
+        (upstream / "f.txt").write_text("v1\n", encoding="utf-8")
+        self._git(upstream, "add", "f.txt")
+        self._git(upstream, "commit", "-q", "-m", "v1")
+        clone = self.tmp / "cache" / "packages" / "owner" / "repo"
+        clone.parent.mkdir(parents=True)
+        self._git(self.tmp, "clone", "-q", "--depth", "1", upstream.as_uri(), str(clone))
+
+        (upstream / "f.txt").write_text("v2\n", encoding="utf-8")
+        self._git(upstream, "add", "f.txt")
+        self._git(upstream, "commit", "-q", "--amend", "-m", "v2")
+        new_head = self._git(upstream, "rev-parse", "--short", "HEAD")
+
+        r1 = subprocess.run([str(SCRIPT), "--update-cache"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self.assertEqual(r1.returncode, 0, msg=r1.stderr)
+        self.assertIn("package owner/repo: updated", r1.stdout)
+        self.assertIn(new_head, r1.stdout)
+        self.assertEqual((clone / "f.txt").read_text(encoding="utf-8"), "v2\n")
+
+        r2 = subprocess.run([str(SCRIPT), "--update-cache"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self.assertEqual(r2.returncode, 0, msg=r2.stderr)
+        self.assertIn("package owner/repo: up to date", r2.stdout)
+
+    def test_update_cache_refreshes_url_files(self):
+        url_rule = self.tmp / "remote_rule.md"
+        url_rule.write_text("# Description: R\n- Remote rule body one.\n", encoding="utf-8")
+        cmd = [str(SCRIPT), "rule", url_rule.as_uri()]
+        r1 = subprocess.run(cmd, cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self.assertEqual(r1.returncode, 0, msg=r1.stderr)
+        self.assertIn("Remote rule body one.", r1.stdout)
+
+        url_rule.write_text("# Description: R\n- Remote rule body two.\n", encoding="utf-8")
+        ru = subprocess.run([str(SCRIPT), "--update-cache"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self.assertEqual(ru.returncode, 0, msg=ru.stderr)
+        self.assertIn(f"url {url_rule.as_uri()}: updated", ru.stdout)
+
+        r2 = subprocess.run(cmd, cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self.assertIn("Remote rule body two.", r2.stdout)
+
+        ru2 = subprocess.run([str(SCRIPT), "--update-cache"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self.assertIn(f"url {url_rule.as_uri()}: unchanged", ru2.stdout)
+
+    def test_refresh_fetches_each_remote_once_per_run(self):
+        hits = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                hits.append(self.path)
+                body = b"# Description: Served\n- Served rule body.\n"
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = f"http://127.0.0.1:{server.server_address[1]}/served.md"
+            (self.tmp / ".agents_bundle").write_text(f"rule {url}\nrule {url}\n", encoding="utf-8")
+            r = subprocess.run([str(SCRIPT), "--refresh"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertIn("Served rule body.", r.stdout)
+        self.assertEqual(hits, ["/served.md"])
+
+    def test_no_implicit_home_package_fallback(self):
+        home = self.tmp / "home"
+        rule_dir = home / "agents-rules" / "rules" / "core"
+        rule_dir.mkdir(parents=True)
+        (rule_dir / "ssot.md").write_text("# Description: S\n- Home fallback body.\n", encoding="utf-8")
+        env = {k: v for k, v in os.environ.items() if k != "AGENTS_BUNDLE_LOCAL_PKG_DIR"}
+        env.update(
+            {
+                "HOME": str(home),
+                "USERPROFILE": str(home),
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "url.file:///nonexistent/.insteadOf",
+                "GIT_CONFIG_VALUE_0": "https://github.com/",
+            }
+        )
+        r = subprocess.run(
+            [str(SCRIPT), "rule", "vitalio/agents-rules:core/ssot"],
+            cwd=str(self.tmp),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("Home fallback body", r.stdout)
+        self.assertIn("failed to fetch package", r.stderr)
 
 
 if __name__ == "__main__":
