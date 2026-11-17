@@ -7,6 +7,7 @@ def default_spec_template(prog: str | None = None) -> str:
         f"#   rule <owner>/<repo>:<name> [key=val ...]",
         f"#   bundle <owner>/<repo>[:<name>] [key=val ...]",
         "#   var <name>=$(<shell command>)  (or var <name>=<value>; sets variable if not already passed)",
+        "#   expose <key...>  (add header names to Bundle-Expose alongside Role, Task)",
         "#   include $(<shell command>)  (includes existing repository files listed by command or path)",
         "#   prompt <text>",
         "#   [if os=linux] rule <owner>/<repo>:os/linux  (or multi-line [if ...] ... [/if])",
@@ -38,6 +39,31 @@ def cmd_init(force: bool = False, target_dir: Path | None = None) -> int:
     path.write_text(default_spec_template(prog), encoding="utf-8")
     sys.stdout.write(f"{prog}: wrote starter {SPEC_FILE_NAME} to {path}\n")
     return 0
+
+
+def _normalize_header_name(raw_key: str) -> str:
+    parts = [part.capitalize() for part in re.split(r"[-_]+", raw_key.strip()) if part]
+    return "-".join(parts)
+
+
+def _parse_expose_keys(raw_args: str, source_label: str, prog: str) -> list[str]:
+    tokens = [tok for tok in re.split(r"[\s,]+", raw_args.strip()) if tok]
+    keys: list[str] = []
+    for tok in tokens:
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", tok):
+            raise SystemExit(f"{prog}: invalid header name {tok!r} in {source_label}")
+        hdr = _normalize_header_name(tok)
+        if hdr and hdr not in keys:
+            keys.append(hdr)
+    return keys
+
+
+def env_expose(prog: str | None = None) -> list[str]:
+    raw = os.environ.get("AGENTS_BUNDLE_EXPOSE", "").strip()
+    if not raw:
+        return []
+    p = prog or prog_name()
+    return _parse_expose_keys(raw, "AGENTS_BUNDLE_EXPOSE", p)
 
 
 def find_spec_file(start_dir: Path | None = None) -> Path | None:
@@ -177,6 +203,12 @@ def parse_spec(
                     bvars[rk] = rv
                     if resolved_vars is not None:
                         resolved_vars[rk] = rv
+        elif line.startswith("expose "):
+            exp_raw = line[len("expose ") :].strip()
+            for hdr in _parse_expose_keys(exp_raw, SPEC_FILE_NAME, prog):
+                entries.append(("expose", hdr, cond_expr))
+        elif line == "expose":
+            continue
         elif line.startswith("prompt "):
             p_str = line[len("prompt ") :].strip()
             if p_str:
@@ -185,7 +217,7 @@ def parse_spec(
             continue
         else:
             raise SystemExit(
-                f"{prog}: invalid line in {SPEC_FILE_NAME}: {line!r} (expected 'ruleset ...', 'rule ...', 'bundle ...', 'var ...', 'include ...', 'prompt ...', '[if ...]', or '$ <command>')"
+                f"{prog}: invalid line in {SPEC_FILE_NAME}: {line!r} (expected 'ruleset ...', 'rule ...', 'bundle ...', 'var ...', 'expose ...', 'include ...', 'prompt ...', '[if ...]', or '$ <command>')"
             )
     return entries
 
@@ -268,6 +300,7 @@ def build_bundle(
     pending_rules: list[tuple[str, str, str]] = []
     pending_cmds: list[str] = []
     spec_prompts: list[str] = []
+    spec_expose: list[str] = []
     included_files: list[tuple[str, bool]] = []
 
     for kind, val, cond_expr in entries:
@@ -291,6 +324,9 @@ def build_bundle(
             )
         elif kind == "cmd":
             pending_cmds.append(val)
+        elif kind == "expose":
+            if val not in spec_expose:
+                spec_expose.append(val)
         elif kind == "include":
             included_files.append((val, False))
         elif kind == "prompt":
@@ -336,11 +372,20 @@ def build_bundle(
     if all_prompts:
         sections.append(("Prompt", "\n\n".join(all_prompts)))
 
+    boundary = secrets.token_hex(16)
+    exposed_headers = ["Role", "Task"]
+    for hdr in [*spec_expose, *env_expose(prog)]:
+        if hdr not in exposed_headers:
+            exposed_headers.append(hdr)
     cmd_line = shlex.join([prog, *raw_argv]) if raw_argv else prog
-    header_lines = [f"Bundle-Command: {cmd_line}"]
+    header_lines = [
+        f"Bundle-Command: {cmd_line}",
+        f"Bundle-Boundary: {boundary}",
+        f"Bundle-Expose: {', '.join(exposed_headers)}",
+    ]
     for k, v in effective_cli_vars.items():
         if v != "" and k != "workdir":
-            hdr_key = "-".join(part.capitalize() for part in k.split("_") if part)
+            hdr_key = _normalize_header_name(k)
             header_lines.append(f"{hdr_key}: {v}")
     header_lines.append(f"Workdir: {wdir}")
     header = "\n".join(header_lines) + "\n"

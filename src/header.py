@@ -17,6 +17,7 @@
 
 Environment:
   AGENTS_BUNDLE_VARS                          Default key=val pairs (overridden by CLI key=val)
+  AGENTS_BUNDLE_EXPOSE                        Extra header keys to add to Bundle-Expose
   AGENTS_BUNDLE_LOCAL_PKG_DIR                 Use a local package checkout instead of the cache
   AGENTS_BUNDLE_CACHE_DIR                     Override the cache directory
 """
@@ -26,9 +27,11 @@ if __doc__ is None:
     raise SystemExit("missing usage documentation")
 
 import ast
+import json
 import math
 import os
 import re
+import secrets
 import shlex
 import shutil
 import subprocess

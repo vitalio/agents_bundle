@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.server
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -199,14 +200,18 @@ class TestAgentsBundle(unittest.TestCase):
 
         r_plan = subprocess.run([str(SCRIPT), "role=plan"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
         self.assertEqual(r_plan.returncode, 0, r_plan.stderr)
-        self.assertIn("Bundle-Command: agents_bundle role=plan\nRole: plan\n", r_plan.stdout)
+        self.assertIn("Bundle-Command: agents_bundle role=plan\n", r_plan.stdout)
+        self.assertIn("Bundle-Expose: Role, Task\n", r_plan.stdout)
+        self.assertIn("Role: plan\n", r_plan.stdout)
         self.assertIn("all_tasks", r_plan.stdout)
         self.assertNotIn("focused_task_", r_plan.stdout)
         self.assertIn("===== Prompt =====\nMode: PLANNING", r_plan.stdout)
 
         r_exec = subprocess.run([str(SCRIPT), "role=execute"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
         self.assertEqual(r_exec.returncode, 0, r_exec.stderr)
-        self.assertIn("Bundle-Command: agents_bundle role=execute\nRole: execute\n", r_exec.stdout)
+        self.assertIn("Bundle-Command: agents_bundle role=execute\n", r_exec.stdout)
+        self.assertIn("Bundle-Expose: Role, Task\n", r_exec.stdout)
+        self.assertIn("Role: execute\n", r_exec.stdout)
         self.assertIn("all_tasks", r_exec.stdout)
         self.assertNotIn("focused_task_", r_exec.stdout)
         self.assertIn("===== Prompt =====\nMode: EXECUTION", r_exec.stdout)
@@ -332,7 +337,9 @@ class TestAgentsBundle(unittest.TestCase):
         env = {**os.environ, "AGENTS_BUNDLE_VARS": "lang=Spanish mode=custom chat_lang=French"}
         r_env = subprocess.run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, env=env, check=False)
         self.assertEqual(r_env.returncode, 0, r_env.stderr)
-        self.assertIn("Bundle-Command: agents_bundle\nLang: Spanish\nMode: custom\nChat-Lang: French\n", r_env.stdout)
+        self.assertIn("Bundle-Command: agents_bundle\n", r_env.stdout)
+        self.assertIn("Bundle-Expose: Role, Task\n", r_env.stdout)
+        self.assertIn("Lang: Spanish\nMode: custom\nChat-Lang: French\n", r_env.stdout)
         self.assertIn("in Spanish", r_env.stdout)
         self.assertIn("Custom mode active (French)", r_env.stdout)
 
@@ -691,7 +698,7 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertIn("Task: F18\n", r.stdout)
         self.assertIn("Role: execute\n", r.stdout)
         self.assertIn("Chat-Lang: Spanish\n", r.stdout)
-        self.assertNotIn("Bundle-Boundary", r.stdout)
+        self.assertNotIn("Bundle-Boundary: nonce123", r.stdout)
         self.assertNotIn("Bundle-Command: todo_md", r.stdout)
         self.assertIn("===== $ cat AGENTS.md =====\n# Target Project Rules\n", r.stdout)
         self.assertIn("note.txt", r.stdout)
@@ -824,6 +831,82 @@ class TestAgentsBundle(unittest.TestCase):
                 )
                 self.assertNotEqual(r_err.returncode, 0, msg=r_err.stdout)
                 self.assertTrue(r_err.stderr.strip(), msg="expected error message on stderr")
+
+
+    def test_bundle_boundary_nonce_and_expose_control(self):
+        sub_bundle = self.tmp / "extra.bundle"
+        sub_bundle.write_text(
+            "expose project_id\n"
+            "[if role=execute] expose work_item, role\n",
+            encoding="utf-8",
+        )
+        (self.tmp / ".agents_bundle").write_text(
+            "ruleset vitalio/agents-rules:core\n"
+            "expose chat_lang custom-key\n"
+            "expose {opt_hdr:}\n"
+            f"bundle {sub_bundle.as_posix()}\n",
+            encoding="utf-8",
+        )
+
+        # Default + expose directives without AGENTS_BUNDLE_EXPOSE; unexposed vars stay out of Bundle-Expose
+        r1 = subprocess.run(
+            [str(SCRIPT), "role=execute", "task=F19", "lang=German", "chat_lang=French", "project_id=demo"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(r1.returncode, 0, msg=r1.stderr)
+        self.assertIn(
+            "Bundle-Expose: Role, Task, Chat-Lang, Custom-Key, Project-Id, Work-Item\n",
+            r1.stdout,
+        )
+        self.assertIn("Lang: German\n", r1.stdout)
+        m1 = re.search(r"^Bundle-Boundary: ([0-9a-f]+)$", r1.stdout, flags=re.MULTILINE)
+        self.assertIsNotNone(m1, msg=r1.stdout)
+
+        # Second run generates a distinct nonce and excludes conditional expose when condition is false
+        env_exp = {**os.environ, "AGENTS_BUNDLE_EXPOSE": "build_id, chat-lang, trace_tag"}
+        r2 = subprocess.run(
+            [str(SCRIPT), "role=plan", "opt_hdr=extra_scope"],
+            cwd=str(self.tmp),
+            env=env_exp,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(r2.returncode, 0, msg=r2.stderr)
+        self.assertIn(
+            "Bundle-Expose: Role, Task, Chat-Lang, Custom-Key, Extra-Scope, Project-Id, Build-Id, Trace-Tag\n",
+            r2.stdout,
+        )
+        m2 = re.search(r"^Bundle-Boundary: ([0-9a-f]+)$", r2.stdout, flags=re.MULTILINE)
+        self.assertIsNotNone(m2, msg=r2.stdout)
+        self.assertNotEqual(m1.group(1), m2.group(1))
+
+        # Invalid AGENTS_BUNDLE_EXPOSE or expose key fails explicitly
+        bad_env = {**os.environ, "AGENTS_BUNDLE_EXPOSE": "bad=key"}
+        r_bad = subprocess.run(
+            [str(SCRIPT)],
+            cwd=str(self.tmp),
+            env=bad_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(r_bad.returncode, 0)
+        self.assertIn("AGENTS_BUNDLE_EXPOSE", r_bad.stderr)
+
+        (self.tmp / ".agents_bundle").write_text("expose bad=key\n", encoding="utf-8")
+        r_bad_spec = subprocess.run(
+            [str(SCRIPT)],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(r_bad_spec.returncode, 0)
+        self.assertIn(".agents_bundle", r_bad_spec.stderr)
 
 
 if __name__ == "__main__":

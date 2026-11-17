@@ -4,8 +4,10 @@
 
 `agents_bundle` executes `.agents_bundle` in the target working directory
 (`-C`/`--dir`, a piped `Workdir:` preamble on `stdin`, or the current directory),
-runs `ruleset ...`, `rule ...`, `bundle ...`, `prompt ...`, `[if ...]`, and
-`$ <cmd>` directives, includes any extra files and `-p/--prompt` text, emits
+runs `ruleset ...`, `rule ...`, `bundle ...`, `expose ...`, `prompt ...`,
+`[if ...]`, and `$ <cmd>` directives, includes any extra files and
+`-p/--prompt` text, emits `Bundle-Boundary`, `Bundle-Expose` (default:
+`Role, Task`, extensible via `expose` or `AGENTS_BUNDLE_EXPOSE`), and
 `Workdir: <path>` in the bundle header, and writes the assembled bundle strictly
 to `stdout` (sending warnings or errors to `stderr`) so it composes cleanly via
 Unix pipes.

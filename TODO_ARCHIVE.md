@@ -1,3 +1,10 @@
+# ✅ [DONE] F19: Emit Bundle-Boundary nonce and Bundle-Expose header control — *2026-11-17*
+
+- Add `json` and `secrets` standard library imports to `src/header.py`.
+- Generate a per-run hex nonce in `build_bundle` (`src/bundle.py`) and emit `Bundle-Boundary: <nonce>` and `Bundle-Expose: Role, Task` by default.
+- Support an `expose <key...>` directive in `.agents_bundle` / `.bundle` and `AGENTS_BUNDLE_EXPOSE` in the environment (normalizing keys to Title-Case header names) so projects can expose additional session headers while keeping unexposed template variables out of exposed session headers.
+- Add unit tests in `tests/test_agents_bundle.py` covering default header exposure, `expose` directives, `AGENTS_BUNDLE_EXPOSE`, and per-run nonce uniqueness.
+
 # ❌ [CANCELED] F14: Document bundle header and body output contract in README.md and AGENTS.md — *Superseded by F23 (Bundle Output Protocol documentation)*
 
 - Document the standard output contract of `agents_bundle` (`Key: Value` metadata headers followed by a blank line and `===== ... =====` body sections) in `README.md` so downstream consumers like `run_block` can separate session metadata from the LLM prompt body.

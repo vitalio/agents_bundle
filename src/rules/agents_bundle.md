@@ -12,8 +12,8 @@
     `{cmd:agents_bundle} ruleset <pkg>:<name> [k=v]`, `{cmd:agents_bundle} rule <pkg>:<name> [k=v]`.
   - Maintain `.agents_bundle` and `.bundle` files: directives `ruleset`, `rule`,
     `bundle` (`bundle <owner>/<repo>` or `bundle <owner>/<repo>:<name>`),
-    `var` (`var <name>=$(<cmd>)`), `include` (`include $(<cmd>)`),
-    `prompt`, `[if key=val]`, and `$ <cmd>` (single-line `[if ...] <line>`
+    `var` (`var <name>=$(<cmd>)`), `expose` (`expose <key...>`),
+    `include` (`include $(<cmd>)`), `prompt`, `[if key=val]`, and `$ <cmd>` (single-line `[if ...] <line>`
     needs no `[/if]`; indent nested lines inside multi-line `[if ...] ... [/if]`
     blocks by 4 spaces). During design or planning, keep `.agents_bundle`
     updated with the rulesets, stack rules, and bundles required by the project
