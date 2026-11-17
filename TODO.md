@@ -1,4 +1,10 @@
-# ⚪ [NEW] F6: Add bundle CLI subcommand to render and inspect .bundle files
+# 🎯 [NEXT] F12: Detect and fail fast on circular ruleset and bundle references
+
+- Track active resolution chains across recursive `ruleset` expansion in `src/rules_engine.py` and recursive `bundle` expansion in `src/bundle.py`.
+- Fail fast with a clear `SystemExit` diagnostic showing the cycle path instead of hitting `RecursionError`.
+- Add unit tests covering self-referential and multi-step cycles in `tests/test_agents_bundle.py`.
+
+# 🎯 [NEXT] F6: Add bundle CLI subcommand to render and inspect .bundle files
 
 - Add 'agents_bundle bundle <pkg>[:<name>] [k=v]' CLI subcommand (symmetric with 'ruleset' and 'rule') to render a bundle from the command line.
 - Keep src/header.py (--help), src/rules/agents_bundle.md, README.md, and tests in sync.
@@ -16,12 +22,6 @@
 - Statically inspect all parsed commands from included bundles before executing any shell command; fail fast with a clear error naming the blocked command and originating bundle if any command executable is not in the user's allowlist.
 - Restrict 'include' paths from external bundles to files inside the repository root (spec_dir) so external bundles cannot read arbitrary host paths outside the workspace.
 - Update src/bundle.py, src/header.py (--help), src/rules/agents_bundle.md, README.md, and unit tests in tests/test_agents_bundle.py.
-
-# ⚪ [NEW] F12: Detect and fail fast on circular ruleset and bundle references
-
-- Track active resolution chains across recursive `ruleset` expansion in `src/rules_engine.py` and recursive `bundle` expansion in `src/bundle.py`.
-- Fail fast with a clear `SystemExit` diagnostic showing the cycle path instead of hitting `RecursionError`.
-- Add unit tests covering self-referential and multi-step cycles in `tests/test_agents_bundle.py`.
 
 # ⚪ [NEW] F13: Make src/ modules standalone importable and extract core helpers from src/tree.py
 
