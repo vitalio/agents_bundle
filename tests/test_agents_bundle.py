@@ -263,6 +263,7 @@ class TestAgentsBundle(unittest.TestCase):
         rl = subprocess.run([str(SCRIPT), "--list"], capture_output=True, text=True, check=False)
         self.assertEqual(rl.returncode, 0, rl.stderr)
         self.assertIn("Built-in variables", rl.stdout)
+        self.assertIn("piped", rl.stdout)
         self.assertIn("[if os=linux] rule os/linux", rl.stdout)
         self.assertIn("Bundles in 'vitalio/agents-rules'", rl.stdout)
         self.assertNotIn("os/auto", rl.stdout)
@@ -415,8 +416,8 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertIn("Role: execute\nTask: F9\n", r_explicit.stdout)
         self.assertIn("===== Prompt =====\nExecuting F9\n", r_explicit.stdout)
 
-        # Piped todo_md task section on stdin infers task ID and includes piped context in Prompt
-        piped_task = "# 🎯 [NEXT] F12: Piped task title\n\n- Target file: `src/target.py`\n"
+        # Piped Task preamble on stdin maps task variable and includes body in Prompt
+        piped_task = "Task: F12\n\n# 🎯 [NEXT] F12: Piped task title\n\n- Target file: `src/target.py`\n"
         r_pipe = subprocess.run(
             [str(SCRIPT), "role=execute"],
             cwd=str(self.tmp),
@@ -428,6 +429,19 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertEqual(r_pipe.returncode, 0, r_pipe.stderr)
         self.assertIn("Role: execute\nTask: F12\n", r_pipe.stdout)
         self.assertIn("===== Prompt =====\nExecuting F12\n\n# 🎯 [NEXT] F12: Piped task title", r_pipe.stdout)
+
+        # Markdown heading without Task preamble does not infer task via hardcoded regex
+        r_no_regex = subprocess.run(
+            [str(SCRIPT), "role=execute"],
+            cwd=str(self.tmp),
+            input="# 🎯 [NEXT] F99: Plain markdown body\n",
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(r_no_regex.returncode, 0, r_no_regex.stderr)
+        self.assertIn("Role: execute\nTask: F7\n", r_no_regex.stdout)
+        self.assertIn("# 🎯 [NEXT] F99: Plain markdown body", r_no_regex.stdout)
 
         # Piped bare task ID on stdin infers task ID without polluting Prompt
         r_pipe_id = subprocess.run(
@@ -650,17 +664,21 @@ class TestAgentsBundle(unittest.TestCase):
             encoding="utf-8",
         )
 
-        # Piped Key: Value preamble with Workdir sets working directory and strips preamble
+        # Piped Key: Value preamble maps Workdir and non-transport headers to lowercase vars
         piped = (
+            f"Bundle-Command: todo_md F18\n"
+            f"Bundle-Boundary: nonce123\n"
             f"Project: demo\n"
+            f"Task: F18\n"
+            f"Role: execute\n"
+            f"Chat-Lang: Spanish\n"
             f"Workdir: {proj}\n"
             f"\n"
-            f"# 🎯 [NEXT] F18: Target task\n"
-            f"\n"
+            f"# TODO.md:1\n"
             f"- Details here\n"
         )
         r = subprocess.run(
-            [str(SCRIPT), "role=execute"],
+            [str(SCRIPT)],
             cwd=str(self.tmp),
             input=piped,
             capture_output=True,
@@ -669,12 +687,31 @@ class TestAgentsBundle(unittest.TestCase):
         )
         self.assertEqual(r.returncode, 0, msg=r.stderr)
         self.assertIn(f"Workdir: {proj.resolve()}\n", r.stdout)
+        self.assertIn("Project: demo\n", r.stdout)
         self.assertIn("Task: F18\n", r.stdout)
+        self.assertIn("Role: execute\n", r.stdout)
+        self.assertIn("Chat-Lang: Spanish\n", r.stdout)
+        self.assertNotIn("Bundle-Boundary", r.stdout)
+        self.assertNotIn("Bundle-Command: todo_md", r.stdout)
         self.assertIn("===== $ cat AGENTS.md =====\n# Target Project Rules\n", r.stdout)
         self.assertIn("note.txt", r.stdout)
         self.assertIn(f"===== $ pwd =====\n{proj.resolve()}\n", r.stdout)
-        self.assertIn("===== Prompt =====\n# 🎯 [NEXT] F18: Target task", r.stdout)
-        self.assertNotIn("Project: demo", r.stdout)
+        self.assertIn("===== Prompt =====\n# TODO.md:1\n- Details here", r.stdout)
+
+        # CLI k=v and AGENTS_BUNDLE_VARS override piped preamble headers
+        env_ovr = {**os.environ, "AGENTS_BUNDLE_VARS": "role=plan task=F10"}
+        r_vars = subprocess.run(
+            [str(SCRIPT), "task=F99"],
+            cwd=str(self.tmp),
+            env=env_ovr,
+            input=piped,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(r_vars.returncode, 0, msg=r_vars.stderr)
+        self.assertIn("Task: F99\n", r_vars.stdout)
+        self.assertIn("Role: plan\n", r_vars.stdout)
 
         # Piped Workdir with empty body or bare task ID
         r_empty = subprocess.run(
@@ -702,7 +739,7 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertIn(f"Workdir: {proj.resolve()}\n", r_bare_id.stdout)
         self.assertNotIn("===== Prompt =====", r_bare_id.stdout)
 
-        # Explicit -C/--dir takes priority over piped Workdir
+        # Explicit -C/--dir takes priority over piped Workdir while preserving other headers
         override_proj = self.tmp / "override_proj"
         override_proj.mkdir()
         (override_proj / "AGENTS.md").write_text("# Override Rules\n", encoding="utf-8")
@@ -714,7 +751,7 @@ class TestAgentsBundle(unittest.TestCase):
         r_override = subprocess.run(
             [str(SCRIPT), "-C", str(override_proj)],
             cwd=str(self.tmp),
-            input="Workdir: /nonexistent/ignored/path\n\n# 🎯 [NEXT] F19: Override\n",
+            input="Workdir: /nonexistent/ignored/path\nTask: F19\n\n# Body\n",
             capture_output=True,
             text=True,
             check=False,
@@ -724,17 +761,49 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertIn("# Override Rules", r_override.stdout)
         self.assertIn("Task: F19\n", r_override.stdout)
 
-        # Non-Workdir Key: Value prompt text is preserved
+        # Key: Value line without blank separator before non-header body stays in Prompt
         r_note = subprocess.run(
             [str(SCRIPT), "-C", str(proj)],
             cwd=str(self.tmp),
-            input="Note: keep this line\n",
+            input="Note: keep this line\nMore prompt details\n",
             capture_output=True,
             text=True,
             check=False,
         )
         self.assertEqual(r_note.returncode, 0, msg=r_note.stderr)
-        self.assertIn("===== Prompt =====\nNote: keep this line\n", r_note.stdout)
+        self.assertIn("===== Prompt =====\nNote: keep this line\nMore prompt details\n", r_note.stdout)
+
+        # Builtin piped=1 is set only when stdin prompt text is present (and not emitted as header)
+        piped_guard_proj = self.tmp / "piped_guard_proj"
+        piped_guard_proj.mkdir()
+        (piped_guard_proj / ".agents_bundle").write_text(
+            "[if piped!=1] $ echo fetch_from_tracker\n"
+            "[if piped=1] $ echo already_piped\n",
+            encoding="utf-8",
+        )
+        for label, stdin_val, expect_piped in [
+            ("no_stdin", None, False),
+            ("bare_id", "F20\n", False),
+            ("headers_only", "Task: F20\nRole: execute\n", False),
+            ("headers_and_body", "Task: F20\n\n# TODO.md:1\nTask details\n", True),
+        ]:
+            with self.subTest(piped_case=label):
+                rp = subprocess.run(
+                    [str(SCRIPT), "-C", str(piped_guard_proj)],
+                    cwd=str(self.tmp),
+                    input=stdin_val,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(rp.returncode, 0, msg=rp.stderr)
+                self.assertNotIn("Piped:", rp.stdout)
+                if expect_piped:
+                    self.assertIn("already_piped", rp.stdout)
+                    self.assertNotIn("fetch_from_tracker", rp.stdout)
+                else:
+                    self.assertIn("fetch_from_tracker", rp.stdout)
+                    self.assertNotIn("already_piped", rp.stdout)
 
         # Missing, empty, or non-directory Workdir fails cleanly
         missing = self.tmp / "does_not_exist"

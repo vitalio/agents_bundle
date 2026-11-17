@@ -82,24 +82,25 @@ def _parse_stdin_pipe(stdin_text: str) -> tuple[dict[str, str], str, str | None]
         preamble[hm.group(1)] = hm.group(2).strip() if hm.group(2) is not None else ""
         idx += 1
 
-    workdir_val = next((v for k, v in preamble.items() if k.lower() == "workdir"), None)
-    if workdir_val is not None:
-        piped_workdir = workdir_val
+    if preamble and (idx == len(lines) or not lines[idx].strip()):
+        for k, v in preamble.items():
+            kl = k.lower()
+            if kl == "workdir":
+                piped_workdir = v
+            elif kl.startswith("bundle-"):
+                continue
+            elif v:
+                var_name = kl.replace("-", "_")
+                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", var_name):
+                    inferred_vars[var_name] = v
         raw = "\n".join(lines[idx:]).strip()
         if not raw:
             return inferred_vars, "", piped_workdir
         lines = raw.splitlines()
 
     if len(lines) == 1 and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", lines[0].strip()):
-        inferred_vars["task"] = lines[0].strip()
+        inferred_vars.setdefault("task", lines[0].strip())
         return inferred_vars, "", piped_workdir
-    m = re.search(
-        r"^#\s*(?:🔵\s*\[WIP\]|🎯\s*\[NEXT\]|❓\s*\[QUESTION\]|⚪\s*\[NEW\]|⏸️\s*\[HOLD\]|✅\s*\[DONE\]|❌\s*\[CANCELED\])\s+([A-Za-z][A-Za-z0-9_-]*):",
-        raw,
-        flags=re.MULTILINE,
-    )
-    if m:
-        inferred_vars["task"] = m.group(1)
     return inferred_vars, raw, piped_workdir
 
 
@@ -109,10 +110,11 @@ def parse_spec(
     cli_vars: dict[str, str] | None = None,
     refresh: bool = False,
     resolved_vars: dict[str, str] | None = None,
+    piped: bool = False,
 ) -> list[tuple[str, str, str | None]]:
     prog = prog_name()
     active_vars: dict[str, str] = dict(cli_vars) if cli_vars is not None else {}
-    bvars = {**builtin_vars(work_dir), **active_vars}
+    bvars = {**builtin_vars(work_dir, piped=piped), **active_vars}
     entries: list[tuple[str, str, str | None]] = []
     for cond_expr, raw_line in strip_if_blocks_and_lines(text, prog):
         if cond_expr and not eval_if_condition(cond_expr, bvars, prog):
@@ -165,6 +167,7 @@ def parse_spec(
                 cli_vars=merged_cli,
                 refresh=refresh,
                 resolved_vars=sub_resolved,
+                piped=piped,
             ):
                 comb_cond = " ".join(c for c in (cond_expr, sub_cond) if c) or None
                 entries.append((sub_kind, sub_val, comb_cond))
@@ -229,6 +232,7 @@ def build_bundle(
     verbose: bool = False,
     cli_vars: dict[str, str] | None = None,
     raw_argv: list[str] | None = None,
+    piped: bool = False,
 ) -> tuple[str, list[str]]:
     prog = prog_name()
     if work_dir is not None:
@@ -256,6 +260,7 @@ def build_bundle(
         cli_vars=effective_cli_vars,
         refresh=refresh,
         resolved_vars=resolved_vars,
+        piped=piped,
     )
     effective_cli_vars.update(resolved_vars)
     sections: list[tuple[str, str]] = []
@@ -281,6 +286,7 @@ def build_bundle(
                     work_dir=spec_dir,
                     refresh=refresh,
                     trace_prefix=[trace_start],
+                    piped=piped,
                 )
             )
         elif kind == "cmd":
@@ -380,6 +386,7 @@ def cmd_bundle(argv: list[str]) -> int:
             i += 1
 
     piped_workdir: str | None = None
+    has_piped_prompt = False
     if not sys.stdin.isatty():
         try:
             piped_raw = sys.stdin.read()
@@ -391,6 +398,7 @@ def cmd_bundle(argv: list[str]) -> int:
                 if not cli_vars.get(ik):
                     cli_vars[ik] = iv
             if piped_prompt:
+                has_piped_prompt = True
                 prompt_parts.insert(0, piped_prompt)
 
     if work_dir is None and piped_workdir is not None:
@@ -408,6 +416,7 @@ def cmd_bundle(argv: list[str]) -> int:
         verbose=verbose,
         cli_vars=cli_vars,
         raw_argv=argv,
+        piped=has_piped_prompt,
     )
     for w in warnings:
         sys.stderr.write(f"{prog}: warning: {w}\n")

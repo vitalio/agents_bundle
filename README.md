@@ -2,10 +2,23 @@
 
 **Unix-style context bundler, rule/ruleset engine, and token-budgeted repository file tree for AI coding agents.**
 
-`agents_bundle` executes `.agents_bundle` in the target working directory (`-C`/`--dir`, a piped `Workdir:` preamble on `stdin`, or the current directory),
-runs `ruleset ...`, `rule ...`, `bundle ...`, `prompt ...`, `[if ...]`, and `$ <cmd>` directives,
-includes any extra files and `-p/--prompt` text, emits `Workdir: <path>` in the bundle header, and writes the assembled bundle strictly to `stdout`
-(sending warnings or errors to `stderr`) so it composes cleanly via Unix pipes.
+`agents_bundle` executes `.agents_bundle` in the target working directory
+(`-C`/`--dir`, a piped `Workdir:` preamble on `stdin`, or the current directory),
+runs `ruleset ...`, `rule ...`, `bundle ...`, `prompt ...`, `[if ...]`, and
+`$ <cmd>` directives, includes any extra files and `-p/--prompt` text, emits
+`Workdir: <path>` in the bundle header, and writes the assembled bundle strictly
+to `stdout` (sending warnings or errors to `stderr`) so it composes cleanly via
+Unix pipes.
+
+When `stdin` is piped, leading `Key: Value` preamble headers (terminated by a
+blank line or EOF) are parsed automatically: `Workdir:` selects the working
+directory unless overridden by `-C`/`--dir`, `Bundle-*` transport headers are
+ignored, and other headers (`Task:`, `Role:`, etc.) map to lowercase template
+variables (`task`, `role`, ...) when not overridden by CLI `k=v` or
+`AGENTS_BUNDLE_VARS`. A single-token body still sets `task=<ID>`, any remaining
+body text is prepended to the prompt, and built-in `piped=1` is exposed when
+stdin prompt text is present so bundles can guard duplicate output with
+`[if piped!=1]`.
 
 ## Quick Installation
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # agents_bundle-repo: vitalio/agents_bundle
 """Usage:
-  {prog} [k=v ...] [-p TEXT] [FILE ...]       Build context bundle from .agents_bundle to stdout (reads task/prompt/Workdir preamble from stdin if piped)
+  {prog} [k=v ...] [-p TEXT] [FILE ...]       Build context bundle from .agents_bundle to stdout (stdin: Key: Value preamble, task ID, or prompt; sets piped=1 on prompt)
                                                 Opts: -p/--prompt TEXT, -C/--dir DIR (overrides piped Workdir:), -v/--verbose, --refresh (re-fetch each remote at most once per run)
   {prog} ruleset <pkg>:<name> [-excl] [k=v]   Render a ruleset to stdout
   {prog} rule <pkg>:<name> [k=v]              Render a single rule to stdout

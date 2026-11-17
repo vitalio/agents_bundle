@@ -1,7 +1,11 @@
 # Description: Context bundler CLI, file tree, rule discovery, and .agents_bundle maintenance
 - Context bundler & rules engine (`{cmd:agents_bundle}`):
   - Assemble session bundle: `{cmd:agents_bundle} [key=val ...] [-p "<prompt>"] [file ...] | run_block`
-    (roles: `role=design`, `role=plan`, `role=execute`, `role=audit`; task focus: `task=<ID>`, or pipe `<cmd> | {cmd:agents_bundle} | run_block` to infer `task=<ID>` and prepend piped context).
+    (roles: `role=design`, `role=plan`, `role=execute`, `role=audit`; task
+    focus: `task=<ID>`, or pipe `<cmd> | {cmd:agents_bundle} | run_block` to
+    parse `Key: Value` preamble headers into `Workdir:` and lowercase template
+    variables such as `task`/`role`, accept a bare `<ID>`, prepend any piped
+    prompt body, and expose builtin `piped=1` when prompt text is piped).
   - Inspect repository file tree: `{cmd:agents_bundle} --tree [DIR] [-x DIR] [--max-lines N] [--max-tokens N]`
     (use instead of `find`/`ls` for directory structure; pins `AGENTS.md`).
   - Discover rulesets, rules, and bundles: `{cmd:agents_bundle} --list [pkg]`,

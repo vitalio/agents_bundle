@@ -28,10 +28,11 @@ def _detect_vcs_name(work_dir: Path | None = None) -> str:
     return ""
 
 
-def builtin_vars(work_dir: Path | None = None) -> dict[str, str]:
+def builtin_vars(work_dir: Path | None = None, piped: bool = False) -> dict[str, str]:
     return {
         "os": _detect_os_name(),
         "vcs": _detect_vcs_name(work_dir),
+        "piped": "1" if piped else "",
     }
 
 
@@ -383,13 +384,14 @@ def collect_directive_items(
     refresh: bool = False,
     default_pkg: str | None = None,
     trace_prefix: list[str] | None = None,
+    piped: bool = False,
 ) -> list[tuple[str, str, str]]:
     """Returns list of (rule_uid, provenance_comment, rendered_body)."""
     prog = prog_name()
     if kind not in ("ruleset", "rule"):
         raise SystemExit(f"{prog}: directive kind must be 'ruleset' or 'rule' (got {kind!r})")
 
-    effective_vars = {**builtin_vars(work_dir), **(cli_vars or {})}
+    effective_vars = {**builtin_vars(work_dir, piped=piped), **(cli_vars or {})}
     target_spec = _render_rule_vars(target_spec, effective_vars)
     pkg_id, item_name = _parse_target_spec(target_spec, default_pkg=default_pkg)
     excl_set: set[str] = set()
@@ -432,6 +434,7 @@ def collect_directive_items(
                         refresh=refresh,
                         default_pkg=DEFAULT_RULES_PKG,
                         trace_prefix=[*cur_trace, step_label],
+                        piped=piped,
                     )
                 )
             return items_out
@@ -495,6 +498,7 @@ def collect_directive_items(
                 refresh=refresh,
                 default_pkg=pkg_id,
                 trace_prefix=[*cur_trace, step_label],
+                piped=piped,
             )
         )
     return out_items
@@ -542,7 +546,8 @@ def cmd_list_rules(pkg_id: str = DEFAULT_RULES_PKG) -> int:
     bvars = builtin_vars()
     sys.stdout.write("Built-in variables (usable in '[if key=val]' conditions and rule templates):\n")
     sys.stdout.write(f"  {'os':<38}  Active operating system (linux, macos, windows; current: {bvars['os']!r})\n")
-    sys.stdout.write(f"  {'vcs':<38}  Detected repository VCS (git, cvs, or ''; current: {bvars['vcs']!r})\n\n")
+    sys.stdout.write(f"  {'vcs':<38}  Detected repository VCS (git, cvs, or ''; current: {bvars['vcs']!r})\n")
+    sys.stdout.write(f"  {'piped':<38}  Set to '1' when stdin prompt text is present, else '' (current: {bvars['piped']!r})\n\n")
     sys.stdout.write(f"Rulesets in '{pkg_id}' (use as 'ruleset {pkg_id}:<ruleset>'):\n")
     for k, (desc, directives) in rulesets_dict.items():
         target_tag = f"{pkg_id}:{k}"
