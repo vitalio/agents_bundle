@@ -1,3 +1,31 @@
+# 🎯 [NEXT] F23: Add --plain flag (AGENTS_BUNDLE_PLAIN) and document Bundle Output Protocol
+
+- Depends on: F22
+- Support `--plain` in `src/cli.py` / `src/bundle.py` and `AGENTS_BUNDLE_PLAIN=1` in the environment to omit transport `Bundle-*` headers (`Bundle-Boundary`, `Bundle-Expose`) and JSON fragment markers when plain Markdown/text output is requested.
+- Update `--help` in `src/header.py`, `src/rules/agents_bundle.md`, `README.md`, and `AGENTS.md` to document the Bundle Output Protocol (`Bundle-Boundary`, `Bundle-Expose`, `expose`, fragment markers, and `--plain`).
+- Add unit tests in `tests/test_agents_bundle.py` covering `--plain` and `AGENTS_BUNDLE_PLAIN=1`.
+
+# 🎯 [NEXT] F22: Wrap emitted rules, commands, includes, and prompts in JSON fragment markers
+
+- Depends on: F21
+- Wrap each emitted rule, command section, included file section, and prompt block in `<!-- bundle:<nonce>:part {...} -->` and `<!-- bundle:<nonce>:end -->` single-line JSON markers in `src/bundle.py` and `src/rules_engine.py` using neutral fields (`kind`, `id`/`name`, `group`, `via`, `rc`, `ms`).
+- Ensure markers serialize cleanly without breaking rule deduplication or multi-line outputs.
+- Add unit tests in `tests/test_agents_bundle.py` covering all four fragment kinds (`rule`, `cmd`, `include`, `prompt`) and marker field schemas.
+
+# 🎯 [NEXT] F21: Track bundle source (via/group) and command telemetry (rc, ms)
+
+- Depends on: F19
+- Propagate top-level source metadata (`group` / `via`, identifying the originating `bundle` or root `.agents_bundle`) through `parse_spec` in `src/bundle.py` and `collect_directive_items` in `src/rules_engine.py`.
+- Record command exit code (`rc`) and elapsed execution duration in integer milliseconds (`ms`) when running `$ <cmd>` entries in `_run_spec_command` and `build_bundle` (`src/bundle.py`).
+- Add unit tests in `tests/test_agents_bundle.py` verifying source provenance across nested bundles/rulesets and accurate `rc`/`ms` capture.
+
+# 🎯 [NEXT] F19: Emit Bundle-Boundary nonce and Bundle-Expose header control
+
+- Add `json` and `secrets` standard library imports to `src/header.py`.
+- Generate a per-run hex nonce in `build_bundle` (`src/bundle.py`) and emit `Bundle-Boundary: <nonce>` and `Bundle-Expose: Role, Task` by default.
+- Support an `expose <key...>` directive in `.agents_bundle` / `.bundle` and `AGENTS_BUNDLE_EXPOSE` in the environment (normalizing keys to Title-Case header names) so projects can expose additional session headers while keeping unexposed template variables out of exposed session headers.
+- Add unit tests in `tests/test_agents_bundle.py` covering default header exposure, `expose` directives, `AGENTS_BUNDLE_EXPOSE`, and per-run nonce uniqueness.
+
 # 🎯 [NEXT] F12: Detect and fail fast on circular ruleset and bundle references
 
 - Track active resolution chains across recursive `ruleset` expansion in `src/rules_engine.py` and recursive `bundle` expansion in `src/bundle.py`.
@@ -29,11 +57,6 @@
 - Make each module under `src/` valid, standalone-importable Python for IDE/linter analysis while updating `build.py` to strip internal cross-module imports when assembling the single-file `agents_bundle` executable.
 - Keep `AGENTS.md`, `build.py`, and unit tests in `tests/test_agents_bundle.py` in sync.
 
-# ⚪ [NEW] F14: Document bundle header and body output contract in README.md and AGENTS.md
-
-- Document the standard output contract of `agents_bundle` (`Key: Value` metadata headers followed by a blank line and `===== ... =====` body sections) in `README.md` so downstream consumers like `run_block` can separate session metadata from the LLM prompt body.
-- Record the header-block output invariant in `AGENTS.md` under `src/bundle.py` module boundaries.
-
 # ⚪ [NEW] F15: Unify ruleset into bundle and support logical package directory layout
 
 - Merge `ruleset` into `bundle` across `src/rules_engine.py`, `src/bundle.py`, `src/cli.py`, and `src/header.py` so `bundle` serves as the single composition primitive alongside atomic `rule` files (`.md`), coordinating with `F6`, `F7`, and `F10`.
@@ -44,11 +67,3 @@
 
 - Depends on: agents-rules:F9, agents-rules:F16
 - Replace `role=execute` and `role=audit` usage examples in `README.md` (and any bundled rule/help text if present) with `role=work` and `role=review` once the roles are renamed in `agents-rules`.
-
-# ⚪ [NEW] F19: Emit Bundle-Boundary nonce, Bundle-Expose header control, and fragment markers
-
-- Implement the Bundle Output Protocol in `src/bundle.py`, `src/rules_engine.py`, `src/cli.py`, and `src/header.py`.
-- Emit `Bundle-Boundary: <nonce>` (per-run hex token) and `Bundle-Expose: Role, Task` by default; support an `expose <key...>` directive (and/or `AGENTS_BUNDLE_EXPOSE`) so projects can expose additional session headers while keeping internal template variables in metadata only.
-- Wrap emitted rules, commands, included files, and prompts in `<!-- bundle:<nonce>:part {...} -->` / `<!-- bundle:<nonce>:end -->` JSON markers using neutral fields (`kind`, `id`/`name`, `group`, `via`, `rc`, `ms`).
-- Track top-level source (`via`/`group`), command exit code (`rc`), and execution duration (`ms`) in `parse_spec` / `build_bundle`.
-- Add `--plain` (and `AGENTS_BUNDLE_PLAIN=1` if appropriate) to omit transport `Bundle-*` headers and fragment markers, and sync `README.md`, `src/rules/agents_bundle.md`, and `tests/`.

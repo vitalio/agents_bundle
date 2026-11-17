@@ -1,3 +1,8 @@
+# ❌ [CANCELED] F14: Document bundle header and body output contract in README.md and AGENTS.md — *Superseded by F23 (Bundle Output Protocol documentation)*
+
+- Document the standard output contract of `agents_bundle` (`Key: Value` metadata headers followed by a blank line and `===== ... =====` body sections) in `README.md` so downstream consumers like `run_block` can separate session metadata from the LLM prompt body.
+- Record the header-block output invariant in `AGENTS.md` under `src/bundle.py` module boundaries.
+
 # ✅ [DONE] F20: Map preamble headers (Task, Role, Workdir) from stdin without todo_md Markdown regex — *2026-11-17, Map stdin preamble headers to lowercase vars, remove Markdown regex, expose piped=1 builtin*
 
 - Update `_parse_stdin_pipe` in `src/bundle.py` to parse `Key: Value` preamble headers: use `Workdir:` as the working directory (unless overridden by `-C`) and map other non-transport preamble headers (`Task:`, `Role:`, etc.) to lowercase template variables (`task`, `role`, ...) when not overridden by CLI `k=v` or env vars, keeping single-token `<ID>` fallback and removing the hardcoded `todo_md` Markdown status/emoji regex.
