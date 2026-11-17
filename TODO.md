@@ -1,3 +1,9 @@
+# 🎯 [NEXT] F20: Parse Task and Workdir preamble headers from stdin without todo_md Markdown regex
+
+- Update `_parse_stdin_pipe` in `src/bundle.py` to infer `task` from a standard `Task: <ID>` preamble header alongside `Workdir: <dir>` (keeping single-token `<ID>` fallback) and remove the hardcoded `todo_md` Markdown status/emoji regex.
+- Expose a builtin variable (such as `piped=1`) when stdin prompt text is present so bundles like `todo_md.bundle` can avoid duplicating task bodies already piped via stdin.
+- Sync `README.md`, `src/header.py`, `src/rules/agents_bundle.md`, and `tests/test_agents_bundle.py`, and rebuild `agents_bundle` via `build.py`.
+
 # ⚪ [NEW] F6: Add bundle CLI subcommand to render and inspect .bundle files
 
 - Add 'agents_bundle bundle <pkg>[:<name>] [k=v]' CLI subcommand (symmetric with 'ruleset' and 'rule') to render a bundle from the command line.
