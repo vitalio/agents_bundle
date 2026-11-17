@@ -385,14 +385,21 @@ def collect_directive_items(
     default_pkg: str | None = None,
     trace_prefix: list[str] | None = None,
     piped: bool = False,
-) -> list[tuple[str, str, str]]:
-    """Returns list of (rule_uid, provenance_comment, rendered_body)."""
+    group: str | None = None,
+    via: str | None = None,
+) -> list[tuple[str, str, str, str, str]]:
+    """Returns list of (rule_uid, provenance_comment, rendered_body, group, via)."""
     prog = prog_name()
     if kind not in ("ruleset", "rule"):
         raise SystemExit(f"{prog}: directive kind must be 'ruleset' or 'rule' (got {kind!r})")
 
     effective_vars = {**builtin_vars(work_dir, piped=piped), **(cli_vars or {})}
     target_spec = _render_rule_vars(target_spec, effective_vars)
+    if kind == "ruleset":
+        effective_group = group if group is not None else target_spec
+    else:
+        effective_group = group if group is not None else (via if via is not None else target_spec)
+    effective_via = via if via is not None else effective_group
     pkg_id, item_name = _parse_target_spec(target_spec, default_pkg=default_pkg)
     excl_set: set[str] = set()
     for ex in excludes or []:
@@ -417,7 +424,7 @@ def collect_directive_items(
         raw = fpath.read_text(encoding="utf-8", errors="replace")
         if kind == "ruleset":
             _, directives = _parse_ruleset_file(raw, fpath.stem)
-            items_out: list[tuple[str, str, str]] = []
+            items_out: list[tuple[str, str, str, str, str]] = []
             for cond_expr, sub_kind, sub_target, sub_excls, sub_vars in directives:
                 merged_vars = {**effective_vars, **sub_vars, **(cli_vars or {})}
                 if cond_expr and not eval_if_condition(cond_expr, merged_vars, prog):
@@ -435,6 +442,8 @@ def collect_directive_items(
                         default_pkg=DEFAULT_RULES_PKG,
                         trace_prefix=[*cur_trace, step_label],
                         piped=piped,
+                        group=effective_group,
+                        via=effective_via,
                     )
                 )
             return items_out
@@ -446,7 +455,7 @@ def collect_directive_items(
         active_vars = {k: v for k, v in effective_vars.items() if k in used_keys}
         vars_s = f" ({', '.join(f'{k}={v}' for k, v in active_vars.items())})" if active_vars else ""
         prov = f"# [{' -> '.join(cur_trace)}]{vars_s}"
-        return [(str(fpath), prov, rendered)]
+        return [(str(fpath), prov, rendered, effective_group, effective_via)]
 
     def is_excluded(rk: str) -> bool:
         leaf = rk.rsplit("/", 1)[-1]
@@ -471,7 +480,7 @@ def collect_directive_items(
         chain = [*cur_trace, f"rules/{rk}.md"] if (len(cur_trace) > 1 and cur_trace[-1].startswith("[if ")) else [*(cur_trace[:-1] if len(cur_trace) > 1 else cur_trace), f"rules/{rk}.md"]
         vars_s = f" ({', '.join(f'{k}={v}' for k, v in active_vars.items())})" if active_vars else ""
         prov = f"# [{' -> '.join(chain)}]{vars_s}"
-        return [(f"{pkg_id}:{rk}", prov, rendered)]
+        return [(f"{pkg_id}:{rk}", prov, rendered, effective_group, effective_via)]
 
     # kind == "ruleset"
     _, rulesets_dict, _ = _get_package_catalog(pkg_id, refresh=refresh)
@@ -481,7 +490,7 @@ def collect_directive_items(
             f"{prog}: unknown ruleset {item_name!r} in package {pkg_id!r} (available rulesets: {', '.join(avail_p)})"
         )
     _, directives = rulesets_dict[item_name]
-    out_items: list[tuple[str, str, str]] = []
+    out_items: list[tuple[str, str, str, str, str]] = []
     for cond_expr, sub_kind, sub_target, sub_excls, sub_vars in directives:
         merged_vars = {**effective_vars, **sub_vars, **(cli_vars or {})}
         if cond_expr and not eval_if_condition(cond_expr, merged_vars, prog):
@@ -499,15 +508,18 @@ def collect_directive_items(
                 default_pkg=pkg_id,
                 trace_prefix=[*cur_trace, step_label],
                 piped=piped,
+                group=effective_group,
+                via=effective_via,
             )
         )
     return out_items
 
 
-def format_collected_rules(items: list[tuple[str, str, str]], verbose: bool = False) -> str:
+def format_collected_rules(items: list[tuple[str, str, str, str, str]], verbose: bool = False) -> str:
     seen: set[str] = set()
     chunks: list[str] = []
-    for uid, prov, body in items:
+    for item in items:
+        uid, prov, body = item[0], item[1], item[2]
         if uid in seen:
             continue
         seen.add(uid)

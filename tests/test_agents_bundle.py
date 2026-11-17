@@ -908,6 +908,152 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertNotEqual(r_bad_spec.returncode, 0)
         self.assertIn(".agents_bundle", r_bad_spec.stderr)
 
+    def _load_bundle_module(self):
+        import importlib.machinery
+        import importlib.util
+
+        loader = importlib.machinery.SourceFileLoader("agents_bundle_mod", str(SCRIPT))
+        spec = importlib.util.spec_from_loader("agents_bundle_mod", loader)
+        assert spec is not None
+        mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(mod)
+        return mod
+
+    def test_source_provenance_and_command_telemetry(self):
+        mod = self._load_bundle_module()
+
+        leaf_bundle = self.tmp / "leaf.bundle"
+        leaf_bundle.write_text(
+            "ruleset vitalio/agents-rules:default\n"
+            "include leaf_note.txt\n"
+            "$ printf leaf_ok\n"
+            "prompt Leaf prompt\n",
+            encoding="utf-8",
+        )
+        top_bundle = self.tmp / "top.bundle"
+        top_bundle.write_text(
+            "rule vitalio/agents-rules:stack/python-cli\n"
+            f"bundle {leaf_bundle.as_posix()}\n",
+            encoding="utf-8",
+        )
+        (self.tmp / "leaf_note.txt").write_text("leaf note\n", encoding="utf-8")
+        (self.tmp / "root_note.txt").write_text("root note\n", encoding="utf-8")
+        (self.tmp / "cli_note.txt").write_text("cli note\n", encoding="utf-8")
+
+        spec_text = (
+            "rule vitalio/agents-rules:release/single-file-build\n"
+            f"bundle {top_bundle.as_posix()}\n"
+            "include root_note.txt\n"
+            "$ printf root_ok\n"
+            "$ exit 7\n"
+            "prompt Root prompt\n"
+        )
+        (self.tmp / ".agents_bundle").write_text(spec_text, encoding="utf-8")
+
+        # 1. Verify parse_spec propagates top-level originating bundle vs .agents_bundle
+        parsed = mod.parse_spec(spec_text, work_dir=self.tmp)
+        by_val = {(kind, val): via for kind, val, _cond, via in parsed}
+        self.assertEqual(
+            by_val[("directive", "rule vitalio/agents-rules:release/single-file-build")],
+            ".agents_bundle",
+        )
+        self.assertEqual(by_val[("include", "root_note.txt")], ".agents_bundle")
+        self.assertEqual(by_val[("cmd", "printf root_ok")], ".agents_bundle")
+        self.assertEqual(by_val[("prompt", "Root prompt")], ".agents_bundle")
+
+        top_ref = top_bundle.as_posix()
+        self.assertEqual(by_val[("directive", "rule vitalio/agents-rules:stack/python-cli")], top_ref)
+        self.assertEqual(by_val[("directive", "ruleset vitalio/agents-rules:default")], top_ref)
+        self.assertEqual(by_val[("include", "leaf_note.txt")], top_ref)
+        self.assertEqual(by_val[("cmd", "printf leaf_ok")], top_ref)
+        self.assertEqual(by_val[("prompt", "Leaf prompt")], top_ref)
+
+        # 2. Verify collect_directive_items propagates group across nested rulesets while keeping via
+        items = mod.collect_directive_items(
+            "ruleset",
+            "vitalio/agents-rules:default",
+            work_dir=self.tmp,
+            via=top_ref,
+        )
+        self.assertTrue(len(items) >= 2)
+        for uid, _prov, _body, group, via in items:
+            self.assertEqual(group, "vitalio/agents-rules:default", msg=uid)
+            self.assertEqual(via, top_ref, msg=uid)
+
+        # 3. Verify _run_spec_command captures exit code (rc) and integer duration (ms)
+        rc_ok, out_ok, ms_ok = mod._run_spec_command("python3 -c 'import time; time.sleep(0.02); print(123)'", self.tmp)
+        self.assertEqual(rc_ok, 0)
+        self.assertEqual(out_ok, "123")
+        self.assertIsInstance(ms_ok, int)
+        self.assertGreaterEqual(ms_ok, 10)
+
+        rc_fail, _out_fail, ms_fail = mod._run_spec_command("exit 5", self.tmp)
+        self.assertEqual(rc_fail, 5)
+        self.assertIsInstance(ms_fail, int)
+        self.assertGreaterEqual(ms_fail, 0)
+
+        # 4. Verify build_bundle records provenance (group/via) and command telemetry (rc/ms)
+        records: list[dict[str, object]] = []
+        body, warnings = mod.build_bundle(
+            work_dir=self.tmp,
+            extra_files=["cli_note.txt"],
+            prompt_text="CLI prompt",
+            records=records,
+        )
+        self.assertIn("command exited 7: exit 7", warnings)
+        self.assertIn("leaf_ok", body)
+        self.assertIn("root_ok", body)
+
+        rule_recs = {r["id"]: r for r in records if r["kind"] == "rule"}
+        self.assertEqual(
+            rule_recs["vitalio/agents-rules:release/single-file-build"],
+            {
+                "kind": "rule",
+                "id": "vitalio/agents-rules:release/single-file-build",
+                "group": ".agents_bundle",
+                "via": ".agents_bundle",
+            },
+        )
+        self.assertEqual(
+            rule_recs["vitalio/agents-rules:stack/python-cli"],
+            {
+                "kind": "rule",
+                "id": "vitalio/agents-rules:stack/python-cli",
+                "group": top_ref,
+                "via": top_ref,
+            },
+        )
+        self.assertEqual(
+            rule_recs["vitalio/agents-rules:core/start"],
+            {
+                "kind": "rule",
+                "id": "vitalio/agents-rules:core/start",
+                "group": "vitalio/agents-rules:default",
+                "via": top_ref,
+            },
+        )
+
+        cmd_recs = {r["name"]: r for r in records if r["kind"] == "cmd"}
+        self.assertEqual(cmd_recs["printf leaf_ok"]["via"], top_ref)
+        self.assertEqual(cmd_recs["printf leaf_ok"]["group"], top_ref)
+        self.assertEqual(cmd_recs["printf leaf_ok"]["rc"], 0)
+        self.assertIsInstance(cmd_recs["printf leaf_ok"]["ms"], int)
+        self.assertGreaterEqual(cmd_recs["printf leaf_ok"]["ms"], 0)
+
+        self.assertEqual(cmd_recs["printf root_ok"]["via"], ".agents_bundle")
+        self.assertEqual(cmd_recs["printf root_ok"]["rc"], 0)
+        self.assertEqual(cmd_recs["exit 7"]["via"], ".agents_bundle")
+        self.assertEqual(cmd_recs["exit 7"]["rc"], 7)
+        self.assertIsInstance(cmd_recs["exit 7"]["ms"], int)
+
+        inc_recs = {r["name"]: r for r in records if r["kind"] == "include"}
+        self.assertEqual(inc_recs["leaf_note.txt"]["via"], top_ref)
+        self.assertEqual(inc_recs["root_note.txt"]["via"], ".agents_bundle")
+        self.assertEqual(inc_recs["cli_note.txt"]["via"], "cli")
+
+        prompt_recs = [r for r in records if r["kind"] == "prompt"]
+        self.assertEqual([r["via"] for r in prompt_recs], [top_ref, ".agents_bundle", "cli"])
+
 
 if __name__ == "__main__":
     unittest.main()

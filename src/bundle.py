@@ -81,7 +81,7 @@ def _eval_dynamic_expr(expr: str, work_dir: Path | None = None) -> str:
         if not cmd:
             return ""
         cwd = (work_dir if work_dir is not None else Path.cwd()).resolve()
-        rc, out = _run_spec_command(cmd, cwd)
+        rc, out, _ = _run_spec_command(cmd, cwd)
         if rc != 0:
             return ""
         return out.strip()
@@ -137,11 +137,12 @@ def parse_spec(
     refresh: bool = False,
     resolved_vars: dict[str, str] | None = None,
     piped: bool = False,
-) -> list[tuple[str, str, str | None]]:
+    via: str = SPEC_FILE_NAME,
+) -> list[tuple[str, str, str | None, str]]:
     prog = prog_name()
     active_vars: dict[str, str] = dict(cli_vars) if cli_vars is not None else {}
     bvars = {**builtin_vars(work_dir, piped=piped), **active_vars}
-    entries: list[tuple[str, str, str | None]] = []
+    entries: list[tuple[str, str, str | None, str]] = []
     for cond_expr, raw_line in strip_if_blocks_and_lines(text, prog):
         if cond_expr and not eval_if_condition(cond_expr, bvars, prog):
             continue
@@ -168,17 +169,17 @@ def parse_spec(
                 for item in resolved_inc.splitlines():
                     clean_item = item.strip()
                     if clean_item:
-                        entries.append(("include", clean_item, cond_expr))
+                        entries.append(("include", clean_item, cond_expr, via))
         elif line == "include":
             continue
         elif line.startswith("$ ") or line.startswith("! "):
             cmd_str = line[2:].strip()
             if cmd_str:
-                entries.append(("cmd", cmd_str, cond_expr))
+                entries.append(("cmd", cmd_str, cond_expr, via))
         elif line in ("$", "!"):
             continue
         elif line.startswith("ruleset ") or line.startswith("rule "):
-            entries.append(("directive", line, cond_expr))
+            entries.append(("directive", line, cond_expr, via))
         elif line.startswith("bundle "):
             parts = shlex.split(line)
             target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
@@ -187,16 +188,18 @@ def parse_spec(
             inc_text = resolve_bundle_text(target, work_dir=work_dir, refresh=refresh)
             merged_cli = {**active_vars, **vmap}
             sub_resolved: dict[str, str] = {}
-            for sub_kind, sub_val, sub_cond in parse_spec(
+            child_via = target if via == SPEC_FILE_NAME else via
+            for sub_kind, sub_val, sub_cond, sub_via in parse_spec(
                 inc_text,
                 work_dir=work_dir,
                 cli_vars=merged_cli,
                 refresh=refresh,
                 resolved_vars=sub_resolved,
                 piped=piped,
+                via=child_via,
             ):
                 comb_cond = " ".join(c for c in (cond_expr, sub_cond) if c) or None
-                entries.append((sub_kind, sub_val, comb_cond))
+                entries.append((sub_kind, sub_val, comb_cond, sub_via))
             for rk, rv in sub_resolved.items():
                 if not active_vars.get(rk):
                     active_vars[rk] = rv
@@ -206,13 +209,13 @@ def parse_spec(
         elif line.startswith("expose "):
             exp_raw = line[len("expose ") :].strip()
             for hdr in _parse_expose_keys(exp_raw, SPEC_FILE_NAME, prog):
-                entries.append(("expose", hdr, cond_expr))
+                entries.append(("expose", hdr, cond_expr, via))
         elif line == "expose":
             continue
         elif line.startswith("prompt "):
             p_str = line[len("prompt ") :].strip()
             if p_str:
-                entries.append(("prompt", p_str, cond_expr))
+                entries.append(("prompt", p_str, cond_expr, via))
         elif line == "prompt":
             continue
         else:
@@ -222,15 +225,19 @@ def parse_spec(
     return entries
 
 
-def _run_spec_command(cmd_str: str, cwd: Path) -> tuple[int, str]:
+def _run_spec_command(cmd_str: str, cwd: Path) -> tuple[int, str, int]:
+    t0 = time.monotonic()
     prog = prog_name()
     self_dir = str(Path(__file__).resolve().parent)
     if re.match(rf"^(?:{re.escape(prog)}|agents_bundle)\s+--tree(?:\s+.*)?$", cmd_str):
         try:
             parts = shlex.split(cmd_str)[2:]
-            return 0, _tree_from_args(parts, default_dir=cwd).rstrip()
+            out = _tree_from_args(parts, default_dir=cwd).rstrip()
+            elapsed_ms = max(0, int(round((time.monotonic() - t0) * 1000)))
+            return 0, out, elapsed_ms
         except SystemExit as exc:
-            return 1, str(exc)
+            elapsed_ms = max(0, int(round((time.monotonic() - t0) * 1000)))
+            return 1, str(exc), elapsed_ms
 
     env_shell = os.environ.get("AGENTS_BUNDLE_SHELL", "").strip()
     if env_shell:
@@ -251,9 +258,11 @@ def _run_spec_command(cmd_str: str, cwd: Path) -> tuple[int, str]:
             env=env,
             check=False,
         )
-        return r.returncode, r.stdout.decode("utf-8", errors="replace").rstrip()
+        elapsed_ms = max(0, int(round((time.monotonic() - t0) * 1000)))
+        return r.returncode, r.stdout.decode("utf-8", errors="replace").rstrip(), elapsed_ms
     except OSError as exc:
-        return 1, f"[error running {cmd_str!r}: {exc}]"
+        elapsed_ms = max(0, int(round((time.monotonic() - t0) * 1000)))
+        return 1, f"[error running {cmd_str!r}: {exc}]", elapsed_ms
 
 
 def build_bundle(
@@ -265,6 +274,7 @@ def build_bundle(
     cli_vars: dict[str, str] | None = None,
     raw_argv: list[str] | None = None,
     piped: bool = False,
+    records: list[dict[str, object]] | None = None,
 ) -> tuple[str, list[str]]:
     prog = prog_name()
     if work_dir is not None:
@@ -293,22 +303,24 @@ def build_bundle(
         refresh=refresh,
         resolved_vars=resolved_vars,
         piped=piped,
+        via=SPEC_FILE_NAME,
     )
     effective_cli_vars.update(resolved_vars)
     sections: list[tuple[str, str]] = []
     warnings: list[str] = []
-    pending_rules: list[tuple[str, str, str]] = []
-    pending_cmds: list[str] = []
-    spec_prompts: list[str] = []
+    pending_rules: list[tuple[str, str, str, str, str]] = []
+    pending_cmds: list[tuple[str, str]] = []
+    spec_prompts: list[tuple[str, str]] = []
     spec_expose: list[str] = []
-    included_files: list[tuple[str, bool]] = []
+    included_files: list[tuple[str, bool, str]] = []
 
-    for kind, val, cond_expr in entries:
+    for kind, val, cond_expr, entry_via in entries:
         if kind == "directive":
             parts = shlex.split(val)
             d_kind = parts[0]
             target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
-            trace_start = f"[if {cond_expr}] {d_kind} {target}" if cond_expr else f"{d_kind} {target}"
+            base_trace = f"[if {cond_expr}] {d_kind} {target}" if cond_expr else f"{d_kind} {target}"
+            trace_start = f"bundle {entry_via} -> {base_trace}" if entry_via != SPEC_FILE_NAME else base_trace
             merged_vmap = {**vmap, **effective_cli_vars}
             pending_rules.extend(
                 collect_directive_items(
@@ -320,34 +332,61 @@ def build_bundle(
                     refresh=refresh,
                     trace_prefix=[trace_start],
                     piped=piped,
+                    group=(None if d_kind == "ruleset" else entry_via),
+                    via=entry_via,
                 )
             )
         elif kind == "cmd":
-            pending_cmds.append(val)
+            pending_cmds.append((val, entry_via))
         elif kind == "expose":
             if val not in spec_expose:
                 spec_expose.append(val)
         elif kind == "include":
-            included_files.append((val, False))
+            included_files.append((val, False, entry_via))
         elif kind == "prompt":
-            spec_prompts.append(val)
+            spec_prompts.append((val, entry_via))
 
     if pending_rules:
         formatted = format_collected_rules(pending_rules, verbose=verbose).strip()
         if formatted:
             sections.append(("Rules", formatted))
+            if records is not None:
+                seen_rule_uids: set[str] = set()
+                for r_uid, _r_prov, _r_body, r_group, r_via in pending_rules:
+                    if r_uid in seen_rule_uids:
+                        continue
+                    seen_rule_uids.add(r_uid)
+                    records.append(
+                        {
+                            "kind": "rule",
+                            "id": r_uid,
+                            "group": r_group,
+                            "via": r_via,
+                        }
+                    )
 
-    for cmd_val in pending_cmds:
-        rc, out = _run_spec_command(cmd_val, spec_dir)
+    for cmd_val, cmd_via in pending_cmds:
+        rc, out, elapsed_ms = _run_spec_command(cmd_val, spec_dir)
         if rc != 0:
             warnings.append(f"command exited {rc}: {cmd_val}")
         sections.append((f"$ {cmd_val}", out))
+        if records is not None:
+            records.append(
+                {
+                    "kind": "cmd",
+                    "name": cmd_val,
+                    "group": cmd_via,
+                    "via": cmd_via,
+                    "rc": rc,
+                    "ms": elapsed_ms,
+                }
+            )
 
     for extra in extra_files or []:
-        included_files.append((extra, True))
+        included_files.append((extra, True, "cli"))
 
     seen_files: set[Path] = set()
-    for raw_file, warn_missing in included_files:
+    for raw_file, warn_missing, inc_via in included_files:
         clean = raw_file.strip()
         if not clean:
             continue
@@ -365,12 +404,30 @@ def build_bundle(
             disp = p.as_posix()
         content = p.read_text(encoding="utf-8", errors="replace").rstrip()
         sections.append((f"$ cat {disp}", content))
+        if records is not None:
+            records.append(
+                {
+                    "kind": "include",
+                    "name": disp,
+                    "group": inc_via,
+                    "via": inc_via,
+                }
+            )
 
-    all_prompts = [*spec_prompts]
+    all_prompt_items = [*spec_prompts]
     if prompt_text and prompt_text.strip():
-        all_prompts.append(prompt_text.strip())
-    if all_prompts:
-        sections.append(("Prompt", "\n\n".join(all_prompts)))
+        all_prompt_items.append((prompt_text.strip(), "cli"))
+    if all_prompt_items:
+        sections.append(("Prompt", "\n\n".join(text for text, _ in all_prompt_items)))
+        if records is not None:
+            for _p_text, p_via in all_prompt_items:
+                records.append(
+                    {
+                        "kind": "prompt",
+                        "group": p_via,
+                        "via": p_via,
+                    }
+                )
 
     boundary = secrets.token_hex(16)
     exposed_headers = ["Role", "Task"]
