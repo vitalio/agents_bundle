@@ -64,7 +64,10 @@ def _seed_offline_rules_pkg(pkg_dir: Path) -> None:
 class TestAgentsBundle(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="ab_test_"))
-        self._saved_env_vars = os.environ.pop("AGENTS_BUNDLE_VARS", None)
+        self._saved_env = {
+            k: os.environ.pop(k, None)
+            for k in ("AGENTS_BUNDLE_VARS", "AGENTS_BUNDLE_EXPOSE", "AGENTS_BUNDLE_PLAIN")
+        }
         pkg_dir = self.tmp / "offline_rules_pkg"
         _seed_offline_rules_pkg(pkg_dir)
         os.environ["AGENTS_BUNDLE_CACHE_DIR"] = str(self.tmp / "cache")
@@ -73,10 +76,11 @@ class TestAgentsBundle(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("AGENTS_BUNDLE_CACHE_DIR", None)
         os.environ.pop("AGENTS_BUNDLE_LOCAL_PKG_DIR", None)
-        if self._saved_env_vars is not None:
-            os.environ["AGENTS_BUNDLE_VARS"] = self._saved_env_vars
-        else:
-            os.environ.pop("AGENTS_BUNDLE_VARS", None)
+        for k, v in self._saved_env.items():
+            if v is not None:
+                os.environ[k] = v
+            else:
+                os.environ.pop(k, None)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_build_check_help_and_version(self):
@@ -85,6 +89,9 @@ class TestAgentsBundle(unittest.TestCase):
         rh = subprocess.run([str(SCRIPT), "-h"], capture_output=True, text=True, check=False)
         self.assertEqual(rh.returncode, 0)
         self.assertIn("Usage:", rh.stdout)
+        self.assertIn("--plain", rh.stdout)
+        self.assertIn("AGENTS_BUNDLE_PLAIN", rh.stdout)
+        self.assertIn("Bundle Output Protocol:", rh.stdout)
         self.assertIn("-x/--exclude DIR", rh.stdout)
         self.assertNotIn("--agents", rh.stdout)
         rv = subprocess.run([str(SCRIPT), "--version"], capture_output=True, text=True, check=False)
@@ -1243,6 +1250,71 @@ class TestAgentsBundle(unittest.TestCase):
         )
         self.assertEqual(rs.returncode, 0, msg=rs.stderr)
         self.assertNotIn("<!-- bundle:", rs.stdout)
+
+    def test_plain_flag_and_env_omit_transport_headers_and_markers(self):
+        (self.tmp / "sub.bundle").write_text(
+            "rule vitalio/agents-rules:core/start\n"
+            "expose project_id\n"
+            "$ printf 'sub_cmd_out\\n'\n",
+            encoding="utf-8",
+        )
+        (self.tmp / "doc.txt").write_text("included doc line\n", encoding="utf-8")
+        (self.tmp / ".agents_bundle").write_text(
+            "ruleset vitalio/agents-rules:core\n"
+            f"bundle {(self.tmp / 'sub.bundle').as_posix()}\n"
+            "include doc.txt\n"
+            "$ printf 'root_cmd_out\\n'\n"
+            "prompt Plain mode prompt\n",
+            encoding="utf-8",
+        )
+
+        for label, extra_args, extra_env in [
+            ("cli_flag", ["--plain"], {}),
+            ("env_var_1", [], {"AGENTS_BUNDLE_PLAIN": "1"}),
+            ("env_var_true", [], {"AGENTS_BUNDLE_PLAIN": "true"}),
+        ]:
+            with self.subTest(plain_mode=label):
+                env = {**os.environ, **extra_env}
+                r = subprocess.run(
+                    [str(SCRIPT), *extra_args, "role=execute", "task=F23", "project_id=demo"],
+                    cwd=str(self.tmp),
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(r.returncode, 0, msg=r.stderr)
+                self.assertNotIn("Bundle-Command:", r.stdout)
+                self.assertNotIn("Bundle-Boundary:", r.stdout)
+                self.assertNotIn("Bundle-Expose:", r.stdout)
+                self.assertNotIn("<!-- bundle:", r.stdout)
+                self.assertIn("Role: execute\n", r.stdout)
+                self.assertIn("Task: F23\n", r.stdout)
+                self.assertIn("Project-Id: demo\n", r.stdout)
+                self.assertIn(f"Workdir: {self.tmp.resolve()}\n", r.stdout)
+                self.assertIn("===== Rules =====\n", r.stdout)
+                self.assertEqual(r.stdout.count("Start priority, instruction self-audit & dates:"), 1)
+                self.assertIn("===== $ printf 'sub_cmd_out\\n' =====\nsub_cmd_out\n", r.stdout)
+                self.assertIn("===== $ printf 'root_cmd_out\\n' =====\nroot_cmd_out\n", r.stdout)
+                self.assertIn("===== $ cat doc.txt =====\nincluded doc line\n", r.stdout)
+                self.assertIn("===== Prompt =====\nPlain mode prompt\n", r.stdout)
+
+        # Verify AGENTS_BUNDLE_PLAIN=0 preserves transport headers and fragment markers
+        env_off = {**os.environ, "AGENTS_BUNDLE_PLAIN": "0"}
+        r_default = subprocess.run(
+            [str(SCRIPT), "role=execute", "task=F23"],
+            cwd=str(self.tmp),
+            env=env_off,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(r_default.returncode, 0, msg=r_default.stderr)
+        self.assertIn("Bundle-Command:", r_default.stdout)
+        self.assertIn("Bundle-Boundary:", r_default.stdout)
+        self.assertIn("Bundle-Expose: Role, Task, Project-Id\n", r_default.stdout)
+        _, frags = self._extract_fragments(r_default.stdout)
+        self.assertTrue(len(frags) >= 5)
 
 
 if __name__ == "__main__":

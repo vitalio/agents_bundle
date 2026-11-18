@@ -1,3 +1,10 @@
+# ✅ [DONE] F23: Add --plain flag (AGENTS_BUNDLE_PLAIN) and document Bundle Output Protocol — *2026-11-18, Add --plain flag (AGENTS_BUNDLE_PLAIN) and document Bundle Output Protocol*
+
+- Depends on: F22
+- Support `--plain` in `src/cli.py` / `src/bundle.py` and `AGENTS_BUNDLE_PLAIN=1` in the environment to omit transport `Bundle-*` headers (`Bundle-Boundary`, `Bundle-Expose`) and JSON fragment markers when plain Markdown/text output is requested.
+- Update `--help` in `src/header.py`, `src/rules/agents_bundle.md`, `README.md`, and `AGENTS.md` to document the Bundle Output Protocol (`Bundle-Boundary`, `Bundle-Expose`, `expose`, fragment markers, and `--plain`).
+- Add unit tests in `tests/test_agents_bundle.py` covering `--plain` and `AGENTS_BUNDLE_PLAIN=1`.
+
 # ✅ [DONE] F22: Wrap emitted rules, commands, includes, and prompts in JSON fragment markers — *2026-11-18, Wrap emitted rules, commands, includes, and prompts in single-line JSON fragment markers*
 
 - Depends on: F21

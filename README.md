@@ -6,11 +6,11 @@
 (`-C`/`--dir`, a piped `Workdir:` preamble on `stdin`, or the current directory),
 runs `ruleset ...`, `rule ...`, `bundle ...`, `expose ...`, `prompt ...`,
 `[if ...]`, and `$ <cmd>` directives, includes any extra files and
-`-p/--prompt` text, emits `Bundle-Boundary`, `Bundle-Expose` (default:
-`Role, Task`, extensible via `expose` or `AGENTS_BUNDLE_EXPOSE`), and
-`Workdir: <path>` in the bundle header, and writes the assembled bundle strictly
-to `stdout` (sending warnings or errors to `stderr`) so it composes cleanly via
-Unix pipes.
+`-p/--prompt` text, emits `Bundle-Command`, `Bundle-Boundary`, `Bundle-Expose`
+(default: `Role, Task`, extensible via `expose` or `AGENTS_BUNDLE_EXPOSE`), and
+`Workdir: <path>` in the bundle header (or plain Markdown/text via `--plain` /
+`AGENTS_BUNDLE_PLAIN=1`), and writes the assembled bundle strictly to `stdout`
+(sending warnings or errors to `stderr`) so it composes cleanly via Unix pipes.
 
 When `stdin` is piped, leading `Key: Value` preamble headers (terminated by a
 blank line or EOF) are parsed automatically: `Workdir:` selects the working
@@ -87,6 +87,8 @@ agents_bundle -C /path/to/project role=execute > bundle.txt
 agents_bundle role=audit > bundle.txt
 AGENTS_BUNDLE_VARS="chat_lang=Spanish" agents_bundle > bundle.txt
 agents_bundle -p "Fix issue #12" src/main.py > bundle.txt
+agents_bundle --plain role=execute > plain_bundle.txt
+AGENTS_BUNDLE_PLAIN=1 agents_bundle > plain_bundle.txt
 agents_bundle ruleset vitalio/agents-rules:default os=windows
 agents_bundle rule vitalio/agents-rules:release/single-file-build
 agents_bundle --refresh > bundle.txt
@@ -94,6 +96,37 @@ agents_bundle --update-cache
 agents_bundle --list
 agents_bundle --tree -x bumps -x resolutions --max-lines 160
 ```
+
+## Bundle Output Protocol
+
+`agents_bundle` outputs a `Key: Value` header block separated by a blank line
+from the assembled body sections (`===== Rules =====`, `===== $ <cmd> =====`,
+`===== $ cat <file> =====`, and `===== Prompt =====`):
+
+- **Header visibility (`Bundle-*`):** By default, the header block starts with
+  `Bundle-Command`, `Bundle-Boundary: <nonce>` (a per-run hex token), and
+  `Bundle-Expose: Role, Task`. Use the `expose <key...>` directive in
+  `.agents_bundle` / `.bundle` or `AGENTS_BUNDLE_EXPOSE` in the environment to
+  add normalized Title-Case header names to `Bundle-Expose` while keeping
+  unexposed template variables in session metadata only.
+- **JSON fragment markers:** Each emitted rule, command section, included file
+  section, and prompt block is wrapped in single-line HTML comment markers
+  keyed by the run nonce:
+
+  ```text
+  <!-- bundle:<nonce>:part {"kind": "cmd", "name": "git status -sb", "group": ".agents_bundle", "via": ".agents_bundle", "rc": 0, "ms": 8} -->
+  ===== $ git status -sb =====
+  ## main...origin/main
+  <!-- bundle:<nonce>:end -->
+  ```
+
+  Marker payloads use neutral fields: `kind` (`rule`, `cmd`, `include`,
+  `prompt`), `id` (for `rule`) or `name` (for `cmd` and `include`), `group`,
+  `via`, and `rc` / `ms` (for `cmd`).
+- **Plain output (`--plain`):** Pass `--plain` or set `AGENTS_BUNDLE_PLAIN=1`
+  to omit transport `Bundle-*` headers (`Bundle-Command`, `Bundle-Boundary`,
+  `Bundle-Expose`) and JSON fragment markers when plain Markdown/text output is
+  requested.
 
 ## Package Cache
 

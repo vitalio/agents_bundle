@@ -2,10 +2,19 @@
 - Context bundler & rules engine (`{cmd:agents_bundle}`):
   - Assemble session bundle: `{cmd:agents_bundle} [key=val ...] [-p "<prompt>"] [file ...] | run_block`
     (roles: `role=design`, `role=plan`, `role=execute`, `role=audit`; task
-    focus: `task=<ID>`, or pipe `<cmd> | {cmd:agents_bundle} | run_block` to
-    parse `Key: Value` preamble headers into `Workdir:` and lowercase template
-    variables such as `task`/`role`, accept a bare `<ID>`, prepend any piped
-    prompt body, and expose builtin `piped=1` when prompt text is piped).
+    focus: `task=<ID>`, `--plain` or `AGENTS_BUNDLE_PLAIN=1` to omit transport
+    `Bundle-*` headers and JSON fragment markers, or pipe `<cmd> | {cmd:agents_bundle} | run_block`
+    to parse `Key: Value` preamble headers into `Workdir:` and lowercase
+    template variables such as `task`/`role`, accept a bare `<ID>`, prepend any
+    piped prompt body, and expose builtin `piped=1` when prompt text is piped).
+  - Bundle Output Protocol: default output emits `Bundle-Command`,
+    `Bundle-Boundary: <nonce>`, `Bundle-Expose: Role, Task` (extensible via
+    `expose <key...>` or `AGENTS_BUNDLE_EXPOSE`), variable headers, and
+    `Workdir: <path>`, and wraps emitted rules, commands, included files, and
+    prompts in `<!-- bundle:<nonce>:part <json> -->` and
+    `<!-- bundle:<nonce>:end -->` markers (`kind`, `id`/`name`, `group`, `via`,
+    `rc`, `ms`). Pass `--plain` (or `AGENTS_BUNDLE_PLAIN=1`) when plain
+    Markdown/text output without transport framing is needed.
   - Inspect repository file tree: `{cmd:agents_bundle} --tree [DIR] [-x DIR] [--max-lines N] [--max-tokens N]`
     (use instead of `find`/`ls` for directory structure; pins `AGENTS.md`).
   - Discover rulesets, rules, and bundles: `{cmd:agents_bundle} --list [pkg]`,

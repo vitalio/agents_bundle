@@ -66,6 +66,11 @@ def env_expose(prog: str | None = None) -> list[str]:
     return _parse_expose_keys(raw, "AGENTS_BUNDLE_EXPOSE", p)
 
 
+def env_plain() -> bool:
+    raw = os.environ.get("AGENTS_BUNDLE_PLAIN", "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
 def find_spec_file(start_dir: Path | None = None) -> Path | None:
     cur = (start_dir if start_dir is not None else Path.cwd()).resolve()
     candidate = cur / SPEC_FILE_NAME
@@ -275,6 +280,7 @@ def build_bundle(
     raw_argv: list[str] | None = None,
     piped: bool = False,
     records: list[dict[str, object]] | None = None,
+    plain: bool = False,
 ) -> tuple[str, list[str]]:
     prog = prog_name()
     if work_dir is not None:
@@ -307,6 +313,7 @@ def build_bundle(
     )
     effective_cli_vars.update(resolved_vars)
     boundary = secrets.token_hex(16)
+    fragment_boundary = None if plain else boundary
     section_blocks: list[str] = []
     warnings: list[str] = []
     pending_rules: list[tuple[str, str, str, str, str]] = []
@@ -348,7 +355,7 @@ def build_bundle(
             spec_prompts.append((val, entry_via))
 
     if pending_rules:
-        formatted = format_collected_rules(pending_rules, verbose=verbose, boundary=boundary).strip()
+        formatted = format_collected_rules(pending_rules, verbose=verbose, boundary=fragment_boundary).strip()
         if formatted:
             section_blocks.append(f"===== Rules =====\n{formatted}\n")
             if records is not None:
@@ -378,7 +385,7 @@ def build_bundle(
             "rc": rc,
             "ms": elapsed_ms,
         }
-        wrapped_cmd = wrap_bundle_fragment(boundary, cmd_meta, f"===== $ {cmd_val} =====\n{out}")
+        wrapped_cmd = wrap_bundle_fragment(fragment_boundary, cmd_meta, f"===== $ {cmd_val} =====\n{out}")
         section_blocks.append(f"{wrapped_cmd}\n")
         if records is not None:
             records.append(cmd_meta)
@@ -410,7 +417,7 @@ def build_bundle(
             "group": inc_via,
             "via": inc_via,
         }
-        wrapped_inc = wrap_bundle_fragment(boundary, inc_meta, f"===== $ cat {disp} =====\n{content}")
+        wrapped_inc = wrap_bundle_fragment(fragment_boundary, inc_meta, f"===== $ cat {disp} =====\n{content}")
         section_blocks.append(f"{wrapped_inc}\n")
         if records is not None:
             records.append(inc_meta)
@@ -430,7 +437,7 @@ def build_bundle(
             "via": prompt_via,
         }
         joined_prompt = "\n\n".join(text for text, _ in all_prompt_items)
-        wrapped_prompt = wrap_bundle_fragment(boundary, prompt_meta, f"===== Prompt =====\n{joined_prompt}")
+        wrapped_prompt = wrap_bundle_fragment(fragment_boundary, prompt_meta, f"===== Prompt =====\n{joined_prompt}")
         section_blocks.append(f"{wrapped_prompt}\n")
         if records is not None:
             for _p_text, p_via in all_prompt_items:
@@ -442,16 +449,20 @@ def build_bundle(
                     }
                 )
 
-    exposed_headers = ["Role", "Task"]
-    for hdr in [*spec_expose, *env_expose(prog)]:
-        if hdr not in exposed_headers:
-            exposed_headers.append(hdr)
-    cmd_line = shlex.join([prog, *raw_argv]) if raw_argv else prog
-    header_lines = [
-        f"Bundle-Command: {cmd_line}",
-        f"Bundle-Boundary: {boundary}",
-        f"Bundle-Expose: {', '.join(exposed_headers)}",
-    ]
+    header_lines: list[str] = []
+    if not plain:
+        exposed_headers = ["Role", "Task"]
+        for hdr in [*spec_expose, *env_expose(prog)]:
+            if hdr not in exposed_headers:
+                exposed_headers.append(hdr)
+        cmd_line = shlex.join([prog, *raw_argv]) if raw_argv else prog
+        header_lines.extend(
+            [
+                f"Bundle-Command: {cmd_line}",
+                f"Bundle-Boundary: {boundary}",
+                f"Bundle-Expose: {', '.join(exposed_headers)}",
+            ]
+        )
     for k, v in effective_cli_vars.items():
         if v != "" and k != "workdir":
             hdr_key = _normalize_header_name(k)
@@ -470,6 +481,7 @@ def cmd_bundle(argv: list[str]) -> int:
     cli_vars: dict[str, str] = env_vars(prog)
     refresh = False
     verbose = False
+    plain = env_plain()
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -478,6 +490,9 @@ def cmd_bundle(argv: list[str]) -> int:
             i += 1
         elif a in ("-v", "--verbose"):
             verbose = True
+            i += 1
+        elif a == "--plain":
+            plain = True
             i += 1
         elif a in ("-p", "--prompt"):
             if i + 1 >= len(argv):
@@ -531,6 +546,7 @@ def cmd_bundle(argv: list[str]) -> int:
         cli_vars=cli_vars,
         raw_argv=argv,
         piped=has_piped_prompt,
+        plain=plain,
     )
     for w in warnings:
         sys.stderr.write(f"{prog}: warning: {w}\n")

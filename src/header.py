@@ -2,22 +2,37 @@
 # agents_bundle-repo: vitalio/agents_bundle
 """Usage:
   {prog} [k=v ...] [-p TEXT] [FILE ...]       Build context bundle from .agents_bundle to stdout (stdin: Key: Value preamble, task ID, or prompt; sets piped=1 on prompt)
-                                                Opts: -p/--prompt TEXT, -C/--dir DIR (overrides piped Workdir:), -v/--verbose, --refresh (re-fetch each remote at most once per run)
   {prog} ruleset <pkg>:<name> [-excl] [k=v]   Render a ruleset to stdout
   {prog} rule <pkg>:<name> [k=v]              Render a single rule to stdout
   {prog} --list | -l [pkg]                    List rulesets, rules, bundles, and built-in variables (default: {default_pkg})
   {prog} --update-cache                       Refresh cached git packages and URL files in {cache_dir}
   {prog} --init [--force]                     Create a starter .agents_bundle in the current directory
   {prog} --tree [DIR] [opts]                  Print token-budgeted repository file tree to stdout
-                                                Opts: -x/--exclude DIR, --max-lines N (160), --max-tokens N (1600)
   {prog} --update [--force]                   Self-update {prog} from GitHub (vitalio/agents_bundle)
   {prog} --check-update                       Check if a newer version is available
   {prog} -V | --version                       Print version and exit 0
   {prog} -h | --help                          Print this usage and exit 0
 
+Options:
+  -p, --prompt TEXT                           Append prompt text to the Prompt section
+  -C, --dir DIR                               Set working directory (default: piped Workdir: or cwd)
+  -v, --verbose                               Include rule provenance trace comments
+  --plain                                     Omit transport Bundle-* headers and JSON fragment markers
+  --refresh                                   Re-fetch each remote package or URL at most once per run
+  -x, --exclude DIR                           Exclude directory name in --tree (-x/--exclude DIR, repeatable)
+  --max-lines N                               Maximum output lines for --tree (default: 160)
+  --max-tokens N                              Approximate token budget for --tree (default: 1600)
+  --force                                     Overwrite existing .agents_bundle (--init) or force reinstall (--update)
+
+Bundle Output Protocol:
+  Headers                                     Emits Bundle-Command, Bundle-Boundary: <nonce>, Bundle-Expose: Role, Task (extensible via 'expose' or AGENTS_BUNDLE_EXPOSE), variable headers, and Workdir: <path>
+  Fragment markers                            Wraps rules, commands, included files, and prompts in <!-- bundle:<nonce>:part <json> --> and <!-- bundle:<nonce>:end --> (fields: kind, id/name, group, via, rc, ms)
+  Plain mode                                  --plain or AGENTS_BUNDLE_PLAIN=1 omits transport Bundle-* headers and fragment markers
+
 Environment:
   AGENTS_BUNDLE_VARS                          Default key=val pairs (overridden by CLI key=val)
   AGENTS_BUNDLE_EXPOSE                        Extra header keys to add to Bundle-Expose
+  AGENTS_BUNDLE_PLAIN                         Set to 1 to omit transport Bundle-* headers and fragment markers
   AGENTS_BUNDLE_LOCAL_PKG_DIR                 Use a local package checkout instead of the cache
   AGENTS_BUNDLE_CACHE_DIR                     Override the cache directory
 """
