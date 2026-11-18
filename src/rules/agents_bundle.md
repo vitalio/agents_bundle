@@ -12,7 +12,7 @@
     `expose <key...>` or `AGENTS_BUNDLE_EXPOSE`), variable headers, and
     `Workdir: <path>`, and wraps emitted rules, commands, included files, and
     prompts in `<!-- bundle:<nonce>:part <json> -->` and
-    `<!-- bundle:<nonce>:end -->` markers (`kind`, `id`/`name`, `group`, `via`,
+    `<!-- bundle:<nonce>:end -->` markers (`kind`, `id`/`name`, `chain`,
     `rc`, `ms`). Pass `--plain` (or `AGENTS_BUNDLE_PLAIN=1`) when plain
     Markdown/text output without transport framing is needed.
   - Inspect repository file tree: `{cmd:agents_bundle} --tree [DIR] [-x DIR] [--max-lines N] [--max-tokens N]`

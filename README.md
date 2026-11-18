@@ -115,15 +115,16 @@ from the assembled body sections (`===== Rules =====`, `===== $ <cmd> =====`,
   keyed by the run nonce:
 
   ```text
-  <!-- bundle:<nonce>:part {"kind": "cmd", "name": "git status -sb", "group": ".agents_bundle", "via": ".agents_bundle", "rc": 0, "ms": 8} -->
+  <!-- bundle:<nonce>:part {"kind": "cmd", "name": "git status -sb", "chain": [], "rc": 0, "ms": 8} -->
   ===== $ git status -sb =====
   ## main...origin/main
   <!-- bundle:<nonce>:end -->
   ```
 
   Marker payloads use neutral fields: `kind` (`rule`, `cmd`, `include`,
-  `prompt`), `id` (for `rule`) or `name` (for `cmd` and `include`), `group`,
-  `via`, and `rc` / `ms` (for `cmd`).
+  `prompt`), `id` (for `rule`) or `name` (for `cmd` and `include`), `chain`
+  (`[]` for root directives and CLI inputs, or ordered inclusion path of
+  bundle/ruleset specifiers), and `rc` / `ms` (for `cmd`).
 - **Plain output (`--plain`):** Pass `--plain` or set `AGENTS_BUNDLE_PLAIN=1`
   to omit transport `Bundle-*` headers (`Bundle-Command`, `Bundle-Boundary`,
   `Bundle-Expose`) and JSON fragment markers when plain Markdown/text output is

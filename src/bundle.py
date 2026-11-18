@@ -142,12 +142,13 @@ def parse_spec(
     refresh: bool = False,
     resolved_vars: dict[str, str] | None = None,
     piped: bool = False,
-    via: str = SPEC_FILE_NAME,
-) -> list[tuple[str, str, str | None, str]]:
+    chain: list[str] | None = None,
+) -> list[tuple[str, str, str | None, list[str]]]:
     prog = prog_name()
     active_vars: dict[str, str] = dict(cli_vars) if cli_vars is not None else {}
     bvars = {**builtin_vars(work_dir, piped=piped), **active_vars}
-    entries: list[tuple[str, str, str | None, str]] = []
+    cur_chain = list(chain) if chain else []
+    entries: list[tuple[str, str, str | None, list[str]]] = []
     for cond_expr, raw_line in strip_if_blocks_and_lines(text, prog):
         if cond_expr and not eval_if_condition(cond_expr, bvars, prog):
             continue
@@ -174,17 +175,17 @@ def parse_spec(
                 for item in resolved_inc.splitlines():
                     clean_item = item.strip()
                     if clean_item:
-                        entries.append(("include", clean_item, cond_expr, via))
+                        entries.append(("include", clean_item, cond_expr, list(cur_chain)))
         elif line == "include":
             continue
         elif line.startswith("$ ") or line.startswith("! "):
             cmd_str = line[2:].strip()
             if cmd_str:
-                entries.append(("cmd", cmd_str, cond_expr, via))
+                entries.append(("cmd", cmd_str, cond_expr, list(cur_chain)))
         elif line in ("$", "!"):
             continue
         elif line.startswith("ruleset ") or line.startswith("rule "):
-            entries.append(("directive", line, cond_expr, via))
+            entries.append(("directive", line, cond_expr, list(cur_chain)))
         elif line.startswith("bundle "):
             parts = shlex.split(line)
             target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
@@ -193,18 +194,18 @@ def parse_spec(
             inc_text = resolve_bundle_text(target, work_dir=work_dir, refresh=refresh)
             merged_cli = {**active_vars, **vmap}
             sub_resolved: dict[str, str] = {}
-            child_via = target if via == SPEC_FILE_NAME else via
-            for sub_kind, sub_val, sub_cond, sub_via in parse_spec(
+            child_chain = [*cur_chain, target]
+            for sub_kind, sub_val, sub_cond, sub_chain in parse_spec(
                 inc_text,
                 work_dir=work_dir,
                 cli_vars=merged_cli,
                 refresh=refresh,
                 resolved_vars=sub_resolved,
                 piped=piped,
-                via=child_via,
+                chain=child_chain,
             ):
                 comb_cond = " ".join(c for c in (cond_expr, sub_cond) if c) or None
-                entries.append((sub_kind, sub_val, comb_cond, sub_via))
+                entries.append((sub_kind, sub_val, comb_cond, sub_chain))
             for rk, rv in sub_resolved.items():
                 if not active_vars.get(rk):
                     active_vars[rk] = rv
@@ -214,13 +215,13 @@ def parse_spec(
         elif line.startswith("expose "):
             exp_raw = line[len("expose ") :].strip()
             for hdr in _parse_expose_keys(exp_raw, SPEC_FILE_NAME, prog):
-                entries.append(("expose", hdr, cond_expr, via))
+                entries.append(("expose", hdr, cond_expr, list(cur_chain)))
         elif line == "expose":
             continue
         elif line.startswith("prompt "):
             p_str = line[len("prompt ") :].strip()
             if p_str:
-                entries.append(("prompt", p_str, cond_expr, via))
+                entries.append(("prompt", p_str, cond_expr, list(cur_chain)))
         elif line == "prompt":
             continue
         else:
@@ -309,26 +310,29 @@ def build_bundle(
         refresh=refresh,
         resolved_vars=resolved_vars,
         piped=piped,
-        via=SPEC_FILE_NAME,
     )
     effective_cli_vars.update(resolved_vars)
     boundary = secrets.token_hex(16)
     fragment_boundary = None if plain else boundary
     section_blocks: list[str] = []
     warnings: list[str] = []
-    pending_rules: list[tuple[str, str, str, str, str]] = []
-    pending_cmds: list[tuple[str, str]] = []
-    spec_prompts: list[tuple[str, str]] = []
+    pending_rules: list[tuple[str, str, str, list[str]]] = []
+    pending_cmds: list[tuple[str, list[str]]] = []
+    spec_prompts: list[tuple[str, list[str]]] = []
     spec_expose: list[str] = []
-    included_files: list[tuple[str, bool, str]] = []
+    included_files: list[tuple[str, bool, list[str]]] = []
 
-    for kind, val, cond_expr, entry_via in entries:
+    for kind, val, cond_expr, entry_chain in entries:
         if kind == "directive":
             parts = shlex.split(val)
             d_kind = parts[0]
             target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
             base_trace = f"[if {cond_expr}] {d_kind} {target}" if cond_expr else f"{d_kind} {target}"
-            trace_start = f"bundle {entry_via} -> {base_trace}" if entry_via != SPEC_FILE_NAME else base_trace
+            if entry_chain:
+                bundle_trace = " -> ".join(f"bundle {b}" for b in entry_chain)
+                trace_start = f"{bundle_trace} -> {base_trace}"
+            else:
+                trace_start = base_trace
             merged_vmap = {**vmap, **effective_cli_vars}
             pending_rules.extend(
                 collect_directive_items(
@@ -340,19 +344,18 @@ def build_bundle(
                     refresh=refresh,
                     trace_prefix=[trace_start],
                     piped=piped,
-                    group=(None if d_kind == "ruleset" else entry_via),
-                    via=entry_via,
+                    chain=entry_chain,
                 )
             )
         elif kind == "cmd":
-            pending_cmds.append((val, entry_via))
+            pending_cmds.append((val, entry_chain))
         elif kind == "expose":
             if val not in spec_expose:
                 spec_expose.append(val)
         elif kind == "include":
-            included_files.append((val, False, entry_via))
+            included_files.append((val, False, entry_chain))
         elif kind == "prompt":
-            spec_prompts.append((val, entry_via))
+            spec_prompts.append((val, entry_chain))
 
     if pending_rules:
         formatted = format_collected_rules(pending_rules, verbose=verbose, boundary=fragment_boundary).strip()
@@ -360,7 +363,7 @@ def build_bundle(
             section_blocks.append(f"===== Rules =====\n{formatted}\n")
             if records is not None:
                 seen_rule_uids: set[str] = set()
-                for r_uid, _r_prov, _r_body, r_group, r_via in pending_rules:
+                for r_uid, _r_prov, _r_body, r_chain in pending_rules:
                     if r_uid in seen_rule_uids:
                         continue
                     seen_rule_uids.add(r_uid)
@@ -368,20 +371,18 @@ def build_bundle(
                         {
                             "kind": "rule",
                             "id": r_uid,
-                            "group": r_group,
-                            "via": r_via,
+                            "chain": list(r_chain),
                         }
                     )
 
-    for cmd_val, cmd_via in pending_cmds:
+    for cmd_val, cmd_chain in pending_cmds:
         rc, out, elapsed_ms = _run_spec_command(cmd_val, spec_dir)
         if rc != 0:
             warnings.append(f"command exited {rc}: {cmd_val}")
         cmd_meta: dict[str, object] = {
             "kind": "cmd",
             "name": cmd_val,
-            "group": cmd_via,
-            "via": cmd_via,
+            "chain": list(cmd_chain),
             "rc": rc,
             "ms": elapsed_ms,
         }
@@ -391,10 +392,10 @@ def build_bundle(
             records.append(cmd_meta)
 
     for extra in extra_files or []:
-        included_files.append((extra, True, "cli"))
+        included_files.append((extra, True, []))
 
     seen_files: set[Path] = set()
-    for raw_file, warn_missing, inc_via in included_files:
+    for raw_file, warn_missing, inc_chain in included_files:
         clean = raw_file.strip()
         if not clean:
             continue
@@ -414,8 +415,7 @@ def build_bundle(
         inc_meta: dict[str, object] = {
             "kind": "include",
             "name": disp,
-            "group": inc_via,
-            "via": inc_via,
+            "chain": list(inc_chain),
         }
         wrapped_inc = wrap_bundle_fragment(fragment_boundary, inc_meta, f"===== $ cat {disp} =====\n{content}")
         section_blocks.append(f"{wrapped_inc}\n")
@@ -424,28 +424,23 @@ def build_bundle(
 
     all_prompt_items = [*spec_prompts]
     if prompt_text and prompt_text.strip():
-        all_prompt_items.append((prompt_text.strip(), "cli"))
+        all_prompt_items.append((prompt_text.strip(), []))
     if all_prompt_items:
-        prompt_vias: list[str] = []
-        for _p_text, p_via in all_prompt_items:
-            if p_via not in prompt_vias:
-                prompt_vias.append(p_via)
-        prompt_via = prompt_vias[0] if len(prompt_vias) == 1 else ", ".join(prompt_vias)
+        first_chain = all_prompt_items[0][1]
+        shared_chain = list(first_chain) if all(p_chain == first_chain for _p_text, p_chain in all_prompt_items) else []
         prompt_meta: dict[str, object] = {
             "kind": "prompt",
-            "group": prompt_via,
-            "via": prompt_via,
+            "chain": shared_chain,
         }
         joined_prompt = "\n\n".join(text for text, _ in all_prompt_items)
         wrapped_prompt = wrap_bundle_fragment(fragment_boundary, prompt_meta, f"===== Prompt =====\n{joined_prompt}")
         section_blocks.append(f"{wrapped_prompt}\n")
         if records is not None:
-            for _p_text, p_via in all_prompt_items:
+            for _p_text, p_chain in all_prompt_items:
                 records.append(
                     {
                         "kind": "prompt",
-                        "group": p_via,
-                        "via": p_via,
+                        "chain": list(p_chain),
                     }
                 )
 

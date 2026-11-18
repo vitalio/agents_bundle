@@ -961,35 +961,38 @@ class TestAgentsBundle(unittest.TestCase):
         )
         (self.tmp / ".agents_bundle").write_text(spec_text, encoding="utf-8")
 
-        # 1. Verify parse_spec propagates top-level originating bundle vs .agents_bundle
+        # 1. Verify parse_spec preserves full multi-hop chain (root=[] vs nested bundles)
         parsed = mod.parse_spec(spec_text, work_dir=self.tmp)
-        by_val = {(kind, val): via for kind, val, _cond, via in parsed}
+        by_val = {(kind, val): chain for kind, val, _cond, chain in parsed}
         self.assertEqual(
             by_val[("directive", "rule vitalio/agents-rules:release/single-file-build")],
-            ".agents_bundle",
+            [],
         )
-        self.assertEqual(by_val[("include", "root_note.txt")], ".agents_bundle")
-        self.assertEqual(by_val[("cmd", "printf root_ok")], ".agents_bundle")
-        self.assertEqual(by_val[("prompt", "Root prompt")], ".agents_bundle")
+        self.assertEqual(by_val[("include", "root_note.txt")], [])
+        self.assertEqual(by_val[("cmd", "printf root_ok")], [])
+        self.assertEqual(by_val[("prompt", "Root prompt")], [])
 
         top_ref = top_bundle.as_posix()
-        self.assertEqual(by_val[("directive", "rule vitalio/agents-rules:stack/python-cli")], top_ref)
-        self.assertEqual(by_val[("directive", "ruleset vitalio/agents-rules:default")], top_ref)
-        self.assertEqual(by_val[("include", "leaf_note.txt")], top_ref)
-        self.assertEqual(by_val[("cmd", "printf leaf_ok")], top_ref)
-        self.assertEqual(by_val[("prompt", "Leaf prompt")], top_ref)
+        leaf_ref = leaf_bundle.as_posix()
+        self.assertEqual(by_val[("directive", "rule vitalio/agents-rules:stack/python-cli")], [top_ref])
+        self.assertEqual(by_val[("directive", "ruleset vitalio/agents-rules:default")], [top_ref, leaf_ref])
+        self.assertEqual(by_val[("include", "leaf_note.txt")], [top_ref, leaf_ref])
+        self.assertEqual(by_val[("cmd", "printf leaf_ok")], [top_ref, leaf_ref])
+        self.assertEqual(by_val[("prompt", "Leaf prompt")], [top_ref, leaf_ref])
 
-        # 2. Verify collect_directive_items propagates group across nested rulesets while keeping via
+        # 2. Verify collect_directive_items preserves full multi-hop chain across nested rulesets
         items = mod.collect_directive_items(
             "ruleset",
             "vitalio/agents-rules:default",
             work_dir=self.tmp,
-            via=top_ref,
+            chain=[top_ref, leaf_ref],
         )
         self.assertTrue(len(items) >= 2)
-        for uid, _prov, _body, group, via in items:
-            self.assertEqual(group, "vitalio/agents-rules:default", msg=uid)
-            self.assertEqual(via, top_ref, msg=uid)
+        by_uid = {uid: chain for uid, _prov, _body, chain in items}
+        self.assertEqual(
+            by_uid["vitalio/agents-rules:core/start"],
+            [top_ref, leaf_ref, "vitalio/agents-rules:default", "vitalio/agents-rules:core"],
+        )
 
         # 3. Verify _run_spec_command captures exit code (rc) and integer duration (ms)
         rc_ok, out_ok, ms_ok = mod._run_spec_command("python3 -c 'import time; time.sleep(0.02); print(123)'", self.tmp)
@@ -1003,7 +1006,7 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertIsInstance(ms_fail, int)
         self.assertGreaterEqual(ms_fail, 0)
 
-        # 4. Verify build_bundle records provenance (group/via) and command telemetry (rc/ms)
+        # 4. Verify build_bundle records neutral provenance chain and command telemetry (rc/ms)
         records: list[dict[str, object]] = []
         body, warnings = mod.build_bundle(
             work_dir=self.tmp,
@@ -1014,6 +1017,9 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertIn("command exited 7: exit 7", warnings)
         self.assertIn("leaf_ok", body)
         self.assertIn("root_ok", body)
+        for rec in records:
+            self.assertNotIn("group", rec)
+            self.assertNotIn("via", rec)
 
         rule_recs = {r["id"]: r for r in records if r["kind"] == "rule"}
         self.assertEqual(
@@ -1021,8 +1027,7 @@ class TestAgentsBundle(unittest.TestCase):
             {
                 "kind": "rule",
                 "id": "vitalio/agents-rules:release/single-file-build",
-                "group": ".agents_bundle",
-                "via": ".agents_bundle",
+                "chain": [],
             },
         )
         self.assertEqual(
@@ -1030,8 +1035,7 @@ class TestAgentsBundle(unittest.TestCase):
             {
                 "kind": "rule",
                 "id": "vitalio/agents-rules:stack/python-cli",
-                "group": top_ref,
-                "via": top_ref,
+                "chain": [top_ref],
             },
         )
         self.assertEqual(
@@ -1039,31 +1043,43 @@ class TestAgentsBundle(unittest.TestCase):
             {
                 "kind": "rule",
                 "id": "vitalio/agents-rules:core/start",
-                "group": "vitalio/agents-rules:default",
-                "via": top_ref,
+                "chain": [top_ref, leaf_ref, "vitalio/agents-rules:default", "vitalio/agents-rules:core"],
             },
         )
 
         cmd_recs = {r["name"]: r for r in records if r["kind"] == "cmd"}
-        self.assertEqual(cmd_recs["printf leaf_ok"]["via"], top_ref)
-        self.assertEqual(cmd_recs["printf leaf_ok"]["group"], top_ref)
+        self.assertEqual(cmd_recs["printf leaf_ok"]["chain"], [top_ref, leaf_ref])
         self.assertEqual(cmd_recs["printf leaf_ok"]["rc"], 0)
         self.assertIsInstance(cmd_recs["printf leaf_ok"]["ms"], int)
         self.assertGreaterEqual(cmd_recs["printf leaf_ok"]["ms"], 0)
 
-        self.assertEqual(cmd_recs["printf root_ok"]["via"], ".agents_bundle")
+        self.assertEqual(cmd_recs["printf root_ok"]["chain"], [])
         self.assertEqual(cmd_recs["printf root_ok"]["rc"], 0)
-        self.assertEqual(cmd_recs["exit 7"]["via"], ".agents_bundle")
+        self.assertEqual(cmd_recs["exit 7"]["chain"], [])
         self.assertEqual(cmd_recs["exit 7"]["rc"], 7)
         self.assertIsInstance(cmd_recs["exit 7"]["ms"], int)
 
         inc_recs = {r["name"]: r for r in records if r["kind"] == "include"}
-        self.assertEqual(inc_recs["leaf_note.txt"]["via"], top_ref)
-        self.assertEqual(inc_recs["root_note.txt"]["via"], ".agents_bundle")
-        self.assertEqual(inc_recs["cli_note.txt"]["via"], "cli")
+        self.assertEqual(inc_recs["leaf_note.txt"]["chain"], [top_ref, leaf_ref])
+        self.assertEqual(inc_recs["root_note.txt"]["chain"], [])
+        self.assertEqual(inc_recs["cli_note.txt"]["chain"], [])
 
         prompt_recs = [r for r in records if r["kind"] == "prompt"]
-        self.assertEqual([r["via"] for r in prompt_recs], [top_ref, ".agents_bundle", "cli"])
+        self.assertEqual([r["chain"] for r in prompt_recs], [[top_ref, leaf_ref], [], []])
+
+        # Merged prompt with mixed chains emits chain=[], while shared non-empty chain emits shared chain
+        _, mixed_frags = self._extract_fragments(body)
+        mixed_prompt_meta = [m for m, _b in mixed_frags if m["kind"] == "prompt"][0]
+        self.assertEqual(mixed_prompt_meta, {"kind": "prompt", "chain": []})
+
+        shared_bundle = self.tmp / "shared_prompt.bundle"
+        shared_bundle.write_text("prompt First\nprompt Second\n", encoding="utf-8")
+        shared_ref = shared_bundle.as_posix()
+        (self.tmp / ".agents_bundle").write_text(f"bundle {shared_ref}\n", encoding="utf-8")
+        shared_body, _ = mod.build_bundle(work_dir=self.tmp)
+        _, shared_frags = self._extract_fragments(shared_body)
+        shared_prompt_meta = [m for m, _b in shared_frags if m["kind"] == "prompt"][0]
+        self.assertEqual(shared_prompt_meta, {"kind": "prompt", "chain": [shared_ref]})
 
     def _extract_fragments(self, output: str) -> tuple[str, list[tuple[dict[str, object], str]]]:
         import json as _json
@@ -1140,6 +1156,12 @@ class TestAgentsBundle(unittest.TestCase):
         nonce, fragments = self._extract_fragments(r.stdout)
         self.assertTrue(len(nonce) >= 16)
 
+        # Verify no fragment leaks .agents_bundle, group, or via
+        for meta, _ in fragments:
+            self.assertNotIn("group", meta)
+            self.assertNotIn("via", meta)
+            self.assertNotIn(".agents_bundle", meta["chain"])
+
         # Verify rule deduplication: core/start appears in core ruleset and sub.bundle, emitted once
         rule_frags = [(meta, body) for meta, body in fragments if meta["kind"] == "rule"]
         rule_ids = [meta["id"] for meta, _ in rule_frags]
@@ -1158,8 +1180,7 @@ class TestAgentsBundle(unittest.TestCase):
             {
                 "kind": "rule",
                 "id": "vitalio/agents-rules:core/start",
-                "group": "vitalio/agents-rules:core",
-                "via": ".agents_bundle",
+                "chain": ["vitalio/agents-rules:core"],
             },
         )
         sub_ref = (self.tmp / "sub.bundle").as_posix()
@@ -1169,8 +1190,7 @@ class TestAgentsBundle(unittest.TestCase):
             {
                 "kind": "rule",
                 "id": "vitalio/agents-rules:core/multiline",
-                "group": sub_ref,
-                "via": sub_ref,
+                "chain": [sub_ref],
             },
         )
         self.assertIn("- Multiline rule header:\n  - Bullet one\n  - Bullet two", multi_body)
@@ -1188,8 +1208,7 @@ class TestAgentsBundle(unittest.TestCase):
             },
         )
         sub_cmd_meta, sub_cmd_body = cmd_frags["printf 'sub_line_1\\nsub_line_2\\n'"]
-        self.assertEqual(sub_cmd_meta["group"], sub_ref)
-        self.assertEqual(sub_cmd_meta["via"], sub_ref)
+        self.assertEqual(sub_cmd_meta["chain"], [sub_ref])
         self.assertEqual(sub_cmd_meta["rc"], 0)
         self.assertIsInstance(sub_cmd_meta["ms"], int)
         self.assertGreaterEqual(sub_cmd_meta["ms"], 0)
@@ -1205,22 +1224,22 @@ class TestAgentsBundle(unittest.TestCase):
 
         exit_meta, _exit_body = cmd_frags["exit 3"]
         self.assertEqual(exit_meta["rc"], 3)
-        self.assertEqual(exit_meta["via"], ".agents_bundle")
+        self.assertEqual(exit_meta["chain"], [])
 
         # Verify include fragments across bundle, .agents_bundle, and CLI
         inc_frags = {meta["name"]: (meta, body) for meta, body in fragments if meta["kind"] == "include"}
         self.assertEqual(
             inc_frags["sub_doc.txt"][0],
-            {"kind": "include", "name": "sub_doc.txt", "group": sub_ref, "via": sub_ref},
+            {"kind": "include", "name": "sub_doc.txt", "chain": [sub_ref]},
         )
         self.assertIn("sub doc line 1\nsub doc line 2", inc_frags["sub_doc.txt"][1])
         self.assertEqual(
             inc_frags["root_doc.txt"][0],
-            {"kind": "include", "name": "root_doc.txt", "group": ".agents_bundle", "via": ".agents_bundle"},
+            {"kind": "include", "name": "root_doc.txt", "chain": []},
         )
         self.assertEqual(
             inc_frags["cli_doc.txt"][0],
-            {"kind": "include", "name": "cli_doc.txt", "group": "cli", "via": "cli"},
+            {"kind": "include", "name": "cli_doc.txt", "chain": []},
         )
 
         # Verify prompt fragment
@@ -1231,8 +1250,7 @@ class TestAgentsBundle(unittest.TestCase):
             p_meta,
             {
                 "kind": "prompt",
-                "group": ".agents_bundle, cli",
-                "via": ".agents_bundle, cli",
+                "chain": [],
             },
         )
         self.assertIn("===== Prompt =====\nLine one\n\nLine two\n\nCLI prompt line", p_body)

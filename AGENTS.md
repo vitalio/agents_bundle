@@ -31,11 +31,11 @@ rules are loaded via `.agents_bundle`.
   `expose` or `AGENTS_BUNDLE_EXPOSE`) by default so downstream runners
   (`run_block`) keep transport headers in session metadata while forwarding
   exposed headers into the final prompt header.
-- Fragment markers: Wrap emitted rules, commands (`via`, `rc`, `ms`), included
-  files, and prompts in `<!-- bundle:<nonce>:part <json> -->` and
+- Fragment markers: Wrap emitted rules, commands (`rc`, `ms`), included files,
+  and prompts in `<!-- bundle:<nonce>:part <json> -->` and
   `<!-- bundle:<nonce>:end -->` JSON markers using neutral `kind`, `id`/`name`,
-  `group`, `via`, `rc`, and `ms` fields without hardcoding `run_block`
-  internals.
+  `chain` (`[]` at root/CLI or ordered inclusion path of bundle/ruleset
+  specifiers), `rc`, and `ms` fields without hardcoding `run_block` internals.
 - Plain output (`--plain`): Pass `--plain` or set `AGENTS_BUNDLE_PLAIN=1` to
   omit transport `Bundle-*` headers (`Bundle-Command`, `Bundle-Boundary`,
   `Bundle-Expose`) and JSON fragment markers when pure Markdown/text output is
