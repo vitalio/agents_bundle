@@ -9,13 +9,6 @@
 - Add 'agents_bundle bundle <pkg>[:<name>] [k=v]' CLI subcommand (symmetric with 'ruleset' and 'rule') to render a bundle from the command line.
 - Keep src/header.py (--help), src/rules/agents_bundle.md, README.md, and tests in sync.
 
-# 🎯 [NEXT] F22: Wrap emitted rules, commands, includes, and prompts in JSON fragment markers
-
-- Depends on: F21
-- Wrap each emitted rule, command section, included file section, and prompt block in `<!-- bundle:<nonce>:part {...} -->` and `<!-- bundle:<nonce>:end -->` single-line JSON markers in `src/bundle.py` and `src/rules_engine.py` using neutral fields (`kind`, `id`/`name`, `group`, `via`, `rc`, `ms`).
-- Ensure markers serialize cleanly without breaking rule deduplication or multi-line outputs.
-- Add unit tests in `tests/test_agents_bundle.py` covering all four fragment kinds (`rule`, `cmd`, `include`, `prompt`) and marker field schemas.
-
 # 🎯 [NEXT] F23: Add --plain flag (AGENTS_BUNDLE_PLAIN) and document Bundle Output Protocol — *Unblock via F22 first*
 
 - Depends on: F22

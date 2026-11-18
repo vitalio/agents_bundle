@@ -949,7 +949,30 @@ def collect_directive_items(
     return out_items
 
 
-def format_collected_rules(items: list[tuple[str, str, str, str, str]], verbose: bool = False) -> str:
+def format_bundle_part_marker(nonce: str, meta: dict[str, object]) -> str:
+    payload = json.dumps(meta, ensure_ascii=False).replace("-->", "--\\u003e")
+    return f"<!-- bundle:{nonce}:part {payload} -->"
+
+
+def format_bundle_end_marker(nonce: str) -> str:
+    return f"<!-- bundle:{nonce}:end -->"
+
+
+def wrap_bundle_fragment(nonce: str | None, meta: dict[str, object], content: str) -> str:
+    if not nonce:
+        return content
+    part_line = format_bundle_part_marker(nonce, meta)
+    end_line = format_bundle_end_marker(nonce)
+    if content:
+        return f"{part_line}\n{content}\n{end_line}"
+    return f"{part_line}\n{end_line}"
+
+
+def format_collected_rules(
+    items: list[tuple[str, str, str, str, str]],
+    verbose: bool = False,
+    boundary: str | None = None,
+) -> str:
     seen: set[str] = set()
     chunks: list[str] = []
     for item in items:
@@ -957,10 +980,21 @@ def format_collected_rules(items: list[tuple[str, str, str, str, str]], verbose:
         if uid in seen:
             continue
         seen.add(uid)
-        if verbose:
-            chunks.append(f"{prov}\n{body}")
-        else:
-            chunks.append(body)
+        group = item[3] if len(item) > 3 else ""
+        via = item[4] if len(item) > 4 else ""
+        chunk = f"{prov}\n{body}" if verbose else body
+        if boundary:
+            chunk = wrap_bundle_fragment(
+                boundary,
+                {
+                    "kind": "rule",
+                    "id": uid,
+                    "group": group,
+                    "via": via,
+                },
+                chunk,
+            )
+        chunks.append(chunk)
     sep = "\n\n" if verbose else "\n"
     return sep.join(chunks)
 
@@ -1402,7 +1436,8 @@ def build_bundle(
         via=SPEC_FILE_NAME,
     )
     effective_cli_vars.update(resolved_vars)
-    sections: list[tuple[str, str]] = []
+    boundary = secrets.token_hex(16)
+    section_blocks: list[str] = []
     warnings: list[str] = []
     pending_rules: list[tuple[str, str, str, str, str]] = []
     pending_cmds: list[tuple[str, str]] = []
@@ -1443,9 +1478,9 @@ def build_bundle(
             spec_prompts.append((val, entry_via))
 
     if pending_rules:
-        formatted = format_collected_rules(pending_rules, verbose=verbose).strip()
+        formatted = format_collected_rules(pending_rules, verbose=verbose, boundary=boundary).strip()
         if formatted:
-            sections.append(("Rules", formatted))
+            section_blocks.append(f"===== Rules =====\n{formatted}\n")
             if records is not None:
                 seen_rule_uids: set[str] = set()
                 for r_uid, _r_prov, _r_body, r_group, r_via in pending_rules:
@@ -1465,18 +1500,18 @@ def build_bundle(
         rc, out, elapsed_ms = _run_spec_command(cmd_val, spec_dir)
         if rc != 0:
             warnings.append(f"command exited {rc}: {cmd_val}")
-        sections.append((f"$ {cmd_val}", out))
+        cmd_meta: dict[str, object] = {
+            "kind": "cmd",
+            "name": cmd_val,
+            "group": cmd_via,
+            "via": cmd_via,
+            "rc": rc,
+            "ms": elapsed_ms,
+        }
+        wrapped_cmd = wrap_bundle_fragment(boundary, cmd_meta, f"===== $ {cmd_val} =====\n{out}")
+        section_blocks.append(f"{wrapped_cmd}\n")
         if records is not None:
-            records.append(
-                {
-                    "kind": "cmd",
-                    "name": cmd_val,
-                    "group": cmd_via,
-                    "via": cmd_via,
-                    "rc": rc,
-                    "ms": elapsed_ms,
-                }
-            )
+            records.append(cmd_meta)
 
     for extra in extra_files or []:
         included_files.append((extra, True, "cli"))
@@ -1499,22 +1534,34 @@ def build_bundle(
         except ValueError:
             disp = p.as_posix()
         content = p.read_text(encoding="utf-8", errors="replace").rstrip()
-        sections.append((f"$ cat {disp}", content))
+        inc_meta: dict[str, object] = {
+            "kind": "include",
+            "name": disp,
+            "group": inc_via,
+            "via": inc_via,
+        }
+        wrapped_inc = wrap_bundle_fragment(boundary, inc_meta, f"===== $ cat {disp} =====\n{content}")
+        section_blocks.append(f"{wrapped_inc}\n")
         if records is not None:
-            records.append(
-                {
-                    "kind": "include",
-                    "name": disp,
-                    "group": inc_via,
-                    "via": inc_via,
-                }
-            )
+            records.append(inc_meta)
 
     all_prompt_items = [*spec_prompts]
     if prompt_text and prompt_text.strip():
         all_prompt_items.append((prompt_text.strip(), "cli"))
     if all_prompt_items:
-        sections.append(("Prompt", "\n\n".join(text for text, _ in all_prompt_items)))
+        prompt_vias: list[str] = []
+        for _p_text, p_via in all_prompt_items:
+            if p_via not in prompt_vias:
+                prompt_vias.append(p_via)
+        prompt_via = prompt_vias[0] if len(prompt_vias) == 1 else ", ".join(prompt_vias)
+        prompt_meta: dict[str, object] = {
+            "kind": "prompt",
+            "group": prompt_via,
+            "via": prompt_via,
+        }
+        joined_prompt = "\n\n".join(text for text, _ in all_prompt_items)
+        wrapped_prompt = wrap_bundle_fragment(boundary, prompt_meta, f"===== Prompt =====\n{joined_prompt}")
+        section_blocks.append(f"{wrapped_prompt}\n")
         if records is not None:
             for _p_text, p_via in all_prompt_items:
                 records.append(
@@ -1525,7 +1572,6 @@ def build_bundle(
                     }
                 )
 
-    boundary = secrets.token_hex(16)
     exposed_headers = ["Role", "Task"]
     for hdr in [*spec_expose, *env_expose(prog)]:
         if hdr not in exposed_headers:
@@ -1542,7 +1588,7 @@ def build_bundle(
             header_lines.append(f"{hdr_key}: {v}")
     header_lines.append(f"Workdir: {wdir}")
     header = "\n".join(header_lines) + "\n"
-    blocks = [header, *(f"===== {title} =====\n{content}\n" for title, content in sections)]
+    blocks = [header, *section_blocks]
     return "\n".join(blocks), warnings
 
 

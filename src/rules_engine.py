@@ -515,7 +515,30 @@ def collect_directive_items(
     return out_items
 
 
-def format_collected_rules(items: list[tuple[str, str, str, str, str]], verbose: bool = False) -> str:
+def format_bundle_part_marker(nonce: str, meta: dict[str, object]) -> str:
+    payload = json.dumps(meta, ensure_ascii=False).replace("-->", "--\\u003e")
+    return f"<!-- bundle:{nonce}:part {payload} -->"
+
+
+def format_bundle_end_marker(nonce: str) -> str:
+    return f"<!-- bundle:{nonce}:end -->"
+
+
+def wrap_bundle_fragment(nonce: str | None, meta: dict[str, object], content: str) -> str:
+    if not nonce:
+        return content
+    part_line = format_bundle_part_marker(nonce, meta)
+    end_line = format_bundle_end_marker(nonce)
+    if content:
+        return f"{part_line}\n{content}\n{end_line}"
+    return f"{part_line}\n{end_line}"
+
+
+def format_collected_rules(
+    items: list[tuple[str, str, str, str, str]],
+    verbose: bool = False,
+    boundary: str | None = None,
+) -> str:
     seen: set[str] = set()
     chunks: list[str] = []
     for item in items:
@@ -523,10 +546,21 @@ def format_collected_rules(items: list[tuple[str, str, str, str, str]], verbose:
         if uid in seen:
             continue
         seen.add(uid)
-        if verbose:
-            chunks.append(f"{prov}\n{body}")
-        else:
-            chunks.append(body)
+        group = item[3] if len(item) > 3 else ""
+        via = item[4] if len(item) > 4 else ""
+        chunk = f"{prov}\n{body}" if verbose else body
+        if boundary:
+            chunk = wrap_bundle_fragment(
+                boundary,
+                {
+                    "kind": "rule",
+                    "id": uid,
+                    "group": group,
+                    "via": via,
+                },
+                chunk,
+            )
+        chunks.append(chunk)
     sep = "\n\n" if verbose else "\n"
     return sep.join(chunks)
 

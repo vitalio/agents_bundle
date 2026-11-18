@@ -1,3 +1,10 @@
+# ✅ [DONE] F22: Wrap emitted rules, commands, includes, and prompts in JSON fragment markers — *2026-11-18, Wrap emitted rules, commands, includes, and prompts in single-line JSON fragment markers*
+
+- Depends on: F21
+- Wrap each emitted rule, command section, included file section, and prompt block in `<!-- bundle:<nonce>:part {...} -->` and `<!-- bundle:<nonce>:end -->` single-line JSON markers in `src/bundle.py` and `src/rules_engine.py` using neutral fields (`kind`, `id`/`name`, `group`, `via`, `rc`, `ms`).
+- Ensure markers serialize cleanly without breaking rule deduplication or multi-line outputs.
+- Add unit tests in `tests/test_agents_bundle.py` covering all four fragment kinds (`rule`, `cmd`, `include`, `prompt`) and marker field schemas.
+
 # ✅ [DONE] F21: Track bundle source (via/group) and command telemetry (rc, ms) — *2026-11-18, Propagated bundle source metadata (group/via) and command telemetry (rc/ms) across parse_spec, collect_directive_items, _run_spec_command, and build_bundle*
 
 - Depends on: F19

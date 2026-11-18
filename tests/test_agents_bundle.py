@@ -1054,6 +1054,196 @@ class TestAgentsBundle(unittest.TestCase):
         prompt_recs = [r for r in records if r["kind"] == "prompt"]
         self.assertEqual([r["via"] for r in prompt_recs], [top_ref, ".agents_bundle", "cli"])
 
+    def _extract_fragments(self, output: str) -> tuple[str, list[tuple[dict[str, object], str]]]:
+        import json as _json
+
+        m_bound = re.search(r"^Bundle-Boundary: ([0-9a-f]+)$", output, flags=re.MULTILINE)
+        self.assertIsNotNone(m_bound, msg=output)
+        assert m_bound is not None
+        nonce = m_bound.group(1)
+        part_prefix = f"<!-- bundle:{nonce}:part "
+        end_line = f"<!-- bundle:{nonce}:end -->"
+
+        fragments: list[tuple[dict[str, object], str]] = []
+        active_meta: dict[str, object] | None = None
+        buf: list[str] = []
+        for line in output.splitlines():
+            if line.startswith(part_prefix) and line.endswith(" -->"):
+                self.assertIsNone(active_meta, msg=f"nested part marker before end: {line}")
+                raw_json = line[len(part_prefix) : -len(" -->")]
+                parsed = _json.loads(raw_json)
+                self.assertIsInstance(parsed, dict)
+                active_meta = parsed
+                buf = []
+            elif line == end_line:
+                self.assertIsNotNone(active_meta, msg="orphan end marker")
+                assert active_meta is not None
+                fragments.append((active_meta, "\n".join(buf)))
+                active_meta = None
+                buf = []
+            elif active_meta is not None:
+                buf.append(line)
+        self.assertIsNone(active_meta, msg="unclosed part marker at EOF")
+        return nonce, fragments
+
+    def test_json_fragment_markers_for_all_kinds(self):
+        pkg_dir = Path(os.environ["AGENTS_BUNDLE_LOCAL_PKG_DIR"])
+        (pkg_dir / "rules" / "core" / "multiline.md").write_text(
+            "# Description: Multiline rule\n"
+            "- Multiline rule header:\n"
+            "  - Bullet one\n"
+            "  - Bullet two\n",
+            encoding="utf-8",
+        )
+        (self.tmp / "sub.bundle").write_text(
+            "rule vitalio/agents-rules:core/multiline\n"
+            "rule vitalio/agents-rules:core/start\n"
+            "include sub_doc.txt\n"
+            "$ printf 'sub_line_1\\nsub_line_2\\n'\n",
+            encoding="utf-8",
+        )
+        (self.tmp / "sub_doc.txt").write_text("sub doc line 1\nsub doc line 2\n", encoding="utf-8")
+        (self.tmp / "root_doc.txt").write_text("root doc body\n", encoding="utf-8")
+        (self.tmp / "cli_doc.txt").write_text("cli doc body\n", encoding="utf-8")
+        (self.tmp / ".agents_bundle").write_text(
+            "ruleset vitalio/agents-rules:core\n"
+            f"bundle {(self.tmp / 'sub.bundle').as_posix()}\n"
+            "include root_doc.txt\n"
+            "$ printf 'line1\\nline2\\n'\n"
+            "$ echo 'arrow --> test'\n"
+            "$ true\n"
+            "$ exit 3\n"
+            "prompt Line one\n"
+            "prompt Line two\n",
+            encoding="utf-8",
+        )
+
+        r = subprocess.run(
+            [str(SCRIPT), "cli_doc.txt", "-p", "CLI prompt line"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        nonce, fragments = self._extract_fragments(r.stdout)
+        self.assertTrue(len(nonce) >= 16)
+
+        # Verify rule deduplication: core/start appears in core ruleset and sub.bundle, emitted once
+        rule_frags = [(meta, body) for meta, body in fragments if meta["kind"] == "rule"]
+        rule_ids = [meta["id"] for meta, _ in rule_frags]
+        self.assertEqual(
+            rule_ids,
+            [
+                "vitalio/agents-rules:core/start",
+                "vitalio/agents-rules:core/ssot",
+                "vitalio/agents-rules:core/lang",
+                "vitalio/agents-rules:core/multiline",
+            ],
+        )
+        by_rule_id = {meta["id"]: (meta, body) for meta, body in rule_frags}
+        self.assertEqual(
+            by_rule_id["vitalio/agents-rules:core/start"][0],
+            {
+                "kind": "rule",
+                "id": "vitalio/agents-rules:core/start",
+                "group": "vitalio/agents-rules:core",
+                "via": ".agents_bundle",
+            },
+        )
+        sub_ref = (self.tmp / "sub.bundle").as_posix()
+        multi_meta, multi_body = by_rule_id["vitalio/agents-rules:core/multiline"]
+        self.assertEqual(
+            multi_meta,
+            {
+                "kind": "rule",
+                "id": "vitalio/agents-rules:core/multiline",
+                "group": sub_ref,
+                "via": sub_ref,
+            },
+        )
+        self.assertIn("- Multiline rule header:\n  - Bullet one\n  - Bullet two", multi_body)
+
+        # Verify cmd fragments (multi-line output, comment-escaping, empty output, non-zero rc)
+        cmd_frags = {meta["name"]: (meta, body) for meta, body in fragments if meta["kind"] == "cmd"}
+        self.assertEqual(
+            set(cmd_frags.keys()),
+            {
+                "printf 'sub_line_1\\nsub_line_2\\n'",
+                "printf 'line1\\nline2\\n'",
+                "echo 'arrow --> test'",
+                "true",
+                "exit 3",
+            },
+        )
+        sub_cmd_meta, sub_cmd_body = cmd_frags["printf 'sub_line_1\\nsub_line_2\\n'"]
+        self.assertEqual(sub_cmd_meta["group"], sub_ref)
+        self.assertEqual(sub_cmd_meta["via"], sub_ref)
+        self.assertEqual(sub_cmd_meta["rc"], 0)
+        self.assertIsInstance(sub_cmd_meta["ms"], int)
+        self.assertGreaterEqual(sub_cmd_meta["ms"], 0)
+        self.assertIn("sub_line_1\nsub_line_2", sub_cmd_body)
+
+        arrow_meta, arrow_body = cmd_frags["echo 'arrow --> test'"]
+        self.assertEqual(arrow_meta["rc"], 0)
+        self.assertIn("===== $ echo 'arrow --> test' =====", arrow_body)
+
+        true_meta, true_body = cmd_frags["true"]
+        self.assertEqual(true_meta["rc"], 0)
+        self.assertIn("===== $ true =====", true_body)
+
+        exit_meta, _exit_body = cmd_frags["exit 3"]
+        self.assertEqual(exit_meta["rc"], 3)
+        self.assertEqual(exit_meta["via"], ".agents_bundle")
+
+        # Verify include fragments across bundle, .agents_bundle, and CLI
+        inc_frags = {meta["name"]: (meta, body) for meta, body in fragments if meta["kind"] == "include"}
+        self.assertEqual(
+            inc_frags["sub_doc.txt"][0],
+            {"kind": "include", "name": "sub_doc.txt", "group": sub_ref, "via": sub_ref},
+        )
+        self.assertIn("sub doc line 1\nsub doc line 2", inc_frags["sub_doc.txt"][1])
+        self.assertEqual(
+            inc_frags["root_doc.txt"][0],
+            {"kind": "include", "name": "root_doc.txt", "group": ".agents_bundle", "via": ".agents_bundle"},
+        )
+        self.assertEqual(
+            inc_frags["cli_doc.txt"][0],
+            {"kind": "include", "name": "cli_doc.txt", "group": "cli", "via": "cli"},
+        )
+
+        # Verify prompt fragment
+        prompt_frags = [(meta, body) for meta, body in fragments if meta["kind"] == "prompt"]
+        self.assertEqual(len(prompt_frags), 1)
+        p_meta, p_body = prompt_frags[0]
+        self.assertEqual(
+            p_meta,
+            {
+                "kind": "prompt",
+                "group": ".agents_bundle, cli",
+                "via": ".agents_bundle, cli",
+            },
+        )
+        self.assertIn("===== Prompt =====\nLine one\n\nLine two\n\nCLI prompt line", p_body)
+
+        # Verify verbose mode keeps provenance comments inside rule fragment markers
+        rv = subprocess.run([str(SCRIPT), "-v"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self.assertEqual(rv.returncode, 0, msg=rv.stderr)
+        _, v_frags = self._extract_fragments(rv.stdout)
+        v_rules = [body for meta, body in v_frags if meta["kind"] == "rule"]
+        self.assertTrue(any("# [ruleset vitalio/agents-rules:core -> rules/core/start.md]" in b for b in v_rules))
+
+        # Verify standalone ruleset/rule subcommands do not emit bundle fragment markers
+        rs = subprocess.run(
+            [str(SCRIPT), "ruleset", "vitalio/agents-rules:core"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(rs.returncode, 0, msg=rs.stderr)
+        self.assertNotIn("<!-- bundle:", rs.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
