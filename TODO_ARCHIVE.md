@@ -1,3 +1,9 @@
+# ✅ [DONE] F12: Detect and fail fast on circular ruleset and bundle references — *2026-11-18, Track active ruleset and bundle resolution chains and fail fast with cycle path diagnostics*
+
+- Track active resolution chains across recursive `ruleset` expansion in `src/rules_engine.py` and recursive `bundle` expansion in `src/bundle.py`.
+- Fail fast with a clear `SystemExit` diagnostic showing the cycle path instead of hitting `RecursionError`.
+- Add unit tests covering self-referential and multi-step cycles in `tests/test_agents_bundle.py`.
+
 # ✅ [DONE] F25: Emit neutral inclusion chain and root-level provenance in bundle fragment markers — *2026-11-18, Replaced group/via with neutral chain list across rules_engine, bundle, docs, help, and tests*
 
 - Conform to the producer-agnostic Bundle Input Protocol (`<!-- bundle:<nonce>:part <json> -->`): replace `group` and `via` completely with a neutral `chain` list (`[]` for direct root directives and CLI inputs, or ordered inclusion path of bundle/ruleset specifiers from root, e.g. `["vitalio/outer", "vitalio/inner"]`) alongside `kind`, `id`/`name`, `rc`, and `ms` in `src/bundle.py` and `src/rules_engine.py` (including `records`).

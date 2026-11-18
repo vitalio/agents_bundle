@@ -346,25 +346,29 @@ def _match_rule_in_dict(name: str, rules_dict: dict[str, tuple[str, str]]) -> st
     return None
 
 
-def resolve_bundle_text(
+def resolve_bundle_source(
     target_spec: str,
     work_dir: Path | None = None,
     refresh: bool = False,
     default_pkg: str | None = DEFAULT_RULES_PKG,
-) -> str:
+) -> tuple[str, str]:
     prog = prog_name()
     pkg_id, item_name = _parse_target_spec(target_spec, default_pkg=default_pkg, allow_repo_shorthand=True)
     if pkg_id in ("__file__", "__url__"):
         if pkg_id == "__url__":
             fpath = _fetch_url_file(item_name, refresh=refresh)
+            canonical_id = item_name
         else:
             fpath = Path(item_name).expanduser()
             if work_dir is not None and not fpath.is_absolute():
                 fpath = (work_dir / fpath).resolve()
+            else:
+                fpath = fpath.resolve()
             if not fpath.is_file():
                 raise SystemExit(f"{prog}: bundle file not found: {item_name}")
+            canonical_id = str(fpath)
         raw = fpath.read_text(encoding="utf-8", errors="replace")
-        return _parse_md_text(raw, fpath.stem)[1]
+        return canonical_id, _parse_md_text(raw, fpath.stem)[1]
     _, _, bundles_dict = _get_package_catalog(pkg_id, refresh=refresh)
     ik = _match_rule_in_dict(item_name, bundles_dict)
     if ik is None:
@@ -372,7 +376,20 @@ def resolve_bundle_text(
         raise SystemExit(
             f"{prog}: unknown bundle {item_name!r} in package {pkg_id!r} (available bundles: {', '.join(avail_i)})"
         )
-    return bundles_dict[ik][1]
+    return f"{pkg_id}:{ik}", bundles_dict[ik][1]
+
+def resolve_bundle_text(
+    target_spec: str,
+    work_dir: Path | None = None,
+    refresh: bool = False,
+    default_pkg: str | None = DEFAULT_RULES_PKG,
+) -> str:
+    return resolve_bundle_source(
+        target_spec,
+        work_dir=work_dir,
+        refresh=refresh,
+        default_pkg=default_pkg,
+    )[1]
 
 
 def collect_directive_items(
@@ -386,6 +403,7 @@ def collect_directive_items(
     trace_prefix: list[str] | None = None,
     piped: bool = False,
     chain: list[str] | None = None,
+    active_rulesets: list[tuple[str, str]] | None = None,
 ) -> list[tuple[str, str, str, list[str]]]:
     """Returns list of (rule_uid, provenance_comment, rendered_body, chain)."""
     prog = prog_name()
@@ -396,9 +414,25 @@ def collect_directive_items(
     target_spec = _render_rule_vars(target_spec, effective_vars)
     base_chain = list(chain) if chain else []
     pkg_id, item_name = _parse_target_spec(target_spec, default_pkg=default_pkg)
+    next_rulesets: list[tuple[str, str]] = list(active_rulesets) if active_rulesets else []
     if kind == "ruleset":
         ruleset_spec = target_spec if pkg_id in ("__file__", "__url__") else f"{pkg_id}:{item_name}"
         ruleset_chain = [*base_chain, ruleset_spec]
+        if pkg_id == "__file__":
+            resolved_rs = Path(item_name).expanduser()
+            if work_dir is not None and not resolved_rs.is_absolute():
+                resolved_rs = (work_dir / resolved_rs).resolve()
+            else:
+                resolved_rs = resolved_rs.resolve()
+            canonical_ruleset = str(resolved_rs)
+        elif pkg_id == "__url__":
+            canonical_ruleset = item_name
+        else:
+            canonical_ruleset = f"{pkg_id}:{item_name}"
+        if any(cid == canonical_ruleset for cid, _ in next_rulesets):
+            cycle_path = " -> ".join([*(lbl for _, lbl in next_rulesets), ruleset_spec])
+            raise SystemExit(f"{prog}: circular ruleset reference detected: {cycle_path}")
+        next_rulesets = [*next_rulesets, (canonical_ruleset, ruleset_spec)]
     excl_set: set[str] = set()
     for ex in excludes or []:
         clean_ex = ex.lstrip("-").strip().lower()
@@ -441,6 +475,7 @@ def collect_directive_items(
                         trace_prefix=[*cur_trace, step_label],
                         piped=piped,
                         chain=ruleset_chain,
+                        active_rulesets=next_rulesets,
                     )
                 )
             return items_out
@@ -506,6 +541,7 @@ def collect_directive_items(
                 trace_prefix=[*cur_trace, step_label],
                 piped=piped,
                 chain=ruleset_chain,
+                active_rulesets=next_rulesets,
             )
         )
     return out_items

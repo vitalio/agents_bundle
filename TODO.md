@@ -3,12 +3,6 @@
 - Remove `bundle vitalio/run_block` from `default_spec_template()` in `src/bundle.py` (`agents_bundle --init`), from `.agents_bundle`, and from usage examples in `README.md`.
 - Update `tests/test_agents_bundle.py`, rebuild `./agents_bundle` via `build.py`, and bump `VERSION` for a PATCH release.
 
-# 🎯 [NEXT] F12: Detect and fail fast on circular ruleset and bundle references
-
-- Track active resolution chains across recursive `ruleset` expansion in `src/rules_engine.py` and recursive `bundle` expansion in `src/bundle.py`.
-- Fail fast with a clear `SystemExit` diagnostic showing the cycle path instead of hitting `RecursionError`.
-- Add unit tests covering self-referential and multi-step cycles in `tests/test_agents_bundle.py`.
-
 # 🎯 [NEXT] F6: Add bundle CLI subcommand to render and inspect .bundle files
 
 - Add 'agents_bundle bundle <pkg>[:<name>] [k=v]' CLI subcommand (symmetric with 'ruleset' and 'rule') to render a bundle from the command line.

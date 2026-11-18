@@ -143,6 +143,7 @@ def parse_spec(
     resolved_vars: dict[str, str] | None = None,
     piped: bool = False,
     chain: list[str] | None = None,
+    active_bundles: list[tuple[str, str]] | None = None,
 ) -> list[tuple[str, str, str | None, list[str]]]:
     prog = prog_name()
     active_vars: dict[str, str] = dict(cli_vars) if cli_vars is not None else {}
@@ -191,7 +192,11 @@ def parse_spec(
             target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
             if excls:
                 raise SystemExit(f"{prog}: bundle directive does not support excludes: {line!r}")
-            inc_text = resolve_bundle_text(target, work_dir=work_dir, refresh=refresh)
+            canonical_bundle, inc_text = resolve_bundle_source(target, work_dir=work_dir, refresh=refresh)
+            cur_active = list(active_bundles) if active_bundles else []
+            if any(cid == canonical_bundle for cid, _ in cur_active):
+                cycle_path = " -> ".join([*(lbl for _, lbl in cur_active), target])
+                raise SystemExit(f"{prog}: circular bundle reference detected: {cycle_path}")
             merged_cli = {**active_vars, **vmap}
             sub_resolved: dict[str, str] = {}
             child_chain = [*cur_chain, target]
@@ -203,6 +208,7 @@ def parse_spec(
                 resolved_vars=sub_resolved,
                 piped=piped,
                 chain=child_chain,
+                active_bundles=[*cur_active, (canonical_bundle, target)],
             ):
                 comb_cond = " ".join(c for c in (cond_expr, sub_cond) if c) or None
                 entries.append((sub_kind, sub_val, comb_cond, sub_chain))
@@ -310,6 +316,7 @@ def build_bundle(
         refresh=refresh,
         resolved_vars=resolved_vars,
         piped=piped,
+        active_bundles=[(str(spec_file.resolve()), SPEC_FILE_NAME)],
     )
     effective_cli_vars.update(resolved_vars)
     boundary = secrets.token_hex(16)

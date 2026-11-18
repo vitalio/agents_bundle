@@ -1339,5 +1339,182 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertTrue(len(frags) >= 5)
 
 
+    def test_circular_ruleset_and_bundle_references_fail_fast(self):
+        pkg_dir = Path(os.environ["AGENTS_BUNDLE_LOCAL_PKG_DIR"])
+        (pkg_dir / "rulesets" / "self_loop.ruleset").write_text(
+            "# Description: Self-referential ruleset\n"
+            "ruleset self_loop\n",
+            encoding="utf-8",
+        )
+        (pkg_dir / "rulesets" / "cycle_a.ruleset").write_text(
+            "# Description: Cycle A\n"
+            "rule core/start\n"
+            "ruleset cycle_b\n",
+            encoding="utf-8",
+        )
+        (pkg_dir / "rulesets" / "cycle_b.ruleset").write_text(
+            "# Description: Cycle B\n"
+            "ruleset cycle_c\n",
+            encoding="utf-8",
+        )
+        (pkg_dir / "rulesets" / "cycle_c.ruleset").write_text(
+            "# Description: Cycle C\n"
+            "ruleset vitalio/agents-rules:cycle_a\n",
+            encoding="utf-8",
+        )
+
+        # 1. Self-referential ruleset fails fast with cycle path
+        r_rs_self = subprocess.run(
+            [str(SCRIPT), "ruleset", "vitalio/agents-rules:self_loop"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(r_rs_self.returncode, 0, msg=r_rs_self.stdout)
+        self.assertNotIn("RecursionError", r_rs_self.stderr)
+        self.assertIn(
+            "circular ruleset reference detected: vitalio/agents-rules:self_loop -> vitalio/agents-rules:self_loop",
+            r_rs_self.stderr,
+        )
+
+        # 2. Multi-step package ruleset cycle fails fast with full cycle path
+        (self.tmp / ".agents_bundle").write_text(
+            "ruleset vitalio/agents-rules:cycle_a\n",
+            encoding="utf-8",
+        )
+        r_rs_multi = subprocess.run(
+            [str(SCRIPT)],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(r_rs_multi.returncode, 0, msg=r_rs_multi.stdout)
+        self.assertNotIn("RecursionError", r_rs_multi.stderr)
+        self.assertIn(
+            "circular ruleset reference detected: "
+            "vitalio/agents-rules:cycle_a -> vitalio/agents-rules:cycle_b -> "
+            "vitalio/agents-rules:cycle_c -> vitalio/agents-rules:cycle_a",
+            r_rs_multi.stderr,
+        )
+
+        # 3. Local file ruleset cycle across relative and absolute paths fails fast
+        rs_file_a = self.tmp / "rs_a.ruleset"
+        rs_file_b = self.tmp / "rs_b.ruleset"
+        rs_file_a.write_text("ruleset ./rs_b.ruleset\n", encoding="utf-8")
+        rs_file_b.write_text(f"ruleset {rs_file_a.resolve().as_posix()}\n", encoding="utf-8")
+        (self.tmp / ".agents_bundle").write_text("ruleset ./rs_a.ruleset\n", encoding="utf-8")
+        r_rs_file = subprocess.run(
+            [str(SCRIPT)],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(r_rs_file.returncode, 0, msg=r_rs_file.stdout)
+        self.assertNotIn("RecursionError", r_rs_file.stderr)
+        self.assertIn("circular ruleset reference detected:", r_rs_file.stderr)
+        self.assertIn("./rs_a.ruleset -> ./rs_b.ruleset ->", r_rs_file.stderr)
+
+        # 4. Self-referential bundle (both local file and package repo shorthand alias) fails fast
+        self_bundle = self.tmp / "self.bundle"
+        self_bundle.write_text(f"bundle {self_bundle.resolve().as_posix()}\n", encoding="utf-8")
+        (self.tmp / ".agents_bundle").write_text("bundle ./self.bundle\n", encoding="utf-8")
+        r_b_self = subprocess.run(
+            [str(SCRIPT)],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(r_b_self.returncode, 0, msg=r_b_self.stdout)
+        self.assertNotIn("RecursionError", r_b_self.stderr)
+        self.assertIn("circular bundle reference detected: .agents_bundle -> ./self.bundle ->", r_b_self.stderr)
+
+        loop_pkg = pkg_dir / "vitalio" / "loop_pkg" / "bundles"
+        loop_pkg.mkdir(parents=True)
+        (loop_pkg / "loop_pkg.bundle").write_text(
+            "bundle vitalio/loop_pkg:loop_pkg\n",
+            encoding="utf-8",
+        )
+        (self.tmp / ".agents_bundle").write_text("bundle vitalio/loop_pkg\n", encoding="utf-8")
+        r_b_alias = subprocess.run(
+            [str(SCRIPT)],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(r_b_alias.returncode, 0, msg=r_b_alias.stdout)
+        self.assertNotIn("RecursionError", r_b_alias.stderr)
+        self.assertIn(
+            "circular bundle reference detected: .agents_bundle -> vitalio/loop_pkg -> vitalio/loop_pkg:loop_pkg",
+            r_b_alias.stderr,
+        )
+
+        # 5. Multi-step bundle cycle and cycle back to .agents_bundle fail fast
+        b1 = self.tmp / "b1.bundle"
+        b2 = self.tmp / "b2.bundle"
+        b3 = self.tmp / "b3.bundle"
+        b1.write_text("bundle ./b2.bundle\n", encoding="utf-8")
+        b2.write_text("bundle ./b3.bundle\n", encoding="utf-8")
+        b3.write_text(f"bundle {b1.resolve().as_posix()}\n", encoding="utf-8")
+        (self.tmp / ".agents_bundle").write_text("bundle ./b1.bundle\n", encoding="utf-8")
+        r_b_multi = subprocess.run(
+            [str(SCRIPT)],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(r_b_multi.returncode, 0, msg=r_b_multi.stdout)
+        self.assertNotIn("RecursionError", r_b_multi.stderr)
+        self.assertIn(
+            "circular bundle reference detected: .agents_bundle -> ./b1.bundle -> ./b2.bundle -> ./b3.bundle ->",
+            r_b_multi.stderr,
+        )
+
+        b_root = self.tmp / "back_to_root.bundle"
+        b_root.write_text("bundle ./.agents_bundle\n", encoding="utf-8")
+        (self.tmp / ".agents_bundle").write_text("bundle ./back_to_root.bundle\n", encoding="utf-8")
+        r_b_root = subprocess.run(
+            [str(SCRIPT)],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(r_b_root.returncode, 0, msg=r_b_root.stdout)
+        self.assertNotIn("RecursionError", r_b_root.stderr)
+        self.assertIn(
+            "circular bundle reference detected: .agents_bundle -> ./back_to_root.bundle -> ./.agents_bundle",
+            r_b_root.stderr,
+        )
+
+        # 6. Non-circular diamond ruleset and bundle references succeed
+        shared_b = self.tmp / "diamond_shared.bundle"
+        shared_b.write_text("ruleset vitalio/agents-rules:core\n", encoding="utf-8")
+        branch_b = self.tmp / "diamond_branch.bundle"
+        branch_b.write_text(
+            f"bundle {shared_b.as_posix()}\n"
+            "rule vitalio/agents-rules:stack/python-cli\n",
+            encoding="utf-8",
+        )
+        (self.tmp / ".agents_bundle").write_text(
+            f"bundle {shared_b.as_posix()}\n"
+            f"bundle {branch_b.as_posix()}\n",
+            encoding="utf-8",
+        )
+        r_diamond = subprocess.run(
+            [str(SCRIPT)],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(r_diamond.returncode, 0, msg=r_diamond.stderr)
+        self.assertIn("Python 3.9+ compatibility", r_diamond.stdout)
+
 if __name__ == "__main__":
     unittest.main()
