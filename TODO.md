@@ -45,5 +45,4 @@
 
 # ⚪ [NEW] F16: Update role=execute and role=audit examples to role=work and role=review
 
-- Depends on: agents-rules:F9, agents-rules:F16
-- Replace `role=execute` and `role=audit` usage examples in `README.md` (and any bundled rule/help text if present) with `role=work` and `role=review` once the roles are renamed in `agents-rules`.
+- Replace `role=execute` and `role=audit` usage examples in `README.md` (and any bundled rule/help text if present) with `role=work` and `role=review` once the roles are renamed in `agents-rules` (coordinated in `todo_flow`).
