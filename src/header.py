@@ -25,7 +25,7 @@ Options:
   --force                                     Overwrite existing .agents_bundle (--init) or force reinstall (--update)
 
 Bundle Output Protocol:
-  Headers                                     Emits Bundle-Command, Bundle-Boundary: <nonce>, Bundle-Expose: Role, Task (extensible via 'expose' or AGENTS_BUNDLE_EXPOSE), variable headers, and Workdir: <path>
+  Headers                                     Emits Bundle-Command, Bundle-Boundary: <nonce>, Bundle-Expose: Role, Task, Title (extensible via 'expose' or AGENTS_BUNDLE_EXPOSE), variable headers, and Workdir: <path>
   Fragment markers                            Wraps rules, commands, included files, and prompts in <!-- bundle:<nonce>:part <json> --> and <!-- bundle:<nonce>:end --> (fields: kind, id/name, group, via, rc, ms)
   Plain mode                                  --plain or AGENTS_BUNDLE_PLAIN=1 omits transport Bundle-* headers and fragment markers
 

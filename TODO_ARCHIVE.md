@@ -1,3 +1,9 @@
+# ✅ [DONE] F24: Include Title in default Bundle-Expose headers — *2026-11-18, Include Title in default Bundle-Expose headers*
+
+- Depends on: F23
+- Add `Title` to the default `Bundle-Expose` header list (`Role, Task, Title`) in `build_bundle` (`src/bundle.py`) so `Title:` preamble headers piped from `todo_md` (or supplied via `title=...`) are exposed to downstream consumers such as `run_block`.
+- Sync `src/header.py` (`--help`), `src/rules/agents_bundle.md`, `README.md`, and `tests/test_agents_bundle.py`, and rebuild `agents_bundle` via `python3 build.py`.
+
 # ✅ [DONE] F23: Add --plain flag (AGENTS_BUNDLE_PLAIN) and document Bundle Output Protocol — *2026-11-18, Add --plain flag (AGENTS_BUNDLE_PLAIN) and document Bundle Output Protocol*
 
 - Depends on: F22

@@ -208,7 +208,7 @@ class TestAgentsBundle(unittest.TestCase):
         r_plan = subprocess.run([str(SCRIPT), "role=plan"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
         self.assertEqual(r_plan.returncode, 0, r_plan.stderr)
         self.assertIn("Bundle-Command: agents_bundle role=plan\n", r_plan.stdout)
-        self.assertIn("Bundle-Expose: Role, Task\n", r_plan.stdout)
+        self.assertIn("Bundle-Expose: Role, Task, Title\n", r_plan.stdout)
         self.assertIn("Role: plan\n", r_plan.stdout)
         self.assertIn("all_tasks", r_plan.stdout)
         self.assertNotIn("focused_task_", r_plan.stdout)
@@ -217,7 +217,7 @@ class TestAgentsBundle(unittest.TestCase):
         r_exec = subprocess.run([str(SCRIPT), "role=execute"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
         self.assertEqual(r_exec.returncode, 0, r_exec.stderr)
         self.assertIn("Bundle-Command: agents_bundle role=execute\n", r_exec.stdout)
-        self.assertIn("Bundle-Expose: Role, Task\n", r_exec.stdout)
+        self.assertIn("Bundle-Expose: Role, Task, Title\n", r_exec.stdout)
         self.assertIn("Role: execute\n", r_exec.stdout)
         self.assertIn("all_tasks", r_exec.stdout)
         self.assertNotIn("focused_task_", r_exec.stdout)
@@ -345,7 +345,7 @@ class TestAgentsBundle(unittest.TestCase):
         r_env = subprocess.run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, env=env, check=False)
         self.assertEqual(r_env.returncode, 0, r_env.stderr)
         self.assertIn("Bundle-Command: agents_bundle\n", r_env.stdout)
-        self.assertIn("Bundle-Expose: Role, Task\n", r_env.stdout)
+        self.assertIn("Bundle-Expose: Role, Task, Title\n", r_env.stdout)
         self.assertIn("Lang: Spanish\nMode: custom\nChat-Lang: French\n", r_env.stdout)
         self.assertIn("in Spanish", r_env.stdout)
         self.assertIn("Custom mode active (French)", r_env.stdout)
@@ -684,6 +684,7 @@ class TestAgentsBundle(unittest.TestCase):
             f"Bundle-Boundary: nonce123\n"
             f"Project: demo\n"
             f"Task: F18\n"
+            f"Title: Demo task title\n"
             f"Role: execute\n"
             f"Chat-Lang: Spanish\n"
             f"Workdir: {proj}\n"
@@ -702,7 +703,9 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertEqual(r.returncode, 0, msg=r.stderr)
         self.assertIn(f"Workdir: {proj.resolve()}\n", r.stdout)
         self.assertIn("Project: demo\n", r.stdout)
+        self.assertIn("Bundle-Expose: Role, Task, Title\n", r.stdout)
         self.assertIn("Task: F18\n", r.stdout)
+        self.assertIn("Title: Demo task title\n", r.stdout)
         self.assertIn("Role: execute\n", r.stdout)
         self.assertIn("Chat-Lang: Spanish\n", r.stdout)
         self.assertNotIn("Bundle-Boundary: nonce123", r.stdout)
@@ -857,7 +860,7 @@ class TestAgentsBundle(unittest.TestCase):
 
         # Default + expose directives without AGENTS_BUNDLE_EXPOSE; unexposed vars stay out of Bundle-Expose
         r1 = subprocess.run(
-            [str(SCRIPT), "role=execute", "task=F19", "lang=German", "chat_lang=French", "project_id=demo"],
+            [str(SCRIPT), "role=execute", "task=F19", "title=Expose check", "lang=German", "chat_lang=French", "project_id=demo"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -865,9 +868,10 @@ class TestAgentsBundle(unittest.TestCase):
         )
         self.assertEqual(r1.returncode, 0, msg=r1.stderr)
         self.assertIn(
-            "Bundle-Expose: Role, Task, Chat-Lang, Custom-Key, Project-Id, Work-Item\n",
+            "Bundle-Expose: Role, Task, Title, Chat-Lang, Custom-Key, Project-Id, Work-Item\n",
             r1.stdout,
         )
+        self.assertIn("Title: Expose check\n", r1.stdout)
         self.assertIn("Lang: German\n", r1.stdout)
         m1 = re.search(r"^Bundle-Boundary: ([0-9a-f]+)$", r1.stdout, flags=re.MULTILINE)
         self.assertIsNotNone(m1, msg=r1.stdout)
@@ -884,7 +888,7 @@ class TestAgentsBundle(unittest.TestCase):
         )
         self.assertEqual(r2.returncode, 0, msg=r2.stderr)
         self.assertIn(
-            "Bundle-Expose: Role, Task, Chat-Lang, Custom-Key, Extra-Scope, Project-Id, Build-Id, Trace-Tag\n",
+            "Bundle-Expose: Role, Task, Title, Chat-Lang, Custom-Key, Extra-Scope, Project-Id, Build-Id, Trace-Tag\n",
             r2.stdout,
         )
         m2 = re.search(r"^Bundle-Boundary: ([0-9a-f]+)$", r2.stdout, flags=re.MULTILINE)
@@ -1312,7 +1316,7 @@ class TestAgentsBundle(unittest.TestCase):
         self.assertEqual(r_default.returncode, 0, msg=r_default.stderr)
         self.assertIn("Bundle-Command:", r_default.stdout)
         self.assertIn("Bundle-Boundary:", r_default.stdout)
-        self.assertIn("Bundle-Expose: Role, Task, Project-Id\n", r_default.stdout)
+        self.assertIn("Bundle-Expose: Role, Task, Title, Project-Id\n", r_default.stdout)
         _, frags = self._extract_fragments(r_default.stdout)
         self.assertTrue(len(frags) >= 5)
 

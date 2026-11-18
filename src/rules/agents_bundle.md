@@ -8,7 +8,7 @@
     template variables such as `task`/`role`, accept a bare `<ID>`, prepend any
     piped prompt body, and expose builtin `piped=1` when prompt text is piped).
   - Bundle Output Protocol: default output emits `Bundle-Command`,
-    `Bundle-Boundary: <nonce>`, `Bundle-Expose: Role, Task` (extensible via
+    `Bundle-Boundary: <nonce>`, `Bundle-Expose: Role, Task, Title` (extensible via
     `expose <key...>` or `AGENTS_BUNDLE_EXPOSE`), variable headers, and
     `Workdir: <path>`, and wraps emitted rules, commands, included files, and
     prompts in `<!-- bundle:<nonce>:part <json> -->` and

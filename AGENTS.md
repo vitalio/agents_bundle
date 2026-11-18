@@ -27,7 +27,7 @@ rules are loaded via `.agents_bundle`.
 ## Bundle Output Protocol
 
 - Header visibility (`Bundle-*`): Emit `Bundle-Command`,
-  `Bundle-Boundary: <nonce>`, and `Bundle-Expose: Role, Task` (extensible via
+  `Bundle-Boundary: <nonce>`, and `Bundle-Expose: Role, Task, Title` (extensible via
   `expose` or `AGENTS_BUNDLE_EXPOSE`) by default so downstream runners
   (`run_block`) keep transport headers in session metadata while forwarding
   exposed headers into the final prompt header.

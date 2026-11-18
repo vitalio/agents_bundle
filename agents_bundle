@@ -25,7 +25,7 @@ Options:
   --force                                     Overwrite existing .agents_bundle (--init) or force reinstall (--update)
 
 Bundle Output Protocol:
-  Headers                                     Emits Bundle-Command, Bundle-Boundary: <nonce>, Bundle-Expose: Role, Task (extensible via 'expose' or AGENTS_BUNDLE_EXPOSE), variable headers, and Workdir: <path>
+  Headers                                     Emits Bundle-Command, Bundle-Boundary: <nonce>, Bundle-Expose: Role, Task, Title (extensible via 'expose' or AGENTS_BUNDLE_EXPOSE), variable headers, and Workdir: <path>
   Fragment markers                            Wraps rules, commands, included files, and prompts in <!-- bundle:<nonce>:part <json> --> and <!-- bundle:<nonce>:end --> (fields: kind, id/name, group, via, rc, ms)
   Plain mode                                  --plain or AGENTS_BUNDLE_PLAIN=1 omits transport Bundle-* headers and fragment markers
 
@@ -1152,7 +1152,7 @@ def default_spec_template(prog: str | None = None) -> str:
         f"#   rule <owner>/<repo>:<name> [key=val ...]",
         f"#   bundle <owner>/<repo>[:<name>] [key=val ...]",
         "#   var <name>=$(<shell command>)  (or var <name>=<value>; sets variable if not already passed)",
-        "#   expose <key...>  (add header names to Bundle-Expose alongside Role, Task)",
+        "#   expose <key...>  (add header names to Bundle-Expose alongside Role, Task, Title)",
         "#   include $(<shell command>)  (includes existing repository files listed by command or path)",
         "#   prompt <text>",
         "#   [if os=linux] rule <owner>/<repo>:os/linux  (or multi-line [if ...] ... [/if])",
@@ -1596,7 +1596,7 @@ def build_bundle(
 
     header_lines: list[str] = []
     if not plain:
-        exposed_headers = ["Role", "Task"]
+        exposed_headers = ["Role", "Task", "Title"]
         for hdr in [*spec_expose, *env_expose(prog)]:
             if hdr not in exposed_headers:
                 exposed_headers.append(hdr)

@@ -7,10 +7,11 @@
 runs `ruleset ...`, `rule ...`, `bundle ...`, `expose ...`, `prompt ...`,
 `[if ...]`, and `$ <cmd>` directives, includes any extra files and
 `-p/--prompt` text, emits `Bundle-Command`, `Bundle-Boundary`, `Bundle-Expose`
-(default: `Role, Task`, extensible via `expose` or `AGENTS_BUNDLE_EXPOSE`), and
-`Workdir: <path>` in the bundle header (or plain Markdown/text via `--plain` /
-`AGENTS_BUNDLE_PLAIN=1`), and writes the assembled bundle strictly to `stdout`
-(sending warnings or errors to `stderr`) so it composes cleanly via Unix pipes.
+(default: `Role, Task, Title`, extensible via `expose` or
+`AGENTS_BUNDLE_EXPOSE`), and `Workdir: <path>` in the bundle header (or plain
+Markdown/text via `--plain` / `AGENTS_BUNDLE_PLAIN=1`), and writes the assembled
+bundle strictly to `stdout` (sending warnings or errors to `stderr`) so it
+composes cleanly via Unix pipes.
 
 When `stdin` is piped, leading `Key: Value` preamble headers (terminated by a
 blank line or EOF) are parsed automatically: `Workdir:` selects the working
@@ -105,7 +106,7 @@ from the assembled body sections (`===== Rules =====`, `===== $ <cmd> =====`,
 
 - **Header visibility (`Bundle-*`):** By default, the header block starts with
   `Bundle-Command`, `Bundle-Boundary: <nonce>` (a per-run hex token), and
-  `Bundle-Expose: Role, Task`. Use the `expose <key...>` directive in
+  `Bundle-Expose: Role, Task, Title`. Use the `expose <key...>` directive in
   `.agents_bundle` / `.bundle` or `AGENTS_BUNDLE_EXPOSE` in the environment to
   add normalized Title-Case header names to `Bundle-Expose` while keeping
   unexposed template variables in session metadata only.

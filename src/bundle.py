@@ -7,7 +7,7 @@ def default_spec_template(prog: str | None = None) -> str:
         f"#   rule <owner>/<repo>:<name> [key=val ...]",
         f"#   bundle <owner>/<repo>[:<name>] [key=val ...]",
         "#   var <name>=$(<shell command>)  (or var <name>=<value>; sets variable if not already passed)",
-        "#   expose <key...>  (add header names to Bundle-Expose alongside Role, Task)",
+        "#   expose <key...>  (add header names to Bundle-Expose alongside Role, Task, Title)",
         "#   include $(<shell command>)  (includes existing repository files listed by command or path)",
         "#   prompt <text>",
         "#   [if os=linux] rule <owner>/<repo>:os/linux  (or multi-line [if ...] ... [/if])",
@@ -451,7 +451,7 @@ def build_bundle(
 
     header_lines: list[str] = []
     if not plain:
-        exposed_headers = ["Role", "Task"]
+        exposed_headers = ["Role", "Task", "Title"]
         for hdr in [*spec_expose, *env_expose(prog)]:
             if hdr not in exposed_headers:
                 exposed_headers.append(hdr)
