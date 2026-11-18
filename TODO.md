@@ -1,3 +1,10 @@
+# 🎯 [NEXT] F25: Emit neutral inclusion chain and root-level provenance in bundle fragment markers
+
+- Conform to the producer-agnostic Bundle Input Protocol (`<!-- bundle:<nonce>:part <json> -->`): emit a neutral `chain` list (ordered inclusion path of bundle/ruleset specifiers from the root `.agents_bundle`, e.g. `["vitalio/outer", "vitalio/inner"]`, or `[]` for direct root directives) alongside `kind`, `id`/`name`, `rc`, and `ms` in `src/bundle.py` and `src/rules_engine.py`.
+- Stop setting `group=".agents_bundle"` or `via=".agents_bundle"` for direct root directives (`rule`, `$`, `include`, `prompt`) so root-level items have `chain: []` without leaking internal `.agents_bundle` filenames into downstream consumers.
+- Preserve full multi-hop `chain` when expanding nested `bundle` and `ruleset` directives in `parse_spec()` (`src/bundle.py`) and `collect_directive_items()` (`src/rules_engine.py`).
+- Update `AGENTS.md`, `src/header.py` (`--help`), and unit tests in `tests/test_agents_bundle.py`.
+
 # 🎯 [NEXT] F12: Detect and fail fast on circular ruleset and bundle references
 
 - Track active resolution chains across recursive `ruleset` expansion in `src/rules_engine.py` and recursive `bundle` expansion in `src/bundle.py`.
