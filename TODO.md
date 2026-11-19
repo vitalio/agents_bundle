@@ -1,3 +1,10 @@
+# 🎯 [NEXT] B1: Fail fast when piped stdin is an empty FIFO instead of falling back to unpiped bundle assembly
+
+- Role: work
+- In `cmd_bundle()` (`src/bundle.py`), detect when `sys.stdin` is an actual pipe/FIFO (`stat.S_ISFIFO(os.fstat(sys.stdin.fileno()).st_mode)`) and `piped_raw.strip()` is empty (for example when an upstream command in `todo_md <ID> | agents_bundle role=work | run_block` fails and exits without writing to `stdout`).
+- When an actual pipe/FIFO delivers empty input, write a clear error message to `sys.stderr` (e.g. `agents_bundle: empty piped input on stdin (upstream command failed?)`) and return non-zero (`2`) immediately before evaluating `.agents_bundle` or `.bundle` `$ <cmd>` directives (while still allowing non-FIFO non-TTY stdin such as `/dev/null` in background/test runners).
+- Cover empty-pipe failure vs `/dev/null` non-TTY behavior with unit tests in `tests/test_agents_bundle.py`, rebuild `./agents_bundle` via `build.py`, and bump `VERSION` for a PATCH release.
+
 # 🎯 [NEXT] F6: Add bundle CLI subcommand to render and inspect .bundle files
 
 - Role: plan
