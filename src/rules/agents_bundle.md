@@ -1,7 +1,7 @@
 # Description: Context bundler CLI, file tree, rule discovery, and .agents_bundle maintenance
 - Context bundler & rules engine (`{cmd:agents_bundle}`):
   - Assemble session bundle: `{cmd:agents_bundle} [key=val ...] [-p "<prompt>"] [file ...] | run_block`
-    (roles: `role=design`, `role=plan`, `role=execute`, `role=audit`; task
+    (roles: `role=design`, `role=plan`, `role=work`, `role=review`; task
     focus: `task=<ID>`, `--plain` or `AGENTS_BUNDLE_PLAIN=1` to omit transport
     `Bundle-*` headers and JSON fragment markers, or pipe `<cmd> | {cmd:agents_bundle} | run_block`
     to parse `Key: Value` preamble headers into `Workdir:` and lowercase

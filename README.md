@@ -64,7 +64,7 @@ rule vitalio/agents-rules:stack/python-cli py_min=3.9
 $ cat AGENTS.md
 $ agents_bundle --tree -x archive_dir
 $ git status -sb
-[if role=execute]
+[if role=work]
     var task=$(todo_md next-id)
     include $(todo_md files {task:})
 [/if]
@@ -81,14 +81,14 @@ agents_bundle --init
 agents_bundle > bundle.txt
 agents_bundle role=design > bundle.txt
 agents_bundle role=plan > bundle.txt
-agents_bundle role=execute > bundle.txt
-agents_bundle role=execute task=F1 > bundle.txt
-todo_md F1 | agents_bundle role=execute > bundle.txt
-agents_bundle -C /path/to/project role=execute > bundle.txt
-agents_bundle role=audit > bundle.txt
+agents_bundle role=work > bundle.txt
+agents_bundle role=work task=F1 > bundle.txt
+todo_md F1 | agents_bundle role=work > bundle.txt
+agents_bundle -C /path/to/project role=work > bundle.txt
+agents_bundle role=review > bundle.txt
 AGENTS_BUNDLE_VARS="chat_lang=Spanish" agents_bundle > bundle.txt
 agents_bundle -p "Fix issue #12" src/main.py > bundle.txt
-agents_bundle --plain role=execute > plain_bundle.txt
+agents_bundle --plain role=work > plain_bundle.txt
 AGENTS_BUNDLE_PLAIN=1 agents_bundle > plain_bundle.txt
 agents_bundle ruleset vitalio/agents-rules:default os=windows
 agents_bundle rule vitalio/agents-rules:release/single-file-build

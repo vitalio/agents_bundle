@@ -1,3 +1,7 @@
+# ✅ [DONE] F16: Update role=execute and role=audit examples to role=work and role=review — *Ready after agents-rules:F9 and agents-rules:F16*
+
+- Replace `role=execute` and `role=audit` usage examples in `README.md` (and any bundled rule/help text if present) with `role=work` and `role=review` once the roles are renamed in `agents-rules` (coordinated in `todo_flow`).
+
 # ✅ [DONE] F12: Detect and fail fast on circular ruleset and bundle references — *2026-11-18, Track active ruleset and bundle resolution chains and fail fast with cycle path diagnostics*
 
 - Track active resolution chains across recursive `ruleset` expansion in `src/rules_engine.py` and recursive `bundle` expansion in `src/bundle.py`.
