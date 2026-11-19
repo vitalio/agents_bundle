@@ -549,7 +549,10 @@ class TestAgentsBundle(unittest.TestCase):
         ]
         bundle_idxs = [idx for idx, ln in enumerate(init_lines) if ln.startswith("bundle ")]
         non_bundle_idxs = [idx for idx, ln in enumerate(init_lines) if not ln.startswith("bundle ")]
-        self.assertGreaterEqual(len(bundle_idxs), 3)
+        self.assertEqual(len(bundle_idxs), 2)
+        self.assertIn("bundle vitalio/agents_bundle", init_lines)
+        self.assertIn("bundle vitalio/todo_md", init_lines)
+        self.assertNotIn("bundle vitalio/run_block", init_lines)
         self.assertLess(max(bundle_idxs), min(non_bundle_idxs))
 
     def _git(self, repo, *args):

@@ -1,8 +1,3 @@
-# 🎯 [NEXT] F26: Remove bundle vitalio/run_block from --init template, .agents_bundle, and docs
-
-- Remove `bundle vitalio/run_block` from `default_spec_template()` in `src/bundle.py` (`agents_bundle --init`), from `.agents_bundle`, and from usage examples in `README.md`.
-- Update `tests/test_agents_bundle.py`, rebuild `./agents_bundle` via `build.py`, and bump `VERSION` for a PATCH release.
-
 # 🎯 [NEXT] F6: Add bundle CLI subcommand to render and inspect .bundle files
 
 - Role: plan

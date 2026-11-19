@@ -1,3 +1,8 @@
+# ✅ [DONE] F26: Remove bundle vitalio/run_block from --init template, .agents_bundle, and docs — *2026-11-19*
+
+- Remove `bundle vitalio/run_block` from `default_spec_template()` in `src/bundle.py` (`agents_bundle --init`), from `.agents_bundle`, and from usage examples in `README.md`.
+- Update `tests/test_agents_bundle.py`, rebuild `./agents_bundle` via `build.py`, and bump `VERSION` for a PATCH release.
+
 # ✅ [DONE] F16: Update role=execute and role=audit examples to role=work and role=review — *Ready after agents-rules:F9 and agents-rules:F16*
 
 - Replace `role=execute` and `role=audit` usage examples in `README.md` (and any bundled rule/help text if present) with `role=work` and `role=review` once the roles are renamed in `agents-rules` (coordinated in `todo_flow`).

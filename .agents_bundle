@@ -1,5 +1,4 @@
 # .agents_bundle — root context ruleset and command bundle (run: agents_bundle | run_block)
-bundle vitalio/run_block
 bundle vitalio/agents_bundle
 bundle vitalio/todo_md
 

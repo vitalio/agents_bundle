@@ -13,7 +13,6 @@ def default_spec_template(prog: str | None = None) -> str:
         "#   [if os=linux] rule <owner>/<repo>:os/linux  (or multi-line [if ...] ... [/if])",
         "#   $ <shell command>  (use '$ cat <file>' to include a file)",
         "",
-        "bundle vitalio/run_block",
         "bundle vitalio/agents_bundle",
         "bundle vitalio/todo_md",
         "",

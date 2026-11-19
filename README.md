@@ -53,7 +53,6 @@ agents_bundle --update
 ## `.agents_bundle` Format
 
 ```text
-bundle vitalio/run_block
 bundle vitalio/agents_bundle
 
 ruleset vitalio/agents-rules:default
