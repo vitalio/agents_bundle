@@ -1,3 +1,11 @@
+# 🎯 [NEXT] F28: Speed up test suite with setUpClass in-process CLI runner, lazy urllib.request import, and returncode diagnostics
+
+- Role: work
+- Move `import urllib.request` out of top-level `src/header.py` into `fetch_remote_script()` in `src/cli.py` (and `src/rules_engine.py` URL fetching where needed) so local CLI startups do not pay the `urllib.request` import cost (~40 ms).
+- In `tests/test_agents_bundle.py` (`TestAgentsBundle`), load `./agents_bundle` once in `setUpClass()` and add `_assert_ok()`, `_run_in_process()`, `_run_subprocess()`, and `_run()` helpers (isolating `cwd`, `env`, `sys.argv`, and `sys.stdin` with `contextlib.redirect_stdout` / `redirect_stderr` and full `stdout`/`stderr` diagnostic `msg=` on `returncode` assertions).
+- Convert routine `subprocess.run([str(SCRIPT), ...])` calls in `tests/test_agents_bundle.py` to `self._run([str(SCRIPT), ...])` while keeping real subprocess smoke checks for `-h`/`--version` and `build.py --check`, and replace `"python3"` literals with `sys.executable`.
+- Rebuild `./agents_bundle` via `build.py`, verify `python3 build.py --check`, ensure `python3 -m unittest discover -s tests` finishes in `<1.5s` (down from `~5.2s`), and bump `VERSION` for a PATCH release.
+
 # 🎯 [NEXT] B1: Fail fast when piped stdin is an empty FIFO instead of falling back to unpiped bundle assembly
 
 - Role: work
