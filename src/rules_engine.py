@@ -281,6 +281,8 @@ def _get_package_catalog(
 
 
 def _download_url_text(url: str) -> str:
+    import urllib.request
+
     req = urllib.request.Request(url, headers={"User-Agent": f"agents_bundle/{VERSION}"})
     with urllib.request.urlopen(req, timeout=15) as resp:
         return resp.read().decode("utf-8")

@@ -23,6 +23,10 @@ rules are loaded via `.agents_bundle`.
   instructions and conditional rule catalog for `bundle vitalio/agents_bundle`.
 - `src/cli.py` — CLI entrypoint, subcommand routing, and self-update
   (`--update`, `--check-update`).
+- `tests/` — offline test suite split to mirror `src/`: `tests/helpers.py`
+  (`AgentsBundleTestCase` in-process CLI runner and offline package fixtures),
+  `tests/test_cli.py`, `tests/test_tree.py`, `tests/test_rules_engine.py`, and
+  `tests/test_bundle.py`.
 
 ## Bundle Output Protocol
 

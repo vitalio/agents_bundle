@@ -53,10 +53,9 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.request
 from pathlib import Path
 
-VERSION = "0.14.3"
+VERSION = "0.14.4"
 REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/agents_bundle/main/agents_bundle"
 SPEC_FILE_NAME = ".agents_bundle"
@@ -730,6 +729,8 @@ def _get_package_catalog(
 
 
 def _download_url_text(url: str) -> str:
+    import urllib.request
+
     req = urllib.request.Request(url, headers={"User-Agent": f"agents_bundle/{VERSION}"})
     with urllib.request.urlopen(req, timeout=15) as resp:
         return resp.read().decode("utf-8")
@@ -1740,6 +1741,8 @@ def version_tuple(v: str) -> tuple[int, ...]:
 
 
 def fetch_remote_script(url: str | None = None) -> str:
+    import urllib.request
+
     target_url = url or os.environ.get("AGENTS_BUNDLE_UPDATE_URL") or DEFAULT_UPDATE_URL
     if target_url.startswith(("http://", "https://")) and "?" not in target_url:
         target_url = f"{target_url}?t={int(time.time())}"

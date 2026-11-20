@@ -8,6 +8,8 @@ def version_tuple(v: str) -> tuple[int, ...]:
 
 
 def fetch_remote_script(url: str | None = None) -> str:
+    import urllib.request
+
     target_url = url or os.environ.get("AGENTS_BUNDLE_UPDATE_URL") or DEFAULT_UPDATE_URL
     if target_url.startswith(("http://", "https://")) and "?" not in target_url:
         target_url = f"{target_url}?t={int(time.time())}"
