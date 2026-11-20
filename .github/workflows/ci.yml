@@ -22,7 +22,7 @@ jobs:
       - name: Run syntax checks and unit tests
         run: |
           bash -n install.sh
-          python3 tests/test_agents_bundle.py -v
+          python3 -m unittest discover -s tests
 
   release:
     needs: test
