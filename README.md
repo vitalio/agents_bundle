@@ -91,6 +91,7 @@ agents_bundle -C /path/to/project role=work > bundle.txt
 agents_bundle role=review > bundle.txt
 AGENTS_BUNDLE_VARS="chat_lang=Spanish" agents_bundle > bundle.txt
 agents_bundle -p "Fix issue #12" src/main.py > bundle.txt
+agents_bundle -p "Review" 'src/*.py' src/bundle.py:395-445 > bundle.txt
 agents_bundle --plain role=work > plain_bundle.txt
 AGENTS_BUNDLE_PLAIN=1 agents_bundle > plain_bundle.txt
 agents_bundle ruleset vitalio/agents-rules:default os=windows
@@ -108,6 +109,14 @@ file: the bundle's rules, command sections, included files, and prompts are
 emitted in the regular bundle format. It accepts `k=v` variables and the
 bundle options (`-C`/`--dir`, `-p`/`--prompt`, `--plain`, `-v`/`--verbose`,
 `--refresh`) but does not read `stdin`.
+
+Extra file arguments and `include` directive items accept relative glob
+patterns (`*`, `?`, `[`, and recursive `**`; matches are sorted and `.git`
+and `__pycache__` are skipped) and 1-based inclusive line-range slices
+`path:START-END` or `path:LINE`. A string that names an existing file is
+always included whole. A slice is emitted as a
+`===== $ sed -n 'START,ENDp' <path> =====` section with the fragment name
+`<path>:START-END`, so several slices of one large file can be included.
 
 ## Bundle Output Protocol
 

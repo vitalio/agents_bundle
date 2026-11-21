@@ -16,6 +16,9 @@
 
 Options:
   -p, --prompt TEXT                           Append prompt text to the Prompt section
+  FILE ...                                    Extra files to include; accepts globs (*, ?, [, **)
+                                              and path:START-END or path:LINE slices (1-based,
+                                              inclusive)
   -C, --dir DIR                               Set working directory (default: piped Workdir: or cwd)
   -v, --verbose                               Include rule provenance trace comments
   --plain                                     Omit transport Bundle-* headers and JSON fragment markers

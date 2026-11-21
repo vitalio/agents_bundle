@@ -1,3 +1,9 @@
+# ✅ [DONE] F29: Support glob path patterns and path:start-end line-range slices in include directive and CLI file arguments — *2026-11-21*
+
+- In `assemble_bundle()` (`src/bundle.py:395-445`), expand relative glob patterns (`*`, `?`, `[`, including recursive `**` via `sorted(wdir.glob(clean))`, skipping `.git` and `__pycache__`) and parse optional `:start-end` (or `:line`) 1-based inclusive line-range suffixes on `included_files` items (from `include` directives and CLI `extra_files`) when the full string is not an existing file path on disk.
+- Resolve each underlying file path against `wdir`, slice lines `start..end` (`lines[max(0, start - 1) : end]`) when a range is present, deduplicate by `(p, start, end)` so multiple slices of the same large file can be included, and emit line-range fragments with header `===== $ sed -n '<start>,<end>p' <disp> =====` and fragment metadata `{"kind": "include", "name": "<disp>:<start>-<end>", "chain": ...}`.
+- Update `src/header.py`, `src/rules/agents_bundle.md`, `README.md`, and unit tests in `tests/test_bundle.py`, rebuild `./agents_bundle` via `build.py`, and bump `VERSION` for a MINOR release.
+
 # ✅ [DONE] F6: Add bundle CLI subcommand to render and inspect .bundle files — *2026-11-21*
 
 - Depends on: F13

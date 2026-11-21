@@ -7,6 +7,9 @@
     to parse `Key: Value` preamble headers into `Workdir:` and lowercase
     template variables such as `task`/`role`, accept a bare `<ID>`, prepend any
     piped prompt body, and expose builtin `piped=1` when prompt text is piped).
+    `file` arguments and `include` items accept relative globs (`*`, `?`, `[`, `**`) and
+    1-based inclusive line-range slices `path:start-end` or `path:line`, emitted as
+    `sed -n 'start,endp'` sections.
   - Bundle Output Protocol: default output emits `Bundle-Command`,
     `Bundle-Boundary: <nonce>`, `Bundle-Expose: Role, Task, Title` (extensible via
     `expose <key...>` or `AGENTS_BUNDLE_EXPOSE`), variable headers, and

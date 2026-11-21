@@ -1012,6 +1012,59 @@ class TestBundle(AgentsBundleTestCase):
         _, frags = self._extract_fragments(r_default.stdout)
         self.assertTrue(len(frags) >= 5)
 
+    def test_include_glob_and_line_range_slices(self):
+        mod = self._load_bundle_module()
+        src = self.tmp / "src"
+        (src / "sub").mkdir(parents=True)
+        (src / "__pycache__").mkdir()
+        (src / "a.py").write_text("a1\na2\n", encoding="utf-8")
+        (src / "b.py").write_text("b1\n", encoding="utf-8")
+        (src / "sub" / "c.py").write_text("c1\n", encoding="utf-8")
+        (src / "__pycache__" / "x.py").write_text("x1\n", encoding="utf-8")
+        (self.tmp / "big.txt").write_text("".join(f"line{i}\n" for i in range(1, 11)), encoding="utf-8")
+        extras = ["big.txt:9-20", "nomatch/*.py", "big.txt:0-2", "big.txt:4-2"]
+        if os.name != "nt":
+            (self.tmp / "odd:1-2.txt").write_text("whole\n", encoding="utf-8")
+            extras.append("odd:1-2.txt")
+        (self.tmp / ".agents_bundle").write_text(
+            "include src/*.py\n"
+            "include big.txt:2-3\n"
+            "include big.txt:5\n"
+            "include big.txt:2-3\n"
+            "include src/**/*.py\n",
+            encoding="utf-8",
+        )
+        records: list[dict[str, object]] = []
+        body, warnings = mod.build_bundle(work_dir=self.tmp, extra_files=extras, records=records)
+
+        names = [r["name"] for r in records if r["kind"] == "include"]
+        expected = [
+            "src/a.py",
+            "src/b.py",
+            "big.txt:2-3",
+            "big.txt:5-5",
+            "src/sub/c.py",
+            "big.txt:9-20",
+        ]
+        if os.name != "nt":
+            expected.append("odd:1-2.txt")
+        self.assertEqual(names, expected)
+        self.assertEqual(
+            records[2],
+            {"kind": "include", "name": "big.txt:2-3", "chain": []},
+        )
+        for missing in ("nomatch/*.py", "big.txt:0-2", "big.txt:4-2"):
+            self.assertIn(f"missing file: {missing}", warnings)
+
+        _, frags = self._extract_fragments(body)
+        by_name = {m["name"]: b for m, b in frags if m["kind"] == "include"}
+        self.assertEqual(by_name["src/a.py"], "===== $ cat src/a.py =====\na1\na2")
+        self.assertEqual(by_name["big.txt:2-3"], "===== $ sed -n '2,3p' big.txt =====\nline2\nline3")
+        self.assertEqual(by_name["big.txt:5-5"], "===== $ sed -n '5,5p' big.txt =====\nline5")
+        self.assertEqual(by_name["big.txt:9-20"], "===== $ sed -n '9,20p' big.txt =====\nline9\nline10")
+        if os.name != "nt":
+            self.assertEqual(by_name["odd:1-2.txt"], "===== $ cat odd:1-2.txt =====\nwhole")
+
 
 if __name__ == "__main__":
     unittest.main()

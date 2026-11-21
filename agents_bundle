@@ -16,6 +16,9 @@
 
 Options:
   -p, --prompt TEXT                           Append prompt text to the Prompt section
+  FILE ...                                    Extra files to include; accepts globs (*, ?, [, **)
+                                              and path:START-END or path:LINE slices (1-based,
+                                              inclusive)
   -C, --dir DIR                               Set working directory (default: piped Workdir: or cwd)
   -v, --verbose                               Include rule provenance trace comments
   --plain                                     Omit transport Bundle-* headers and JSON fragment markers
@@ -57,7 +60,7 @@ import tempfile
 import time
 from pathlib import Path
 
-VERSION = "0.15.0"
+VERSION = "0.16.0"
 REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/agents_bundle/main/agents_bundle"
 SPEC_FILE_NAME = ".agents_bundle"
@@ -1455,6 +1458,49 @@ def _run_spec_command(cmd_str: str, cwd: Path) -> tuple[int, str, int]:
         return 1, f"[error running {cmd_str!r}: {exc}]", elapsed_ms
 
 
+_LINE_RANGE_RE = re.compile(r"^(.*?):(\d+)(?:-(\d+))?$")
+_GLOB_SKIP_DIRS = {".git", "__pycache__"}
+
+
+def _expand_include(wdir: Path, spec: str) -> list[tuple[Path, int | None, int | None]]:
+    """Resolve an include item to (file, start, end) slices; empty when nothing matches.
+
+    An existing file named exactly by spec is always included whole. Otherwise an
+    optional :START-END (or :LINE) 1-based inclusive suffix is split off and the
+    remaining path is used as a file or, when relative, as a glob pattern.
+    """
+
+    def to_abs(raw: str) -> Path:
+        p = Path(raw)
+        return p.resolve() if p.is_absolute() else (wdir / raw).resolve()
+
+    whole = to_abs(spec)
+    if whole.is_file():
+        return [(whole, None, None)]
+    base, start, end = spec, None, None
+    m = _LINE_RANGE_RE.match(spec)
+    if m:
+        base = m.group(1)
+        start = int(m.group(2))
+        end = int(m.group(3) or start)
+        if start < 1 or end < start:
+            return []
+    if not base:
+        return []
+    if Path(base).is_absolute() or not any(c in base for c in "*?["):
+        target = to_abs(base)
+        return [(target, start, end)] if target.is_file() else []
+    try:
+        matches = sorted(wdir.glob(base))
+    except (ValueError, NotImplementedError):
+        return []
+    return [
+        (p.resolve(), start, end)
+        for p in matches
+        if p.is_file() and not _GLOB_SKIP_DIRS.intersection(p.parts[len(wdir.parts) :])
+    ]
+
+
 def build_bundle(
     work_dir: Path | None = None,
     extra_files: list[str] | None = None,
@@ -1587,33 +1633,42 @@ def build_bundle(
     for extra in extra_files or []:
         included_files.append((extra, True, []))
 
-    seen_files: set[Path] = set()
+    seen_files: set[tuple[Path, int | None, int | None]] = set()
     for raw_file, warn_missing, inc_chain in included_files:
         clean = raw_file.strip()
         if not clean:
             continue
-        p = (wdir / clean).resolve() if not Path(clean).is_absolute() else Path(clean).resolve()
-        if not p.is_file():
+        slices = _expand_include(wdir, clean)
+        if not slices:
             if warn_missing:
                 warnings.append(f"missing file: {clean}")
             continue
-        if p in seen_files:
-            continue
-        seen_files.add(p)
-        try:
-            disp = p.relative_to(spec_dir).as_posix()
-        except ValueError:
-            disp = p.as_posix()
-        content = p.read_text(encoding="utf-8", errors="replace").rstrip()
-        inc_meta: dict[str, object] = {
-            "kind": "include",
-            "name": disp,
-            "chain": list(inc_chain),
-        }
-        wrapped_inc = wrap_bundle_fragment(fragment_boundary, inc_meta, f"===== $ cat {disp} =====\n{content}")
-        section_blocks.append(f"{wrapped_inc}\n")
-        if records is not None:
-            records.append(inc_meta)
+        for p, start, end in slices:
+            if (p, start, end) in seen_files:
+                continue
+            seen_files.add((p, start, end))
+            try:
+                disp = p.relative_to(spec_dir).as_posix()
+            except ValueError:
+                disp = p.as_posix()
+            text = p.read_text(encoding="utf-8", errors="replace")
+            if start is None:
+                name = disp
+                heading = f"cat {disp}"
+                content = text.rstrip()
+            else:
+                name = f"{disp}:{start}-{end}"
+                heading = f"sed -n '{start},{end}p' {disp}"
+                content = "\n".join(text.splitlines()[max(0, start - 1) : end]).rstrip()
+            inc_meta: dict[str, object] = {
+                "kind": "include",
+                "name": name,
+                "chain": list(inc_chain),
+            }
+            wrapped_inc = wrap_bundle_fragment(fragment_boundary, inc_meta, f"===== $ {heading} =====\n{content}")
+            section_blocks.append(f"{wrapped_inc}\n")
+            if records is not None:
+                records.append(inc_meta)
 
     all_prompt_items = [*spec_prompts]
     if prompt_text and prompt_text.strip():
