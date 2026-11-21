@@ -71,17 +71,17 @@ class TestCLI(AgentsBundleTestCase):
             self.assertIn("===== $ agents_bundle --list =====", r.stdout)
         with self.subTest(case="transport headers and fragment markers"):
             r = self._run(
-                [str(SCRIPT), "bundle", target],
+                [str(SCRIPT), "bundle", "vitalio/todo_md"],
                 cwd=str(self.tmp),
                 capture_output=True,
                 text=True,
                 check=False,
             )
             self._assert_ok(r)
-            self.assertIn(f"Bundle-Command: agents_bundle bundle {target}", r.stdout)
+            self.assertIn("Bundle-Command: agents_bundle bundle vitalio/todo_md", r.stdout)
             _nonce, fragments = self._extract_fragments(r.stdout)
             self.assertEqual(fragments[0][0]["kind"], "rule")
-            self.assertEqual(fragments[0][0]["chain"], [target])
+            self.assertEqual(fragments[0][0]["chain"], ["vitalio/todo_md"])
         with self.subTest(case="missing target"):
             r = self._run([str(SCRIPT), "bundle"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
             self.assertNotEqual(r.returncode, 0)

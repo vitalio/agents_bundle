@@ -2,7 +2,7 @@ import os
 import sys
 from pathlib import Path
 
-from src.header import DEFAULT_RULES_PKG, USAGE_TEMPLATE
+from src.header import DEFAULT_RULES_PKG, EMBEDDED_RULE_AGENTS_BUNDLE, USAGE_TEMPLATE
 
 
 def prog_name() -> str:
@@ -29,3 +29,12 @@ def usage_text() -> str:
         default_pkg=DEFAULT_RULES_PKG,
         cache_dir=cache_dir_path(),
     )
+
+
+def embedded_rule_text() -> str:
+    if EMBEDDED_RULE_AGENTS_BUNDLE:
+        return EMBEDDED_RULE_AGENTS_BUNDLE
+    src_rule = Path(__file__).resolve().parent.parent / "agents" / "agents_bundle.md"
+    if not src_rule.is_file():
+        raise SystemExit(f"{prog_name()}: embedded rule not found: {src_rule}")
+    return src_rule.read_text(encoding="utf-8")

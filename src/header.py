@@ -29,9 +29,14 @@ Options:
   --force                                     Overwrite existing .agents_bundle (--init) or force reinstall (--update)
 
 Bundle Output Protocol:
-  Headers                                     Emits Bundle-Command, Bundle-Boundary: <nonce>, Bundle-Expose: Role, Task, Title (extensible via 'expose' or AGENTS_BUNDLE_EXPOSE), variable headers, and Workdir: <path>
+  Headers                                     Emits Bundle-Command, Bundle-Boundary: <nonce>, Bundle-Protocol: 1, Bundle-Expose: Role, Task, Title (extensible via 'expose' or AGENTS_BUNDLE_EXPOSE), variable headers, and Workdir: <path>
   Fragment markers                            Wraps rules, commands, included files, and prompts in <!-- bundle:<nonce>:part <json> --> and <!-- bundle:<nonce>:end --> (fields: kind, id/name, chain, rc, ms)
   Plain mode                                  --plain or AGENTS_BUNDLE_PLAIN=1 omits transport Bundle-* headers and fragment markers
+  Piped bundles                               Piped stdin with Bundle-Boundary is unpacked: upstream
+                                              rules, includes, and task/context/prompt fragments are
+                                              merged, deduplicated, and re-wrapped; Bundle-Command
+                                              is chained with ' | '; Bundle-Expose and Bundle-Hide
+                                              are merged
 
 Environment:
   AGENTS_BUNDLE_VARS                          Default key=val pairs (overridden by CLI key=val)
@@ -65,4 +70,10 @@ REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/agents_bundle/main/agents_bundle"
 SPEC_FILE_NAME = ".agents_bundle"
 DEFAULT_RULES_PKG = "vitalio/agents-rules"
+EMBEDDED_RULE_AGENTS_BUNDLE = ""
+EMBEDDED_RULE_NAME = "agents_bundle"
+LEGACY_RULE_ID = "vitalio/agents_bundle:agents_bundle"
+PROTOCOL_VERSION = "1"
+RULES_HEADER = "===== Rules ====="
+PROMPT_HEADER = "===== Prompt ====="
 USAGE_TEMPLATE = __doc__

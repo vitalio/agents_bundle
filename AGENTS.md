@@ -17,20 +17,28 @@ rules are loaded via `.agents_bundle`.
   from `<owner>/<repo>[@<ref>][:<name>]`, local paths, or direct URLs
   (`http://`, `https://`, `file://`), and evaluates `[if ...]` conditions
   against `os`, `vcs`, and CLI `key=val` overrides.
+- `src/includes.py` — include item expansion (globs, `path:start-end`) and
+  range-aware span deduplication shared by upstream, `.agents_bundle`, and CLI
+  includes.
+- `src/upstream.py` — parses piped stdin (preamble headers, upstream fragments by
+  `Bundle-Boundary`) into `PipedInput`.
 - `src/bundle.py` — parses `.agents_bundle` (`ruleset`, `rule`, `bundle`,
   `expose`, `prompt`, `[if ...]`, and `$` directives), resolves `work_dir` from
   `-C/--dir` or a piped `Workdir:` preamble, handles `--plain` and
   `AGENTS_BUNDLE_PLAIN`, emits `Workdir: <path>` in the bundle header, and
   assembles the context bundle to `stdout`; `build_bundle(spec_text=...)` renders
   a synthetic `bundle <target>` spec for the `bundle` CLI subcommand.
-- `src/rules/agents_bundle.md` & `src/bundles/agents_bundle.bundle` — agent
-  instructions and conditional rule catalog for `bundle vitalio/agents_bundle`.
+- `agents/agents_bundle.md` — embedded agent rule (chain `agents_bundle`).
+  `build.py` embeds it into `src/header.py` as `EMBEDDED_RULE_AGENTS_BUNDLE`;
+  source-tree runs fall back to the file via `embedded_rule_text()` in
+  `src/core.py`. Keep it about 10 lines.
 - `src/cli.py` — CLI entrypoint, subcommand routing, and self-update
   (`--update`, `--check-update`).
 - `tests/` — offline test suite split to mirror `src/`: `tests/helpers.py`
   (`AgentsBundleTestCase` in-process CLI runner and offline package fixtures),
   `tests/test_cli.py`, `tests/test_core.py`, `tests/test_tree.py`,
-  `tests/test_rules_engine.py`, and `tests/test_bundle.py`.
+  `tests/test_rules_engine.py`, `tests/test_includes.py`,
+  `tests/test_upstream.py`, and `tests/test_bundle.py`.
 - Standalone modules: every module under `src/` carries its own
   `from __future__ import annotations` (when needed), standard library
   imports, and absolute sibling imports (`from src.<module> import ...`) so
@@ -43,7 +51,8 @@ rules are loaded via `.agents_bundle`.
 ## Bundle Output Protocol
 
 - Header visibility (`Bundle-*`): Emit `Bundle-Command`,
-  `Bundle-Boundary: <nonce>`, and `Bundle-Expose: Role, Task, Title` (extensible via
+  `Bundle-Boundary: <nonce>`, `Bundle-Protocol: 1`, and
+  `Bundle-Expose: Role, Task, Title` (extensible via
   `expose` or `AGENTS_BUNDLE_EXPOSE`) by default so downstream runners
   (`run_block`) keep transport headers in session metadata while forwarding
   exposed headers into the final prompt header.
@@ -56,3 +65,13 @@ rules are loaded via `.agents_bundle`.
   omit transport `Bundle-*` headers (`Bundle-Command`, `Bundle-Boundary`,
   `Bundle-Expose`) and JSON fragment markers when pure Markdown/text output is
   requested.
+- Piped upstream bundles (`context-bundle-protocol` v1): stdin with
+  `Bundle-Boundary` is unpacked by `src/upstream.py`; `rule` fragments merge by `id`,
+  `include`/`file` fragments merge with `.agents_bundle` and CLI includes through
+  `merge_spans()` (whole file absorbs slices, overlaps merge), and
+  `task`/`context`/`prompt` fragments are re-wrapped inside the Prompt section
+  keeping their metadata. `Bundle-Command` is chained with ` | `; `Bundle-Expose`
+  and `Bundle-Hide` are merged.
+- Chain provenance: `build_bundle()` passes `chain=[SPEC_FILE_NAME]` to `parse_spec()`
+  only when `.agents_bundle` is read; `bundle` subcommand, piped, CLI, and embedded
+  fragments stay outside it. Keep the `.bundle` directive reference in `README.md`.

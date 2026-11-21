@@ -11,11 +11,20 @@ import sys
 import time
 from pathlib import Path
 
-from src.header import DEFAULT_RULES_PKG, SPEC_FILE_NAME
-from src.core import prog_name
+from src.header import (
+    DEFAULT_RULES_PKG,
+    EMBEDDED_RULE_NAME,
+    LEGACY_RULE_ID,
+    PROMPT_HEADER,
+    PROTOCOL_VERSION,
+    RULES_HEADER,
+    SPEC_FILE_NAME,
+)
+from src.core import embedded_rule_text, prog_name
 from src.tree import _tree_from_args
 from src.rules_engine import (
     _parse_directive_tokens,
+    _parse_md_text,
     _render_rule_vars,
     builtin_vars,
     collect_directive_items,
@@ -25,6 +34,14 @@ from src.rules_engine import (
     resolve_bundle_source,
     strip_if_blocks_and_lines,
     wrap_bundle_fragment,
+)
+from src.includes import _expand_include, display_path, merge_spans, read_span, render_span, span_from_fragment
+from src.upstream import (
+    PipedInput,
+    group_fragments,
+    meta_chain,
+    parse_stdin_pipe,
+    strip_section_header,
 )
 
 
@@ -43,12 +60,9 @@ def default_spec_template(prog: str | None = None) -> str:
         "#   [if os=linux] rule <owner>/<repo>:os/linux  (or multi-line [if ...] ... [/if])",
         "#   $ <shell command>  (use '$ cat <file>' to include a file)",
         "",
-        "bundle vitalio/agents_bundle",
-        "bundle vitalio/todo_md",
-        "",
         f"ruleset {DEFAULT_RULES_PKG}:default",
         "",
-        "$ cat AGENTS.md",
+        "include AGENTS.md",
         f"$ {cmd} --tree",
         "$ git status -sb",
         "$ git branch -vv",
@@ -120,48 +134,6 @@ def _eval_dynamic_expr(expr: str, work_dir: Path | None = None) -> str:
             return ""
         return out.strip()
     return s
-
-
-def _parse_stdin_pipe(stdin_text: str) -> tuple[dict[str, str], str, str | None]:
-    raw = stdin_text.strip()
-    if not raw:
-        return {}, "", None
-    inferred_vars: dict[str, str] = {}
-    piped_workdir: str | None = None
-    lines = raw.splitlines()
-
-    preamble: dict[str, str] = {}
-    idx = 0
-    while idx < len(lines):
-        ln = lines[idx]
-        if not ln.strip():
-            break
-        hm = re.fullmatch(r"([A-Za-z][A-Za-z0-9_-]*):(?:[ \t]+(.*)|[ \t]*)", ln)
-        if not hm:
-            break
-        preamble[hm.group(1)] = hm.group(2).strip() if hm.group(2) is not None else ""
-        idx += 1
-
-    if preamble and (idx == len(lines) or not lines[idx].strip()):
-        for k, v in preamble.items():
-            kl = k.lower()
-            if kl == "workdir":
-                piped_workdir = v
-            elif kl.startswith("bundle-"):
-                continue
-            elif v:
-                var_name = kl.replace("-", "_")
-                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", var_name):
-                    inferred_vars[var_name] = v
-        raw = "\n".join(lines[idx:]).strip()
-        if not raw:
-            return inferred_vars, "", piped_workdir
-        lines = raw.splitlines()
-
-    if len(lines) == 1 and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", lines[0].strip()):
-        inferred_vars.setdefault("task", lines[0].strip())
-        return inferred_vars, "", piped_workdir
-    return inferred_vars, raw, piped_workdir
 
 
 def parse_spec(
@@ -306,49 +278,6 @@ def _run_spec_command(cmd_str: str, cwd: Path) -> tuple[int, str, int]:
         return 1, f"[error running {cmd_str!r}: {exc}]", elapsed_ms
 
 
-_LINE_RANGE_RE = re.compile(r"^(.*?):(\d+)(?:-(\d+))?$")
-_GLOB_SKIP_DIRS = {".git", "__pycache__"}
-
-
-def _expand_include(wdir: Path, spec: str) -> list[tuple[Path, int | None, int | None]]:
-    """Resolve an include item to (file, start, end) slices; empty when nothing matches.
-
-    An existing file named exactly by spec is always included whole. Otherwise an
-    optional :START-END (or :LINE) 1-based inclusive suffix is split off and the
-    remaining path is used as a file or, when relative, as a glob pattern.
-    """
-
-    def to_abs(raw: str) -> Path:
-        p = Path(raw)
-        return p.resolve() if p.is_absolute() else (wdir / raw).resolve()
-
-    whole = to_abs(spec)
-    if whole.is_file():
-        return [(whole, None, None)]
-    base, start, end = spec, None, None
-    m = _LINE_RANGE_RE.match(spec)
-    if m:
-        base = m.group(1)
-        start = int(m.group(2))
-        end = int(m.group(3) or start)
-        if start < 1 or end < start:
-            return []
-    if not base:
-        return []
-    if Path(base).is_absolute() or not any(c in base for c in "*?["):
-        target = to_abs(base)
-        return [(target, start, end)] if target.is_file() else []
-    try:
-        matches = sorted(wdir.glob(base))
-    except (ValueError, NotImplementedError):
-        return []
-    return [
-        (p.resolve(), start, end)
-        for p in matches
-        if p.is_file() and not _GLOB_SKIP_DIRS.intersection(p.parts[len(wdir.parts) :])
-    ]
-
-
 def build_bundle(
     work_dir: Path | None = None,
     extra_files: list[str] | None = None,
@@ -361,6 +290,7 @@ def build_bundle(
     records: list[dict[str, object]] | None = None,
     plain: bool = False,
     spec_text: str | None = None,
+    upstream: PipedInput | None = None,
 ) -> tuple[str, list[str]]:
     prog = prog_name()
     if work_dir is not None:
@@ -396,6 +326,7 @@ def build_bundle(
         refresh=refresh,
         resolved_vars=resolved_vars,
         piped=piped,
+        chain=[SPEC_FILE_NAME] if spec_file is not None else None,
         active_bundles=root_bundles,
     )
     effective_cli_vars.update(resolved_vars)
@@ -408,6 +339,22 @@ def build_bundle(
     spec_prompts: list[tuple[str, list[str]]] = []
     spec_expose: list[str] = []
     included_files: list[tuple[str, bool, list[str]]] = []
+    up_groups: dict[str, list[tuple[dict[str, object], str]]] = {
+        "rules": [],
+        "cmds": [],
+        "includes": [],
+        "prompts": [],
+    }
+    if upstream is not None:
+        up_groups, unknown_kinds = group_fragments(upstream.fragments)
+        for unknown in unknown_kinds:
+            warnings.append(f"ignored upstream fragment of unknown kind: {unknown}")
+        for up_meta, up_body in up_groups["rules"]:
+            up_uid = str(up_meta.get("id") or "")
+            if not up_uid:
+                warnings.append("ignored upstream rule fragment without id")
+                continue
+            pending_rules.append((up_uid, f"# [upstream rule {up_uid}]", up_body, meta_chain(up_meta)))
 
     for kind, val, cond_expr, entry_chain in entries:
         if kind == "directive":
@@ -415,8 +362,9 @@ def build_bundle(
             d_kind = parts[0]
             target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
             base_trace = f"[if {cond_expr}] {d_kind} {target}" if cond_expr else f"{d_kind} {target}"
-            if entry_chain:
-                bundle_trace = " -> ".join(f"bundle {b}" for b in entry_chain)
+            trace_chain = [b for b in entry_chain if b != SPEC_FILE_NAME]
+            if trace_chain:
+                bundle_trace = " -> ".join(f"bundle {b}" for b in trace_chain)
                 trace_start = f"{bundle_trace} -> {base_trace}"
             else:
                 trace_start = base_trace
@@ -444,10 +392,20 @@ def build_bundle(
         elif kind == "prompt":
             spec_prompts.append((val, entry_chain))
 
+    pending_rules = [r for r in pending_rules if r[0] != LEGACY_RULE_ID]
+    embedded_body = _parse_md_text(embedded_rule_text(), EMBEDDED_RULE_NAME)[1]
+    embedded = _render_rule_vars(
+        embedded_body, {**builtin_vars(spec_dir, piped=piped), **effective_cli_vars}
+    ).strip()
+    if embedded:
+        pending_rules.append(
+            (EMBEDDED_RULE_NAME, f"# [embedded rule {EMBEDDED_RULE_NAME}]", embedded, [EMBEDDED_RULE_NAME])
+        )
+
     if pending_rules:
         formatted = format_collected_rules(pending_rules, verbose=verbose, boundary=fragment_boundary).strip()
         if formatted:
-            section_blocks.append(f"===== Rules =====\n{formatted}\n")
+            section_blocks.append(f"{RULES_HEADER}\n{formatted}\n")
             if records is not None:
                 seen_rule_uids: set[str] = set()
                 for r_uid, _r_prov, _r_body, r_chain in pending_rules:
@@ -461,6 +419,12 @@ def build_bundle(
                             "chain": list(r_chain),
                         }
                     )
+
+    for up_meta, up_content in up_groups["cmds"]:
+        wrapped_up = wrap_bundle_fragment(fragment_boundary, dict(up_meta), up_content)
+        section_blocks.append(f"{wrapped_up}\n")
+        if records is not None:
+            records.append(dict(up_meta))
 
     for cmd_val, cmd_chain in pending_cmds:
         rc, out, elapsed_ms = _run_spec_command(cmd_val, spec_dir)
@@ -481,7 +445,7 @@ def build_bundle(
     for extra in extra_files or []:
         included_files.append((extra, True, []))
 
-    seen_files: set[tuple[Path, int | None, int | None]] = set()
+    spans = [span_from_fragment(m, c, wdir) for m, c in up_groups["includes"]]
     for raw_file, warn_missing, inc_chain in included_files:
         clean = raw_file.strip()
         if not clean:
@@ -492,35 +456,21 @@ def build_bundle(
                 warnings.append(f"missing file: {clean}")
             continue
         for p, start, end in slices:
-            if (p, start, end) in seen_files:
-                continue
-            seen_files.add((p, start, end))
-            try:
-                disp = p.relative_to(spec_dir).as_posix()
-            except ValueError:
-                disp = p.as_posix()
-            text = p.read_text(encoding="utf-8", errors="replace")
-            if start is None:
-                name = disp
-                heading = f"cat {disp}"
-                content = text.rstrip()
-            else:
-                name = f"{disp}:{start}-{end}"
-                heading = f"sed -n '{start},{end}p' {disp}"
-                content = "\n".join(text.splitlines()[max(0, start - 1) : end]).rstrip()
-            inc_meta: dict[str, object] = {
-                "kind": "include",
-                "name": name,
-                "chain": list(inc_chain),
-            }
-            wrapped_inc = wrap_bundle_fragment(fragment_boundary, inc_meta, f"===== $ {heading} =====\n{content}")
-            section_blocks.append(f"{wrapped_inc}\n")
-            if records is not None:
-                records.append(inc_meta)
+            spans.append(read_span(p, display_path(p, spec_dir), start, end, inc_chain))
+    for span in merge_spans(spans):
+        inc_meta, inc_text = render_span(span)
+        wrapped_inc = wrap_bundle_fragment(fragment_boundary, inc_meta, inc_text)
+        section_blocks.append(f"{wrapped_inc}\n")
+        if records is not None:
+            records.append(inc_meta)
 
     all_prompt_items = [*spec_prompts]
     if prompt_text and prompt_text.strip():
         all_prompt_items.append((prompt_text.strip(), []))
+    prompt_frags: list[tuple[dict[str, object], str]] = [
+        (dict(m), strip_section_header(c, PROMPT_HEADER)) for m, c in up_groups["prompts"]
+    ]
+    n_upstream_prompts = len(prompt_frags)
     if all_prompt_items:
         first_chain = all_prompt_items[0][1]
         shared_chain = list(first_chain) if all(p_chain == first_chain for _p_text, p_chain in all_prompt_items) else []
@@ -528,10 +478,16 @@ def build_bundle(
             "kind": "prompt",
             "chain": shared_chain,
         }
-        joined_prompt = "\n\n".join(text for text, _ in all_prompt_items)
-        wrapped_prompt = wrap_bundle_fragment(fragment_boundary, prompt_meta, f"===== Prompt =====\n{joined_prompt}")
-        section_blocks.append(f"{wrapped_prompt}\n")
+        prompt_frags.append((prompt_meta, "\n\n".join(text for text, _ in all_prompt_items)))
+    if prompt_frags:
+        wrapped_parts = [
+            wrap_bundle_fragment(fragment_boundary, meta, f"{PROMPT_HEADER}\n{body}" if idx == 0 else body)
+            for idx, (meta, body) in enumerate(prompt_frags)
+        ]
+        section_blocks.append(("\n" if fragment_boundary else "\n\n").join(wrapped_parts) + "\n")
         if records is not None:
+            for meta, _body in prompt_frags[:n_upstream_prompts]:
+                records.append(dict(meta))
             for _p_text, p_chain in all_prompt_items:
                 records.append(
                     {
@@ -543,17 +499,24 @@ def build_bundle(
     header_lines: list[str] = []
     if not plain:
         exposed_headers = ["Role", "Task", "Title"]
-        for hdr in [*spec_expose, *env_expose(prog)]:
+        up_expose = [_normalize_header_name(h) for h in (upstream.expose if upstream else [])]
+        for hdr in [*spec_expose, *env_expose(prog), *up_expose]:
             if hdr not in exposed_headers:
                 exposed_headers.append(hdr)
         cmd_line = shlex.join([prog, *raw_argv]) if raw_argv else prog
+        if upstream is not None and upstream.command:
+            cmd_line = f"{upstream.command} | {cmd_line}"
         header_lines.extend(
             [
                 f"Bundle-Command: {cmd_line}",
                 f"Bundle-Boundary: {boundary}",
+                f"Bundle-Protocol: {PROTOCOL_VERSION}",
                 f"Bundle-Expose: {', '.join(exposed_headers)}",
             ]
         )
+        hidden_headers = [_normalize_header_name(h) for h in (upstream.hide if upstream else [])]
+        if hidden_headers:
+            header_lines.append(f"Bundle-Hide: {', '.join(dict.fromkeys(hidden_headers))}")
     for k, v in effective_cli_vars.items():
         if v != "" and k != "workdir":
             hdr_key = _normalize_header_name(k)
@@ -618,6 +581,7 @@ def cmd_bundle(
 
     piped_workdir: str | None = None
     has_piped_prompt = False
+    upstream: PipedInput | None = None
     if bundle_target is None and not sys.stdin.isatty():
         try:
             piped_raw = sys.stdin.read()
@@ -627,13 +591,14 @@ def cmd_bundle(
             sys.stderr.write(f"{prog}: empty piped input on stdin (upstream command failed?)\n")
             return 2
         if piped_raw.strip():
-            inferred_vars, piped_prompt, piped_workdir = _parse_stdin_pipe(piped_raw)
-            for ik, iv in inferred_vars.items():
+            upstream = parse_stdin_pipe(piped_raw)
+            piped_workdir = upstream.workdir
+            for ik, iv in upstream.vars.items():
                 if not cli_vars.get(ik):
                     cli_vars[ik] = iv
-            if piped_prompt:
-                has_piped_prompt = True
-                prompt_parts.insert(0, piped_prompt)
+            has_piped_prompt = upstream.has_prompt
+            if upstream.prompt:
+                prompt_parts.insert(0, upstream.prompt)
 
     if work_dir is None and piped_workdir is not None:
         if not piped_workdir:
@@ -653,6 +618,7 @@ def cmd_bundle(
         piped=has_piped_prompt,
         plain=plain,
         spec_text=None if bundle_target is None else f"bundle {shlex.quote(bundle_target)}",
+        upstream=upstream,
     )
     for w in warnings:
         sys.stderr.write(f"{prog}: warning: {w}\n")

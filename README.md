@@ -57,8 +57,6 @@ agents_bundle --update
 ## `.agents_bundle` Format
 
 ```text
-bundle vitalio/agents_bundle
-
 ruleset vitalio/agents-rules:default
 rule vitalio/agents-rules:release/semver
 rule vitalio/agents-rules:stack/cli
@@ -96,7 +94,7 @@ agents_bundle --plain role=work > plain_bundle.txt
 AGENTS_BUNDLE_PLAIN=1 agents_bundle > plain_bundle.txt
 agents_bundle ruleset vitalio/agents-rules:default os=windows
 agents_bundle rule vitalio/agents-rules:release/single-file-build
-agents_bundle bundle vitalio/agents_bundle role=design --plain
+agents_bundle bundle vitalio/todo_md role=design --plain
 agents_bundle --refresh > bundle.txt
 agents_bundle --update-cache
 agents_bundle --list
@@ -118,6 +116,29 @@ always included whole. A slice is emitted as a
 `===== $ sed -n 'START,ENDp' <path> =====` section with the fragment name
 `<path>:START-END`, so several slices of one large file can be included.
 
+## Directive Reference
+
+`.agents_bundle` and `.bundle` files take one directive per line; blank
+lines and `#` comments are ignored:
+
+- `ruleset <pkg>:<name> [-exclude ...] [k=v ...]` and
+  `rule <pkg>:<name> [k=v ...]` add rule files from a package, a local
+  path, or a URL.
+- `bundle <owner>/<repo>[:<name>] [k=v ...]` includes another bundle;
+  circular references fail fast.
+- `var <name>=$(<cmd>)` or `var <name>=<value>` sets a variable that CLI
+  `k=v` and `AGENTS_BUNDLE_VARS` override.
+- `expose <key...>` adds header names to `Bundle-Expose`.
+- `include <path>` or `include $(<cmd>)` adds repository files, globs,
+  and `path:START-END` slices.
+- `prompt <text>` appends text to the Prompt section.
+- `$ <cmd>` runs a command and includes its output.
+- `[if key=val] <line>` guards a line; multi-line `[if ...]` ...
+  `[/if]` blocks indent nested lines by 4 spaces.
+
+Keep shared files cross-platform: avoid POSIX-only shell syntax in
+`$ <cmd>` lines or guard it with `[if os=windows]` / `[if os!=windows]`.
+
 ## Bundle Output Protocol
 
 `agents_bundle` outputs a `Key: Value` header block separated by a blank line
@@ -125,9 +146,9 @@ from the assembled body sections (`===== Rules =====`, `===== $ <cmd> =====`,
 `===== $ cat <file> =====`, and `===== Prompt =====`):
 
 - **Header visibility (`Bundle-*`):** By default, the header block starts with
-  `Bundle-Command`, `Bundle-Boundary: <nonce>` (a per-run hex token), and
-  `Bundle-Expose: Role, Task, Title`. Use the `expose <key...>` directive in
-  `.agents_bundle` / `.bundle` or `AGENTS_BUNDLE_EXPOSE` in the environment to
+  `Bundle-Command`, `Bundle-Boundary: <nonce>` (a per-run hex token),
+  `Bundle-Protocol: 1`, and `Bundle-Expose: Role, Task, Title`.
+  Use the `expose <key...>` directive in `.agents_bundle` / `.bundle` or `AGENTS_BUNDLE_EXPOSE` in the environment to
   add normalized Title-Case header names to `Bundle-Expose` while keeping
   unexposed template variables in session metadata only.
 - **JSON fragment markers:** Each emitted rule, command section, included file
@@ -149,6 +170,27 @@ from the assembled body sections (`===== Rules =====`, `===== $ <cmd> =====`,
   to omit transport `Bundle-*` headers (`Bundle-Command`, `Bundle-Boundary`,
   `Bundle-Expose`) and JSON fragment markers when plain Markdown/text output is
   requested.
+- **Protocol version:** non-plain headers carry `Bundle-Protocol: 1`
+  (`context-bundle-protocol` v1).
+- **Piped bundles:** when `stdin` declares `Bundle-Boundary: <nonce>`,
+  the upstream bundle is unpacked instead of being treated as prompt
+  text. Upstream preamble headers become variables (CLI `k=v` over
+  `AGENTS_BUNDLE_VARS` over piped), `Bundle-Command` is chained as
+  `<upstream> | <this command>`, and `Bundle-Expose` / `Bundle-Hide` are
+  merged. `rule` fragments are merged and deduplicated by `id`;
+  `include` and `file` fragments are merged with the includes of
+  `.agents_bundle` and the CLI, where a whole-file include absorbs any
+  slice of the same file and overlapping slices become one slice;
+  `task`, `context`, and `prompt` fragments are re-wrapped with the new
+  boundary inside the Prompt section with their metadata preserved.
+- **Chain provenance:** fragments from `.agents_bundle` (and nested
+  bundles) carry `chain` starting with `.agents_bundle`; piped upstream
+  fragments keep their own chain, and CLI file and `-p` arguments use
+  `[]`.
+- **Embedded rule:** a short built-in rule (`id` `agents_bundle`, chain
+  `["agents_bundle"]`) describing `--tree` and session assembly is
+  always added to the Rules section. `--init` creates a starter
+  `.agents_bundle` that uses `include AGENTS.md`.
 
 ## Package Cache
 

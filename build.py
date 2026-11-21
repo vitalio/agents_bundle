@@ -22,6 +22,8 @@ MODULE_ORDER = [
     "core.py",
     "tree.py",
     "rules_engine.py",
+    "includes.py",
+    "upstream.py",
     "bundle.py",
     "cli.py",
 ]
@@ -70,6 +72,7 @@ def strip_module_imports(
 
 def assemble_source() -> str:
     ver = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    rule_text = (ROOT / "agents" / "agents_bundle.md").read_text(encoding="utf-8")
     texts = {m: (SRC_DIR / m).read_text(encoding="utf-8").rstrip() for m in MODULE_ORDER}
     header_imports = header_import_set(texts["header.py"])
     chunks: list[str] = []
@@ -77,6 +80,10 @@ def assemble_source() -> str:
         txt = texts[m]
         if m == "header.py":
             txt = txt.replace('VERSION = "__VERSION__"', f'VERSION = "{ver}"')
+            marker = 'EMBEDDED_RULE_AGENTS_BUNDLE = ""'
+            if txt.count(marker) != 1:
+                raise SystemExit("build.py: embedded rule placeholder not found in header.py")
+            txt = txt.replace(marker, f"EMBEDDED_RULE_AGENTS_BUNDLE = {rule_text!r}")
         else:
             txt = strip_module_imports(m, txt, header_imports, MODULE_ORDER)
         chunks.append(txt.rstrip())
