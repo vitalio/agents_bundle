@@ -1,15 +1,14 @@
-# 🎯 [NEXT] F30: Implement context-bundle-protocol v1 pass-through, root .agents_bundle chain provenance, and self-contained embedded rule
+# 🎯 [NEXT] F30: Implement context-bundle-protocol v1 pass-through, range-aware include deduplication, root .agents_bundle chain provenance, and embedded rule
 
-- Depends on: F29
 - Implement the Assembler side of `context-bundle-protocol` v1 per `todo_flow` `docs/adr/0002-context-bundle-protocol-and-self-contained-producers.md`:
   - In `src/bundle.py` and `src/rules_engine.py`, emit `Bundle-Protocol: 1` in non-plain bundle headers; when piped `stdin` declares `Bundle-Boundary: <up_nonce>`, parse upstream preamble headers into `inferred_vars` (`CLI key=val > AGENTS_BUNDLE_VARS > piped preamble`), chain upstream `Bundle-Command` as `<upstream_cmd> | <agents_bundle_cmd>`, merge upstream `Bundle-Expose` / `Bundle-Hide`, and unpack upstream `<!-- bundle:<up_nonce>:part {...} -->` fragments by `kind`:
     - `kind == "rule"`: merge into `===== Rules =====` and deduplicate by rule `id` (`uid`).
-    - `kind in ("include", "file")`: merge into file includes before `===== Prompt =====` and deduplicate by `(resolved_path, start, end)` against `.agents_bundle` `include` directives and CLI file arguments.
+    - `kind in ("include", "file")`: merge into file includes before `===== Prompt =====` and deduplicate across upstream includes, `.agents_bundle` `include` directives, and CLI file arguments with line-range coverage (a whole-file include absorbs any `start-end` slice of the same `resolved_path`, and overlapping or contained slices of the same file are merged into a single slice).
     - `kind in ("task", "context", "prompt")`: emit inside `===== Prompt =====` re-wrapped with the output `boundary` and preserving each fragment's individual metadata (`kind`, `id`, `name`, `chain`).
   - When assembling from `.agents_bundle` (`spec_file is not None`), pass `chain=[SPEC_FILE_NAME]` (`[".agents_bundle"]`) into `parse_spec()` so all fragments originating from `.agents_bundle` (and nested `.bundle` files) carry `chain: [".agents_bundle", ...]`, while keeping upstream piped fragments (`chain: ["todo_md"]`), embedded `agents_bundle` rule (`chain: ["agents_bundle"]`), and CLI file/`-p` arguments (`chain: []`) outside `.agents_bundle`'s `chain`.
   - Move and trim `src/rules/agents_bundle.md` to `agents/agents_bundle.md` (~10 lines covering `agents_bundle --tree` and session assembly/handoff, pointing to `agents_bundle -h` / `--list` when editing `.agents_bundle`), embed it into `src/header.py` (`EMBEDDED_RULE_AGENTS_BUNDLE`) via `build.py` (with source-tree fallback to `agents/agents_bundle.md`), auto-inject it into `===== Rules =====` with `chain: ["agents_bundle"]` (deduplicating legacy `vitalio/agents_bundle:agents_bundle`), and delete `src/bundles/agents_bundle.bundle`.
   - Move `Bundle Output Protocol` and `.bundle` directive reference documentation to `README.md` and `AGENTS.md`, and update `default_spec_template()` (`--init`) to remove `bundle vitalio/agents_bundle` and `bundle vitalio/todo_md` and use `include AGENTS.md`.
-  - Target files: `src/header.py`, `src/bundle.py:31-268`, `src/bundle.py:313-660`, `src/rules_engine.py:412-636`, `src/rules/agents_bundle.md`, `build.py`, `AGENTS.md`, `README.md`, `tests/test_bundle.py:1-260`, `tests/test_rules_engine.py:1-323`.
+- Target files: `src/header.py`, `src/bundle.py:31-268`, `src/bundle.py:313-660`, `src/rules_engine.py:412-636`, `src/rules/agents_bundle.md`, `build.py`, `README.md`, `tests/test_bundle.py:1-260`, `tests/test_rules_engine.py:1-323`.
 
 # 🎯 [NEXT] F7: Support agents/ package directory, custom relative paths, and @ref local-resolve fix
 
