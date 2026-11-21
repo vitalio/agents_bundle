@@ -1,3 +1,9 @@
+# 🎯 [NEXT] F29: Support path:start-end line-range slices in include directive and CLI file arguments
+
+- In `assemble_bundle()` (`src/bundle.py:395-445`), parse optional `:start-end` (or `:line`) 1-based inclusive line-range suffixes on `included_files` items (from `include` directives and CLI `extra_files`) when the full string is not an existing file path on disk.
+- Resolve the underlying file path against `wdir`, slice lines `start..end` (`lines[max(0, start - 1) : end]`), deduplicate by `(p, start, end)` so multiple slices of the same large file can be included, and emit the fragment with header `===== $ sed -n '<start>,<end>p' <disp> =====` and fragment metadata `{"kind": "include", "name": "<disp>:<start>-<end>", "chain": ...}`.
+- Update `src/header.py`, `src/rules/agents_bundle.md`, `README.md`, and unit tests in `tests/test_bundle.py`, rebuild `./agents_bundle` via `build.py`, and bump `VERSION` for a MINOR release.
+
 # 🎯 [NEXT] B1: Fail fast when piped stdin is an empty FIFO instead of falling back to unpiped bundle assembly
 
 - In `cmd_bundle()` (`src/bundle.py`), detect when `sys.stdin` is an actual pipe/FIFO (`stat.S_ISFIFO(os.fstat(sys.stdin.fileno()).st_mode)`) and `piped_raw.strip()` is empty (for example when an upstream command in `todo_md <ID> | agents_bundle role=work | run_block` fails and exits without writing to `stdout`).
