@@ -4,12 +4,6 @@
 - Resolve each underlying file path against `wdir`, slice lines `start..end` (`lines[max(0, start - 1) : end]`) when a range is present, deduplicate by `(p, start, end)` so multiple slices of the same large file can be included, and emit line-range fragments with header `===== $ sed -n '<start>,<end>p' <disp> =====` and fragment metadata `{"kind": "include", "name": "<disp>:<start>-<end>", "chain": ...}`.
 - Update `src/header.py`, `src/rules/agents_bundle.md`, `README.md`, and unit tests in `tests/test_bundle.py`, rebuild `./agents_bundle` via `build.py`, and bump `VERSION` for a MINOR release.
 
-# 🎯 [NEXT] F6: Add bundle CLI subcommand to render and inspect .bundle files
-
-- Depends on: F13
-- Add 'agents_bundle bundle <pkg>[:<name>] [k=v]' CLI subcommand (symmetric with 'ruleset' and 'rule') to render a bundle from the command line.
-- Keep src/header.py (--help), src/rules/agents_bundle.md, README.md, and tests in sync.
-
 # ⚪ [NEW] F10: Enforce command allowlist policy in .agents_bundle for external bundles
 
 - Depends on: F13

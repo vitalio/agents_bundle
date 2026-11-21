@@ -21,7 +21,8 @@ rules are loaded via `.agents_bundle`.
   `expose`, `prompt`, `[if ...]`, and `$` directives), resolves `work_dir` from
   `-C/--dir` or a piped `Workdir:` preamble, handles `--plain` and
   `AGENTS_BUNDLE_PLAIN`, emits `Workdir: <path>` in the bundle header, and
-  assembles the context bundle to `stdout`.
+  assembles the context bundle to `stdout`; `build_bundle(spec_text=...)` renders
+  a synthetic `bundle <target>` spec for the `bundle` CLI subcommand.
 - `src/rules/agents_bundle.md` & `src/bundles/agents_bundle.bundle` — agent
   instructions and conditional rule catalog for `bundle vitalio/agents_bundle`.
 - `src/cli.py` — CLI entrypoint, subcommand routing, and self-update

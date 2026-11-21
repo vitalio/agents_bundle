@@ -1,3 +1,9 @@
+# ✅ [DONE] F6: Add bundle CLI subcommand to render and inspect .bundle files — *2026-11-21*
+
+- Depends on: F13
+- Add 'agents_bundle bundle <pkg>[:<name>] [k=v]' CLI subcommand (symmetric with 'ruleset' and 'rule') to render a bundle from the command line.
+- Keep src/header.py (--help), src/rules/agents_bundle.md, README.md, and tests in sync.
+
 # ✅ [DONE] F13: Make src/ modules standalone importable and extract core helpers from src/tree.py — *2026-11-21*
 
 - Depends on: B1

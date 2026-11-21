@@ -18,7 +18,8 @@
   - Inspect repository file tree: `{cmd:agents_bundle} --tree [DIR] [-x DIR] [--max-lines N] [--max-tokens N]`
     (use instead of `find`/`ls` for directory structure; pins `AGENTS.md`).
   - Discover rulesets, rules, and bundles: `{cmd:agents_bundle} --list [pkg]`,
-    `{cmd:agents_bundle} ruleset <pkg>:<name> [k=v]`, `{cmd:agents_bundle} rule <pkg>:<name> [k=v]`.
+    `{cmd:agents_bundle} ruleset <pkg>:<name> [k=v]`, `{cmd:agents_bundle} rule <pkg>:<name> [k=v]`,
+    `{cmd:agents_bundle} bundle <pkg>[:<name>] [k=v]`.
   - Maintain `.agents_bundle` and `.bundle` files: directives `ruleset`, `rule`,
     `bundle` (`bundle <owner>/<repo>` or `bundle <owner>/<repo>:<name>`),
     `var` (`var <name>=$(<cmd>)`), `expose` (`expose <key...>`),

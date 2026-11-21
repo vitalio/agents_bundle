@@ -18,6 +18,7 @@ class TestCLI(AgentsBundleTestCase):
         self.assertIn("AGENTS_BUNDLE_PLAIN", rh.stdout)
         self.assertIn("Bundle Output Protocol:", rh.stdout)
         self.assertIn("-x/--exclude DIR", rh.stdout)
+        self.assertIn("bundle <pkg>[:<name>] [k=v]", rh.stdout)
         self.assertNotIn("--agents", rh.stdout)
         rv = self._run_subprocess([str(SCRIPT), "--version"], capture_output=True, text=True, check=False)
         self._assert_ok(rv)
@@ -52,6 +53,49 @@ class TestCLI(AgentsBundleTestCase):
         self.assertEqual(r.stdout, "")
         self.assertIn(".agents_bundle not found", r.stderr)
         self.assertIn("agents_bundle --init", r.stderr)
+
+    def test_bundle_subcommand_renders_bundle(self):
+        target = "vitalio/agents_bundle:agents_bundle"
+        with self.subTest(case="plain output without .agents_bundle"):
+            r = self._run(
+                [str(SCRIPT), "bundle", target, "role=design", "--plain"],
+                cwd=str(self.tmp),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self._assert_ok(r)
+            self.assertNotIn("Bundle-Boundary", r.stdout)
+            self.assertIn("Role: design", r.stdout)
+            self.assertIn("Context bundler & rules engine", r.stdout)
+            self.assertIn("===== $ agents_bundle --list =====", r.stdout)
+        with self.subTest(case="transport headers and fragment markers"):
+            r = self._run(
+                [str(SCRIPT), "bundle", target],
+                cwd=str(self.tmp),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self._assert_ok(r)
+            self.assertIn(f"Bundle-Command: agents_bundle bundle {target}", r.stdout)
+            _nonce, fragments = self._extract_fragments(r.stdout)
+            self.assertEqual(fragments[0][0]["kind"], "rule")
+            self.assertEqual(fragments[0][0]["chain"], [target])
+        with self.subTest(case="missing target"):
+            r = self._run([str(SCRIPT), "bundle"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("usage: agents_bundle bundle", r.stderr)
+        with self.subTest(case="unknown bundle"):
+            r = self._run(
+                [str(SCRIPT), "bundle", "vitalio/agents_bundle:nope"],
+                cwd=str(self.tmp),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("unknown bundle 'nope'", r.stderr)
 
     def test_install_sh(self):
         bin_dir = self.tmp / "bin"

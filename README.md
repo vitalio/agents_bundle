@@ -95,11 +95,19 @@ agents_bundle --plain role=work > plain_bundle.txt
 AGENTS_BUNDLE_PLAIN=1 agents_bundle > plain_bundle.txt
 agents_bundle ruleset vitalio/agents-rules:default os=windows
 agents_bundle rule vitalio/agents-rules:release/single-file-build
+agents_bundle bundle vitalio/agents_bundle role=design --plain
 agents_bundle --refresh > bundle.txt
 agents_bundle --update-cache
 agents_bundle --list
 agents_bundle --tree -x bumps -x resolutions --max-lines 160
 ```
+
+`agents_bundle bundle <pkg>[:<name>] [k=v]` renders a single bundle,
+symmetric with `ruleset` and `rule`, without requiring a `.agents_bundle`
+file: the bundle's rules, command sections, included files, and prompts are
+emitted in the regular bundle format. It accepts `k=v` variables and the
+bundle options (`-C`/`--dir`, `-p`/`--prompt`, `--plain`, `-v`/`--verbose`,
+`--refresh`) but does not read `stdin`.
 
 ## Bundle Output Protocol
 

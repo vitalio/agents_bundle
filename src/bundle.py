@@ -317,6 +317,7 @@ def build_bundle(
     piped: bool = False,
     records: list[dict[str, object]] | None = None,
     plain: bool = False,
+    spec_text: str | None = None,
 ) -> tuple[str, list[str]]:
     prog = prog_name()
     if work_dir is not None:
@@ -330,22 +331,29 @@ def build_bundle(
         wdir = resolved_wdir
     else:
         wdir = Path.cwd().resolve()
-    spec_file = find_spec_file(wdir)
-    if spec_file is None:
+    spec_file = find_spec_file(wdir) if spec_text is None else None
+    if spec_text is None and spec_file is None:
         sys.stderr.write(f"{prog}: {SPEC_FILE_NAME} not found in {wdir} (run '{prog} --init' to create a starter template)\n")
         raise SystemExit(2)
 
-    spec_dir = spec_file.parent
+    if spec_file is not None:
+        spec_dir = spec_file.parent
+        spec_source = spec_file.read_text(encoding="utf-8")
+        root_bundles = [(str(spec_file.resolve()), SPEC_FILE_NAME)]
+    else:
+        spec_dir = wdir
+        spec_source = spec_text or ""
+        root_bundles = []
     effective_cli_vars: dict[str, str] = dict(cli_vars or {})
     resolved_vars: dict[str, str] = {}
     entries = parse_spec(
-        spec_file.read_text(encoding="utf-8"),
+        spec_source,
         work_dir=spec_dir,
         cli_vars=effective_cli_vars,
         refresh=refresh,
         resolved_vars=resolved_vars,
         piped=piped,
-        active_bundles=[(str(spec_file.resolve()), SPEC_FILE_NAME)],
+        active_bundles=root_bundles,
     )
     effective_cli_vars.update(resolved_vars)
     boundary = secrets.token_hex(16)
@@ -511,7 +519,11 @@ def _stdin_is_fifo() -> bool:
         return False
 
 
-def cmd_bundle(argv: list[str]) -> int:
+def cmd_bundle(
+    argv: list[str],
+    bundle_target: str | None = None,
+    raw_argv: list[str] | None = None,
+) -> int:
     prog = prog_name()
     work_dir: Path | None = None
     prompt_parts: list[str] = []
@@ -554,7 +566,7 @@ def cmd_bundle(argv: list[str]) -> int:
 
     piped_workdir: str | None = None
     has_piped_prompt = False
-    if not sys.stdin.isatty():
+    if bundle_target is None and not sys.stdin.isatty():
         try:
             piped_raw = sys.stdin.read()
         except Exception:
@@ -585,9 +597,10 @@ def cmd_bundle(argv: list[str]) -> int:
         refresh=refresh,
         verbose=verbose,
         cli_vars=cli_vars,
-        raw_argv=argv,
+        raw_argv=raw_argv if raw_argv is not None else argv,
         piped=has_piped_prompt,
         plain=plain,
+        spec_text=None if bundle_target is None else f"bundle {shlex.quote(bundle_target)}",
     )
     for w in warnings:
         sys.stderr.write(f"{prog}: warning: {w}\n")
