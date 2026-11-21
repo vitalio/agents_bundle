@@ -21,7 +21,11 @@ variables (`task`, `role`, ...) when not overridden by CLI `k=v` or
 `AGENTS_BUNDLE_VARS`. A single-token body still sets `task=<ID>`, any remaining
 body text is prepended to the prompt, and built-in `piped=1` is exposed when
 stdin prompt text is present so bundles can guard duplicate output with
-`[if piped!=1]`.
+`[if piped!=1]`. When `stdin` is an actual pipe (FIFO) that delivers empty
+input, for example because an upstream command failed without writing to
+`stdout`, `agents_bundle` writes an error to `stderr` and exits `2` before
+running any `.agents_bundle` directives; non-FIFO non-TTY `stdin` such as
+`/dev/null` is still accepted.
 
 ## Quick Installation
 

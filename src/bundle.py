@@ -474,6 +474,13 @@ def build_bundle(
     return "\n".join(blocks), warnings
 
 
+def _stdin_is_fifo() -> bool:
+    try:
+        return stat.S_ISFIFO(os.fstat(sys.stdin.fileno()).st_mode)
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
 def cmd_bundle(argv: list[str]) -> int:
     prog = prog_name()
     work_dir: Path | None = None
@@ -522,6 +529,9 @@ def cmd_bundle(argv: list[str]) -> int:
             piped_raw = sys.stdin.read()
         except Exception:
             piped_raw = ""
+        if not piped_raw.strip() and _stdin_is_fifo():
+            sys.stderr.write(f"{prog}: empty piped input on stdin (upstream command failed?)\n")
+            return 2
         if piped_raw.strip():
             inferred_vars, piped_prompt, piped_workdir = _parse_stdin_pipe(piped_raw)
             for ik, iv in inferred_vars.items():

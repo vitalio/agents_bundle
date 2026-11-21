@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # agents_bundle-repo: vitalio/agents_bundle
 """Usage:
-  {prog} [k=v ...] [-p TEXT] [FILE ...]       Build context bundle from .agents_bundle to stdout (stdin: Key: Value preamble, task ID, or prompt; sets piped=1 on prompt)
+  {prog} [k=v ...] [-p TEXT] [FILE ...]       Build context bundle from .agents_bundle to stdout (stdin: Key: Value preamble, task ID, or prompt; sets piped=1 on prompt; empty piped stdin exits 2)
   {prog} ruleset <pkg>:<name> [-excl] [k=v]   Render a ruleset to stdout
   {prog} rule <pkg>:<name> [k=v]              Render a single rule to stdout
   {prog} --list | -l [pkg]                    List rulesets, rules, bundles, and built-in variables (default: {default_pkg})
@@ -49,6 +49,7 @@ import re
 import secrets
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile

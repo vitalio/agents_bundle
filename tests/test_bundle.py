@@ -2,6 +2,7 @@
 """Bundle assembly, directives, headers, and fragment marker tests for agents_bundle."""
 import os
 import re
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -537,6 +538,27 @@ class TestBundle(AgentsBundleTestCase):
                 )
                 self.assertNotEqual(r_err.returncode, 0, msg=f"stdout:\n{r_err.stdout}\nstderr:\n{r_err.stderr}")
                 self.assertTrue(r_err.stderr.strip(), msg="expected error message on stderr")
+
+    def test_empty_piped_fifo_fails_fast_but_devnull_is_allowed(self):
+        proj = self.tmp / "empty_pipe_proj"
+        proj.mkdir()
+        (proj / ".agents_bundle").write_text("$ echo marker_should_not_run\n", encoding="utf-8")
+        for label, data in [("empty", ""), ("whitespace", "  \n")]:
+            with self.subTest(fifo_case=label):
+                r_fifo = self._run_subprocess([str(SCRIPT), "-C", str(proj)], cwd=self.tmp, input=data)
+                self.assertEqual(r_fifo.returncode, 2, msg=f"stdout:\n{r_fifo.stdout}\nstderr:\n{r_fifo.stderr}")
+                self.assertEqual(r_fifo.stdout, "")
+                self.assertIn("empty piped input on stdin", r_fifo.stderr)
+        r_null = subprocess.run(
+            [str(SCRIPT), "-C", str(proj)],
+            cwd=str(self.tmp),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self._assert_ok(r_null)
+        self.assertIn("marker_should_not_run", r_null.stdout)
 
     def test_bundle_boundary_nonce_and_expose_control(self):
         sub_bundle = self.tmp / "extra.bundle"

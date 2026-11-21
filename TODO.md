@@ -4,12 +4,6 @@
 - Resolve each underlying file path against `wdir`, slice lines `start..end` (`lines[max(0, start - 1) : end]`) when a range is present, deduplicate by `(p, start, end)` so multiple slices of the same large file can be included, and emit line-range fragments with header `===== $ sed -n '<start>,<end>p' <disp> =====` and fragment metadata `{"kind": "include", "name": "<disp>:<start>-<end>", "chain": ...}`.
 - Update `src/header.py`, `src/rules/agents_bundle.md`, `README.md`, and unit tests in `tests/test_bundle.py`, rebuild `./agents_bundle` via `build.py`, and bump `VERSION` for a MINOR release.
 
-# 🎯 [NEXT] B1: Fail fast when piped stdin is an empty FIFO instead of falling back to unpiped bundle assembly
-
-- In `cmd_bundle()` (`src/bundle.py`), detect when `sys.stdin` is an actual pipe/FIFO (`stat.S_ISFIFO(os.fstat(sys.stdin.fileno()).st_mode)`) and `piped_raw.strip()` is empty (for example when an upstream command in `todo_md <ID> | agents_bundle role=work | run_block` fails and exits without writing to `stdout`).
-- When an actual pipe/FIFO delivers empty input, write a clear error message to `sys.stderr` (e.g. `agents_bundle: empty piped input on stdin (upstream command failed?)`) and return non-zero (`2`) immediately before evaluating `.agents_bundle` or `.bundle` `$ <cmd>` directives (while still allowing non-FIFO non-TTY stdin such as `/dev/null` in background/test runners).
-- Cover empty-pipe failure vs `/dev/null` non-TTY behavior with unit tests in `tests/test_bundle.py`, rebuild `./agents_bundle` via `build.py`, and bump `VERSION` for a PATCH release.
-
 # 🎯 [NEXT] F13: Make src/ modules standalone importable and extract core helpers from src/tree.py
 
 - Depends on: B1
