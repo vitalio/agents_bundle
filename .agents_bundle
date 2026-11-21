@@ -1,5 +1,4 @@
 # .agents_bundle — root context ruleset and command bundle (run: agents_bundle | run_block)
-bundle vitalio/todo_md
 
 ruleset vitalio/agents-rules:default
 rule vitalio/agents-rules:release/semver
@@ -9,7 +8,7 @@ rule vitalio/agents-rules:stack/python-cli
 rule vitalio/agents-rules:stack/python-stdlib
 rule vitalio/agents-rules:stack/python-annotations py_min=3.9
 
-$ cat AGENTS.md
+include AGENTS.md
 $ agents_bundle --tree
 $ git status -sb
 $ git branch -vv
