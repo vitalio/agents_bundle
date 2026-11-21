@@ -33,6 +33,8 @@
 - Fix `_ensure_remote_package` so explicit `@<ref>` on `vitalio/*` packages fetches the requested ref instead of returning the unpinned local working tree.
 - Move `src/rules/agents_bundle.md` and `src/bundles/agents_bundle.bundle` into `agents/` and keep `AGENTS.md`, `README.md`, `src/header.py`, and unit tests in sync.
 
+- Document `agents/` in `AGENTS.md` across packages as the single canonical root location for exported rules (`.md`) and bundles (`.bundle`) so agents inspect `agents/` directly without searching the tree.
+
 # ⚪ [NEW] F15: Unify ruleset into bundle and support logical package directory layout
 
 - Depends on: F6, F7, F10
