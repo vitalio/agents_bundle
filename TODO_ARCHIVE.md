@@ -1,3 +1,7 @@
+# ✅ [DONE] F31: Active backlog task references removed src/rules/agents_bundle.md and src/bundles/ — *2026-11-22, Replaced stale src/rules/agents_bundle.md and src/bundles/ references with agents/agents_bundle.md in F27*
+
+Observed: the Target files bullet of the open task that depends on F6, F7, and F10 still lists `src/rules/agents_bundle.md` and `src/bundles/`, which no longer exist after the embedded rule moved to `agents/agents_bundle.md`. Impact: `todo_md files` preloads missing paths for that task and the reference misleads the next worker.
+
 # ✅ [DONE] F30: Implement context-bundle-protocol v1 pass-through, range-aware include deduplication, root .agents_bundle chain provenance, and embedded rule — *2026-11-22*
 
 - Implement the Assembler side of `context-bundle-protocol` v1 per `todo_flow` `docs/adr/0002-context-bundle-protocol-and-self-contained-producers.md`:
