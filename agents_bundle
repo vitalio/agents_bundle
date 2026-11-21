@@ -56,11 +56,12 @@ import tempfile
 import time
 from pathlib import Path
 
-VERSION = "0.14.5"
+VERSION = "0.14.6"
 REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/agents_bundle/main/agents_bundle"
 SPEC_FILE_NAME = ".agents_bundle"
 DEFAULT_RULES_PKG = "vitalio/agents-rules"
+USAGE_TEMPLATE = __doc__
 
 
 def prog_name() -> str:
@@ -82,7 +83,7 @@ def cache_dir_path() -> Path:
 
 
 def usage_text() -> str:
-    return (__doc__ or "").format(
+    return USAGE_TEMPLATE.format(
         prog=prog_name(),
         default_pkg=DEFAULT_RULES_PKG,
         cache_dir=cache_dir_path(),

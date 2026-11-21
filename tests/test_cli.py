@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """CLI, build check, and installer tests for agents_bundle."""
+import importlib.util
 import sys
 import unittest
 
@@ -22,6 +23,28 @@ class TestCLI(AgentsBundleTestCase):
         self._assert_ok(rv)
         ver = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
         self.assertEqual(rv.stdout.strip(), f"agents_bundle {ver}")
+
+    def test_build_strips_internal_imports(self):
+        spec = importlib.util.spec_from_file_location("build_mod", BUILD_PY)
+        build = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(build)
+        hdr = build.header_import_set("import os\nfrom pathlib import Path\n")
+        src = (
+            "from __future__ import annotations\n\nimport os\nfrom pathlib import Path\n\n"
+            "from src.header import (\n    A,\n    B,\n)\n\n\ndef f():\n    return os, Path, A, B\n"
+        )
+        order = ["header.py", "core.py", "tree.py"]
+        self.assertEqual(
+            build.strip_module_imports("core.py", src, hdr, order),
+            "def f():\n    return os, Path, A, B",
+        )
+        with self.subTest(case="stdlib import missing in header"):
+            with self.assertRaises(SystemExit):
+                build.strip_module_imports("core.py", "import json\n", hdr, order)
+        with self.subTest(case="sibling import from a later module"):
+            with self.assertRaises(SystemExit):
+                build.strip_module_imports("core.py", "from src.tree import x\n", hdr, order)
+        self.assertNotIn("from src.", SCRIPT.read_text(encoding="utf-8"))
 
     def test_missing_spec_fails_with_hint(self):
         r = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)

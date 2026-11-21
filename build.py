@@ -17,17 +17,69 @@ ROOT = Path(__file__).resolve().parent
 SRC_DIR = ROOT / "src"
 OUT_FILE = ROOT / "agents_bundle"
 
-MODULE_ORDER = ["header.py", "tree.py", "rules_engine.py", "bundle.py", "cli.py"]
+MODULE_ORDER = [
+    "header.py",
+    "core.py",
+    "tree.py",
+    "rules_engine.py",
+    "bundle.py",
+    "cli.py",
+]
 
+
+def _import_aliases(node: ast.stmt) -> set[tuple[str, str, str | None]]:
+    if isinstance(node, ast.Import):
+        return {("", a.name, a.asname) for a in node.names}
+    assert isinstance(node, ast.ImportFrom)
+    return {(node.module or "", a.name, a.asname) for a in node.names}
+
+def header_import_set(header_text: str) -> set[tuple[str, str, str | None]]:
+    found: set[tuple[str, str, str | None]] = set()
+    for node in ast.parse(header_text).body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            found |= _import_aliases(node)
+    return found
+
+def strip_module_imports(
+    name: str,
+    text: str,
+    header_imports: set[tuple[str, str, str | None]],
+    order: list[str],
+) -> str:
+    """Drop top-level imports of a src module for the single-file build.
+
+    Sibling imports (from src.<module> import ...) must point to an earlier
+    module in order; other imports must be provided by src/header.py.
+    """
+    drop: list[tuple[int, int]] = []
+    for node in ast.parse(text).body:
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        mod = node.module or "" if isinstance(node, ast.ImportFrom) else ""
+        if mod.startswith("src."):
+            dep = mod.split(".", 1)[1] + ".py"
+            if dep not in order[: order.index(name)]:
+                raise SystemExit(f"build.py: {name} imports {mod}, which must come earlier in MODULE_ORDER")
+        elif mod != "__future__":
+            missing = _import_aliases(node) - header_imports
+            if missing:
+                raise SystemExit(f"build.py: {name} imports {sorted(missing)} not provided by header.py")
+        drop.append((node.lineno, node.end_lineno or node.lineno))
+    kept = [ln for i, ln in enumerate(text.splitlines(), 1) if not any(a <= i <= b for a, b in drop)]
+    return "\n".join(kept).lstrip("\n")
 
 def assemble_source() -> str:
     ver = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    texts = {m: (SRC_DIR / m).read_text(encoding="utf-8").rstrip() for m in MODULE_ORDER}
+    header_imports = header_import_set(texts["header.py"])
     chunks: list[str] = []
     for m in MODULE_ORDER:
-        txt = (SRC_DIR / m).read_text(encoding="utf-8").rstrip()
+        txt = texts[m]
         if m == "header.py":
             txt = txt.replace('VERSION = "__VERSION__"', f'VERSION = "{ver}"')
-        chunks.append(txt)
+        else:
+            txt = strip_module_imports(m, txt, header_imports, MODULE_ORDER)
+        chunks.append(txt.rstrip())
     source = "\n\n\n".join(chunks) + "\n"
     ast.parse(source)
     return source

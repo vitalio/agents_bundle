@@ -1,3 +1,33 @@
+from __future__ import annotations
+
+import os
+import re
+import secrets
+import shlex
+import shutil
+import stat
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from src.header import DEFAULT_RULES_PKG, SPEC_FILE_NAME
+from src.core import prog_name
+from src.tree import _tree_from_args
+from src.rules_engine import (
+    _parse_directive_tokens,
+    _render_rule_vars,
+    builtin_vars,
+    collect_directive_items,
+    env_vars,
+    eval_if_condition,
+    format_collected_rules,
+    resolve_bundle_source,
+    strip_if_blocks_and_lines,
+    wrap_bundle_fragment,
+)
+
+
 def default_spec_template(prog: str | None = None) -> str:
     cmd = prog or prog_name()
     lines = [

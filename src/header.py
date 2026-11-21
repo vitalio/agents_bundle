@@ -61,3 +61,4 @@ REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/agents_bundle/main/agents_bundle"
 SPEC_FILE_NAME = ".agents_bundle"
 DEFAULT_RULES_PKG = "vitalio/agents-rules"
+USAGE_TEMPLATE = __doc__

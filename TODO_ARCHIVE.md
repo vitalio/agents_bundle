@@ -1,3 +1,10 @@
+# ✅ [DONE] F13: Make src/ modules standalone importable and extract core helpers from src/tree.py — *2026-11-21*
+
+- Depends on: B1
+- Move `prog_name()`, `cache_dir_path()`, and `usage_text()` out of `src/tree.py` into `src/header.py` (or a dedicated `src/core.py` in `MODULE_ORDER`) so `src/tree.py` handles only repository tree generation.
+- Make each module under `src/` valid, standalone-importable Python for IDE/linter analysis while updating `build.py` to strip internal cross-module imports when assembling the single-file `agents_bundle` executable.
+- Keep `AGENTS.md`, `build.py`, and unit tests in `tests/test_*.py` in sync.
+
 # ✅ [DONE] B1: Fail fast when piped stdin is an empty FIFO instead of falling back to unpiped bundle assembly — *2026-11-21*
 
 - In `cmd_bundle()` (`src/bundle.py`), detect when `sys.stdin` is an actual pipe/FIFO (`stat.S_ISFIFO(os.fstat(sys.stdin.fileno()).st_mode)`) and `piped_raw.strip()` is empty (for example when an upstream command in `todo_md <ID> | agents_bundle role=work | run_block` fails and exits without writing to `stdout`).

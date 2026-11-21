@@ -1,3 +1,26 @@
+from __future__ import annotations
+
+import ast
+import os
+import re
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+from src.header import DEFAULT_RULES_PKG, DEFAULT_UPDATE_URL, REPO_MARKER, VERSION
+from src.core import prog_name, usage_text
+from src.tree import cmd_tree
+from src.rules_engine import (
+    _parse_directive_tokens,
+    cmd_list_rules,
+    cmd_update_cache,
+    env_vars,
+    render_directive,
+)
+from src.bundle import cmd_bundle, cmd_init
+
+
 def parse_version_from_source(source: str) -> str | None:
     m = re.search(r'^VERSION\s*=\s*["\x27]([^"\x27]+)["\x27]', source, flags=re.MULTILINE)
     return m.group(1) if m else None

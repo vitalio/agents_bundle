@@ -1,3 +1,18 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+from src.header import DEFAULT_RULES_PKG, VERSION
+from src.core import cache_dir_path, prog_name
+
+
 RULE_VAR_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*):([^{}]*)\}")
 IF_PREFIX_RE = re.compile(r"^\[if\s+([^\]]+)\]\s*(.*)$")
 
