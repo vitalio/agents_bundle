@@ -1,3 +1,10 @@
+# 🎯 [NEXT] F32: Render table-driven -h/--help output wrapped to <= 100 columns per stack/cli
+
+- Replace static `USAGE_TEMPLATE.format(...)` in `src/header.py` and `usage_text()` (`src/core.py`) with structured table-driven help rendering (`HELP_MAX_WIDTH = 100`, `HELP_PROSE_WIDTH = 80`, `HELP_INDENT = 2`, `HELP_GAP = 2`, matching `todo_md` and `vitalio/agents-rules:stack/cli`).
+- Measure the left column width after expanding `{prog}`, `{default_pkg}`, and `{cache_dir}` within each section (`Usage:`, `Options:`, `Bundle Output Protocol:`, `Environment:`) so all descriptions and wrapped continuation lines align to the same column and no line exceeds 100 columns.
+- Rebuild `./agents_bundle` via `python3 build.py` and add unit test assertions in `tests/test_cli.py` verifying that every line of `agents_bundle -h` / `--help` is `<= 100` columns and section description columns are aligned.
+- Target files: `src/header.py`, `src/core.py`, `tests/test_cli.py`.
+
 # 🎯 [NEXT] F7: Support agents/ package directory, custom relative paths, and @ref local-resolve fix
 
 - Depends on: F13, F30
