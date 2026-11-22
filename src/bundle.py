@@ -345,6 +345,11 @@ def build_bundle(
         "includes": [],
         "prompts": [],
     }
+    rule_vars = {**builtin_vars(spec_dir, piped=piped), **effective_cli_vars}
+
+    def normalize_rule_body(raw_body: str, name: str) -> str:
+        return _render_rule_vars(_parse_md_text(raw_body, name)[1], rule_vars).strip()
+
     if upstream is not None:
         up_groups, unknown_kinds = group_fragments(upstream.fragments)
         for unknown in unknown_kinds:
@@ -354,7 +359,9 @@ def build_bundle(
             if not up_uid:
                 warnings.append("ignored upstream rule fragment without id")
                 continue
-            pending_rules.append((up_uid, f"# [upstream rule {up_uid}]", up_body, meta_chain(up_meta)))
+            up_rendered = normalize_rule_body(up_body, up_uid)
+            if up_rendered:
+                pending_rules.append((up_uid, f"# [upstream rule {up_uid}]", up_rendered, meta_chain(up_meta)))
 
     for kind, val, cond_expr, entry_chain in entries:
         if kind == "directive":
@@ -393,10 +400,7 @@ def build_bundle(
             spec_prompts.append((val, entry_chain))
 
     pending_rules = [r for r in pending_rules if r[0] != LEGACY_RULE_ID]
-    embedded_body = _parse_md_text(embedded_rule_text(), EMBEDDED_RULE_NAME)[1]
-    embedded = _render_rule_vars(
-        embedded_body, {**builtin_vars(spec_dir, piped=piped), **effective_cli_vars}
-    ).strip()
+    embedded = normalize_rule_body(embedded_rule_text(), EMBEDDED_RULE_NAME)
     if embedded:
         pending_rules.append(
             (EMBEDDED_RULE_NAME, f"# [embedded rule {EMBEDDED_RULE_NAME}]", embedded, [EMBEDDED_RULE_NAME])

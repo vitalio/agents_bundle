@@ -72,6 +72,11 @@ rules are loaded via `.agents_bundle`.
   `task`/`context`/`prompt` fragments are re-wrapped inside the Prompt section
   keeping their metadata. `Bundle-Command` is chained with ` | `; `Bundle-Expose`
   and `Bundle-Hide` are merged.
+- Rule body normalization: embedded and upstream `rule` fragments go through
+  `normalize_rule_body()` (`_parse_md_text()` then `_render_rule_vars()`).
+  Rule `.md` bodies are static Markdown: only `# Description:` stripping and
+  `{name:default}` substitution apply; `[if ...]` conditions belong to
+  `.bundle` and `.agents_bundle` specs, never to rule bodies.
 - Chain provenance: `build_bundle()` passes `chain=[SPEC_FILE_NAME]` to `parse_spec()`
   only when `.agents_bundle` is read; `bundle` subcommand, piped, CLI, and embedded
   fragments stay outside it. Keep the `.bundle` directive reference in `README.md`.

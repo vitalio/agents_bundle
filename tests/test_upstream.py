@@ -93,6 +93,33 @@ class TestUpstream(AgentsBundleTestCase):
         self.assertEqual(prompts[0][1], "===== Prompt =====\n# F9 title")
         self.assertEqual(prompts[1][1], "Local note")
 
+    def _upstream_rules(self, role_header: str | None, body: str, argv: list[str]) -> dict[str, str]:
+        meta = {"kind": "rule", "id": "todo_md:todo_md", "chain": ["todo_md"]}
+        head = "Bundle-Boundary: abc123\n"
+        if role_header:
+            head += f"Role: {role_header}\n"
+        upstream = (
+            head + "\n"
+            f"<!-- bundle:abc123:part {json.dumps(meta)} -->\n{body}\n<!-- bundle:abc123:end -->\n"
+        )
+        (self.tmp / ".agents_bundle").write_text("prompt Local note\n", encoding="utf-8")
+        r = self._run([str(SCRIPT), *argv], cwd=str(self.tmp), input=upstream)
+        self._assert_ok(r)
+        _n, frags = self._extract_fragments(r.stdout)
+        return {m["id"]: b for m, b in frags if m["kind"] == "rule"}
+
+    def test_upstream_rule_fragment_strips_description_and_renders_vars(self):
+        body = "# Description: Tool rule\n- Tool: run {cmd:todo_md} as {role:none} role"
+        rules = self._upstream_rules("work", body, [])
+        text = rules["todo_md:todo_md"]
+        self.assertIn("- Tool: run todo_md as work role", text)
+        self.assertNotIn("Description", text)
+        cli = self._upstream_rules("work", body, ["role=plan", "cmd=tm"])
+        self.assertIn("- Tool: run tm as plan role", cli["todo_md:todo_md"])
+
+    def test_upstream_rule_fragment_with_empty_body_is_skipped(self):
+        rules = self._upstream_rules(None, "# Description: Only metadata", [])
+        self.assertNotIn("todo_md:todo_md", rules)
 
 if __name__ == "__main__":
     unittest.main()

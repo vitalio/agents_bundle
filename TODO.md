@@ -1,12 +1,3 @@
-# 🎯 [NEXT] B2: Normalize upstream rule fragments through _parse_md_text() and _render_rule_vars()
-
-- In `build_bundle_from_spec()` (`src/bundle.py:345-415`), when ingesting upstream `kind: "rule"` fragments from `up_groups["rules"]`, pass each upstream rule body through `_parse_md_text(up_body, up_uid)[1]` and `_render_rule_vars(..., {**builtin_vars(spec_dir, piped=piped), **effective_cli_vars}).strip()` before appending to `pending_rules` (matching the processing applied to `EMBEDDED_RULE_NAME` and `.agents_bundle` rules):
-  - Strips any leading `# Description:` metadata line from upstream tool rules (such as `todo_md:todo_md`).
-  - Evaluates `[if ...]` conditional blocks/lines and `{cmd:...}` / template variable substitutions against the active session variables (`role`, `task`, etc.).
-  - Skips appending the upstream rule if the rendered body is empty after conditional filtering.
-- Add unit tests in `tests/test_upstream.py` verifying that upstream `rule` fragments have `# Description:` stripped, `[if role=...]` blocks filtered against `Role:` preamble headers or CLI `role=...` overrides, and `{cmd:...}` placeholders expanded.
-- Target files: `src/bundle.py:340-415`, `tests/test_upstream.py`.
-
 # 🎯 [NEXT] F7: Support agents/ package directory, custom relative paths, and @ref local-resolve fix
 
 - Depends on: F13, F30

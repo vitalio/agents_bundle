@@ -1,3 +1,12 @@
+# ✅ [DONE] B2: Normalize upstream rule fragments through _parse_md_text() and _render_rule_vars() — *2026-11-22*
+
+- In `build_bundle_from_spec()` (`src/bundle.py:345-415`), when ingesting upstream `kind: "rule"` fragments from `up_groups["rules"]`, pass each upstream rule body through `_parse_md_text(up_body, up_uid)[1]` and `_render_rule_vars(..., {**builtin_vars(spec_dir, piped=piped), **effective_cli_vars}).strip()` before appending to `pending_rules` (matching the processing applied to `EMBEDDED_RULE_NAME` and `.agents_bundle` rules):
+  - Strips any leading `# Description:` metadata line from upstream tool rules (such as `todo_md:todo_md`).
+  - Evaluates `[if ...]` conditional blocks/lines and `{cmd:...}` / template variable substitutions against the active session variables (`role`, `task`, etc.).
+  - Skips appending the upstream rule if the rendered body is empty after conditional filtering.
+- Add unit tests in `tests/test_upstream.py` verifying that upstream `rule` fragments have `# Description:` stripped, `[if role=...]` blocks filtered against `Role:` preamble headers or CLI `role=...` overrides, and `{cmd:...}` placeholders expanded.
+- Target files: `src/bundle.py:340-415`, `tests/test_upstream.py`.
+
 # ✅ [DONE] F31: Active backlog task references removed src/rules/agents_bundle.md and src/bundles/ — *2026-11-22, Replaced stale src/rules/agents_bundle.md and src/bundles/ references with agents/agents_bundle.md in F27*
 
 Observed: the Target files bullet of the open task that depends on F6, F7, and F10 still lists `src/rules/agents_bundle.md` and `src/bundles/`, which no longer exist after the embedded rule moved to `agents/agents_bundle.md`. Impact: `todo_md files` preloads missing paths for that task and the reference misleads the next worker.
