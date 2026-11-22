@@ -1,3 +1,8 @@
+# ❌ [CANCELED] L1: Clarify ~1000-line module size guideline as pragmatic recommendation rather than hard split trigger — *moved to todo_flow*
+
+- Observed problem: the modular cohesion rule wording ('split any module that exceeds about 1000 lines') gets interpreted by planning and worker sessions as a hard line-count cap, prompting artificial relocation of cohesive helpers across modules just to keep `wc -l` below 1000.
+- Context & impact: splitting or moving functions across modules solely to satisfy a line threshold when a module remains cohesive and focused on a single architectural layer hurts locality and maintainability.
+
 # ✅ [DONE] F15: Unify ruleset into .bundle, implement Bundle-Name producer namespaces, Python-indented if/let/export/file/cmd language, and drop Windows support — *2026-11-23, Unified ruleset into .bundle, implemented Bundle-Name producer namespaces, 9-keyword Python-indented .bundle language, canonical 4-kind fragments, .ctx.bundle support, and dropped Windows support*
 
 - Depends on: F6, F7, F10
