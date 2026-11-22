@@ -1,8 +1,17 @@
 import os
 import sys
+import textwrap
 from pathlib import Path
 
-from src.header import DEFAULT_RULES_PKG, EMBEDDED_RULE_AGENTS_BUNDLE, USAGE_TEMPLATE
+from src.header import (
+    DEFAULT_RULES_PKG,
+    EMBEDDED_RULE_AGENTS_BUNDLE,
+    HELP_GAP,
+    HELP_INDENT,
+    HELP_MAX_WIDTH,
+    HELP_PROSE_WIDTH,
+    HELP_SECTIONS,
+)
 
 
 def prog_name() -> str:
@@ -23,12 +32,24 @@ def cache_dir_path() -> Path:
     return base / "agents_bundle"
 
 
+def render_help_section(title: str, rows) -> str:
+    col = HELP_INDENT + max(len(left) for left, _ in rows) + HELP_GAP
+    width = max(min(HELP_PROSE_WIDTH, HELP_MAX_WIDTH - col), 20)
+    lines = [title]
+    for left, right in rows:
+        wrapped = textwrap.wrap(right, width=width, break_long_words=True, break_on_hyphens=False)
+        lines.append(" " * HELP_INDENT + left.ljust(col - HELP_INDENT) + wrapped[0])
+        lines.extend(" " * col + part for part in wrapped[1:])
+    return "\n".join(lines)
+
+
 def usage_text() -> str:
-    return USAGE_TEMPLATE.format(
-        prog=prog_name(),
-        default_pkg=DEFAULT_RULES_PKG,
-        cache_dir=cache_dir_path(),
-    )
+    fields = {"prog": prog_name(), "default_pkg": DEFAULT_RULES_PKG, "cache_dir": cache_dir_path()}
+    blocks = []
+    for title, rows in HELP_SECTIONS:
+        expanded = [(left.format(**fields), right.format(**fields)) for left, right in rows]
+        blocks.append(render_help_section(title, expanded))
+    return "\n\n".join(blocks) + "\n"
 
 
 def embedded_rule_text() -> str:

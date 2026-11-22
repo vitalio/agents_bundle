@@ -34,10 +34,11 @@ class TestCoreHelpers(unittest.TestCase):
             with mock.patch.dict(os.environ, env, clear=True):
                 self.assertEqual(self.core.cache_dir_path(), Path(d) / "agents_bundle")
 
-    def test_usage_text_renders_header_template(self):
+    def test_usage_text_renders_help_sections(self):
         header = importlib.import_module("src.header")
         text = self.core.usage_text()
-        self.assertIn("Usage:", text)
+        for title, _rows in header.HELP_SECTIONS:
+            self.assertIn(title, text)
         self.assertIn(header.DEFAULT_RULES_PKG, text)
         self.assertNotIn("{prog}", text)
         self.assertNotIn("{cache_dir}", text)
@@ -46,7 +47,7 @@ class TestCoreHelpers(unittest.TestCase):
 class TestStandaloneModules(unittest.TestCase):
     def test_every_src_module_imports_standalone(self):
         for name, attr in (
-            ("header", "USAGE_TEMPLATE"),
+            ("header", "HELP_SECTIONS"),
             ("core", "prog_name"),
             ("tree", "cmd_tree"),
             ("rules_engine", "render_directive"),

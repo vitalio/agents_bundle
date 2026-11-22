@@ -1,3 +1,10 @@
+# ✅ [DONE] F32: Render table-driven -h/--help output wrapped to <= 100 columns per stack/cli — *2026-11-22*
+
+- Replace static `USAGE_TEMPLATE.format(...)` in `src/header.py` and `usage_text()` (`src/core.py`) with structured table-driven help rendering (`HELP_MAX_WIDTH = 100`, `HELP_PROSE_WIDTH = 80`, `HELP_INDENT = 2`, `HELP_GAP = 2`, matching `todo_md` and `vitalio/agents-rules:stack/cli`).
+- Measure the left column width after expanding `{prog}`, `{default_pkg}`, and `{cache_dir}` within each section (`Usage:`, `Options:`, `Bundle Output Protocol:`, `Environment:`) so all descriptions and wrapped continuation lines align to the same column and no line exceeds 100 columns.
+- Rebuild `./agents_bundle` via `python3 build.py` and add unit test assertions in `tests/test_cli.py` verifying that every line of `agents_bundle -h` / `--help` is `<= 100` columns and section description columns are aligned.
+- Target files: `src/header.py`, `src/core.py`, `tests/test_cli.py`.
+
 # ✅ [DONE] B2: Normalize upstream rule fragments through _parse_md_text() and _render_rule_vars() — *2026-11-22*
 
 - In `build_bundle_from_spec()` (`src/bundle.py:345-415`), when ingesting upstream `kind: "rule"` fragments from `up_groups["rules"]`, pass each upstream rule body through `_parse_md_text(up_body, up_uid)[1]` and `_render_rule_vars(..., {**builtin_vars(spec_dir, piped=piped), **effective_cli_vars}).strip()` before appending to `pending_rules` (matching the processing applied to `EMBEDDED_RULE_NAME` and `.agents_bundle` rules):

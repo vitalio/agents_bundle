@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """CLI, build check, and installer tests for agents_bundle."""
 import importlib.util
+import re
 import sys
 import unittest
 
@@ -17,13 +18,43 @@ class TestCLI(AgentsBundleTestCase):
         self.assertIn("--plain", rh.stdout)
         self.assertIn("AGENTS_BUNDLE_PLAIN", rh.stdout)
         self.assertIn("Bundle Output Protocol:", rh.stdout)
-        self.assertIn("-x/--exclude DIR", rh.stdout)
+        self.assertIn("-x, --exclude DIR", rh.stdout)
         self.assertIn("bundle <pkg>[:<name>] [k=v]", rh.stdout)
         self.assertNotIn("--agents", rh.stdout)
         rv = self._run_subprocess([str(SCRIPT), "--version"], capture_output=True, text=True, check=False)
         self._assert_ok(rv)
         ver = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
         self.assertEqual(rv.stdout.strip(), f"agents_bundle {ver}")
+
+    def test_help_width_and_column_alignment(self):
+        for flag in ("-h", "--help"):
+            with self.subTest(flag=flag):
+                r = self._run_subprocess([str(SCRIPT), flag], capture_output=True, text=True, check=False)
+                self._assert_ok(r)
+                self.assertNotIn("{", r.stdout)
+                lines = r.stdout.splitlines()
+                for line in lines:
+                    self.assertLessEqual(len(line), 100, msg=line)
+                sections = {}
+                current = None
+                for line in lines:
+                    if not line.strip():
+                        current = None
+                    elif not line.startswith(" "):
+                        current = sections.setdefault(line, {"entries": set(), "conts": set()})
+                    elif current is not None:
+                        indent = len(line) - len(line.lstrip())
+                        if indent == 2:
+                            m = re.match(r"^ {2}\S.*?\S( {2,})\S", line)
+                            self.assertIsNotNone(m, msg=line)
+                            current["entries"].add(m.end() - 1)
+                        else:
+                            current["conts"].add(indent)
+                for title in ("Usage:", "Options:", "Bundle Output Protocol:", "Environment:"):
+                    with self.subTest(section=title):
+                        self.assertIn(title, sections)
+                        self.assertEqual(len(sections[title]["entries"]), 1)
+                        self.assertLessEqual(sections[title]["conts"], sections[title]["entries"])
 
     def test_build_strips_internal_imports(self):
         spec = importlib.util.spec_from_file_location("build_mod", BUILD_PY)
