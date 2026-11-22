@@ -15,13 +15,7 @@
 - Restrict `include` paths from external bundles in `_expand_include()` (`src/bundle.py:313-360`) to files inside the repository root (`spec_dir`) so external bundles cannot read arbitrary host paths outside the workspace.
 - Target files: `src/header.py`, `src/bundle.py:167-566`, `src/rules_engine.py:412-566`, `AGENTS.md`, `README.md`, `tests/test_bundle.py:720-1070`.
 
-# ⚪ [NEW] F27: Rename project to ctx-bundle and CLI utility to cxb
-
-- Rename project/repository references from `agents_bundle` to `ctx-bundle` and CLI entrypoint from `agents_bundle` to `cxb` (applying agreed deprecation aliases/symlinks and config/env-var updates from the ecosystem rename design).
-- Target files: `build.py`, `install.sh`, `install.ps1`, `src/cli.py`, `src/header.py`, `src/bundle.py`, `src/rules_engine.py`, `src/tree.py`, `agents/agents_bundle.md`, `.agents_bundle`, `AGENTS.md`, `README.md`, `VERSION`, `tests/helpers.py`, `tests/test_*.py`, and `.github/`.
-- Acceptance criteria: `build.py` outputs `cxb`, `install.sh`/`install.ps1` install `cxb` (plus any agreed compatibility alias), `--help`/rules/docs/tests reflect `ctx-bundle` and `cxb`, and `python3 -m unittest discover -s tests` passes.
-
-# ⚪ [NEW] F15: Unify ruleset into .bundle, implement Bundle-Name producer namespaces, Python-indented if/let/export/file/cmd language, and drop Windows support
+# 🎯 [NEXT] F15: Unify ruleset into .bundle, implement Bundle-Name producer namespaces, Python-indented if/let/export/file/cmd language, and drop Windows support
 
 - Depends on: F6, F7, F10
 - Implement the unified `.bundle` language, producer namespacing, and POSIX-only cleanup per `todo_flow` `docs/adr/0003-task-targeted-bundle-architecture-and-atomic-rule-taxonomy.md`:
@@ -40,3 +34,10 @@
     - `allow <bin...>` (`F10`)
   - Drop Windows support: remove `install.ps1`, `os.name == 'nt'` / PowerShell branches in `src/rules_engine.py` and `src/bundle.py`, and `windows-latest` from `.github/workflows/ci.yml`.
 - Target files: `src/header.py`, `src/rules_engine.py`, `src/upstream.py`, `src/bundle.py`, `src/cli.py`, `agents/agents_bundle.md`, `AGENTS.md`, `README.md`, `tests/test_rules_engine.py`, `tests/test_upstream.py`, `tests/test_bundle.py`.
+
+# ⚪ [NEW] F27: Rename project to ctx-bundle and CLI utility to ctx
+
+- Depends on: F15
+- Rename project/repository references from `agents_bundle` to `ctx-bundle` and CLI entrypoint from `agents_bundle` to `ctx` (with `.ctx.bundle` as root bundle config and agreed deprecation aliases/symlinks and env-var updates from `todo_flow:D8` and ADR 0003).
+- Acceptance criteria: `build.py` outputs `ctx`, `install.sh` installs `ctx` (plus any agreed compatibility alias), `--help`/rules/docs/tests reflect `ctx-bundle` and `ctx`, and `python3 -m unittest discover -s tests` passes.
+- Target files: `build.py`, `install.sh`, `install.ps1`, `src/cli.py`, `src/header.py`, `src/bundle.py`, `src/rules_engine.py`, `src/tree.py`, `agents/agents_bundle.md`, `.agents_bundle`, `AGENTS.md`, `README.md`, `VERSION`, `tests/helpers.py`, `tests/test_*.py`, and `.github/`.
