@@ -1,6 +1,7 @@
 # .agents_bundle — root context ruleset and command bundle (run: agents_bundle | run_block)
 
 ruleset vitalio/agents-rules:default
+rule vitalio/agents-rules:collab/commits
 rule vitalio/agents-rules:release/semver
 rule vitalio/agents-rules:release/single-file-build
 rule vitalio/agents-rules:stack/cli
