@@ -1112,6 +1112,198 @@ class TestBundle(AgentsBundleTestCase):
         if os.name != "nt":
             self.assertEqual(by_name["odd:1-2.txt"], "===== $ cat odd:1-2.txt =====\nwhole")
 
+    def test_external_bundle_command_allowlist_and_static_inspection(self):
+        pkg_dir = Path(os.environ["AGENTS_BUNDLE_LOCAL_PKG_DIR"])
+        ext_bundles = pkg_dir / "bundles"
+        marker_file = self.tmp / "should_not_exist.txt"
+
+        (ext_bundles / "ext_cmd.bundle").write_text(
+            "rule vitalio/agents-rules:core/start\n"
+            "$ printf ext_cmd_ok\n",
+            encoding="utf-8",
+        )
+        (ext_bundles / "ext_pipe.bundle").write_text(
+            "$ printf 'a\\nb\\n' | head -n 1\n",
+            encoding="utf-8",
+        )
+        (ext_bundles / "ext_subshell.bundle").write_text(
+            f"var dyn=$(\x22{sys.executable}\x22 -c \x22import pathlib; pathlib.Path({str(marker_file)!r}).write_text('ran'); print('val')\x22)\n"
+            "$ forbidden_after_var\n",
+            encoding="utf-8",
+        )
+        (ext_bundles / "ext_var_only.bundle").write_text(
+            "var dyn=$(printf dyn_val)\n"
+            "prompt Dynamic: {dyn:none}\n",
+            encoding="utf-8",
+        )
+        (ext_bundles / "ext_self_allow.bundle").write_text(
+            "allow printf\n"
+            "$ printf hacked\n",
+            encoding="utf-8",
+        )
+
+        # 1. Blocked $ command in external bundle fails fast before running root commands
+        (self.tmp / ".agents_bundle").write_text(
+            f"$ \x22{sys.executable}\x22 -c \x22import pathlib; pathlib.Path({str(marker_file)!r}).write_text('root')\x22\n"
+            "bundle vitalio/agents-rules:ext_cmd\n",
+            encoding="utf-8",
+        )
+        r_blocked = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self.assertNotEqual(r_blocked.returncode, 0)
+        self.assertIn("printf ext_cmd_ok", r_blocked.stderr)
+        self.assertIn("executable 'printf'", r_blocked.stderr)
+        self.assertIn("vitalio/agents-rules:ext_cmd", r_blocked.stderr)
+        self.assertFalse(marker_file.exists())
+
+        # 2. Static inspection blocks before executing earlier var $(...) subshell in external bundle
+        (self.tmp / ".agents_bundle").write_text(
+            f"allow {sys.executable}\n"
+            "bundle vitalio/agents-rules:ext_subshell\n",
+            encoding="utf-8",
+        )
+        r_static = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self.assertNotEqual(r_static.returncode, 0)
+        self.assertIn("forbidden_after_var", r_static.stderr)
+        self.assertIn("vitalio/agents-rules:ext_subshell", r_static.stderr)
+        self.assertFalse(marker_file.exists())
+
+        # 3. Root allow directive permits external $ command and var $(...) subshell
+        (self.tmp / ".agents_bundle").write_text(
+            "allow printf\n"
+            "bundle vitalio/agents-rules:ext_cmd\n"
+            "bundle vitalio/agents-rules:ext_var_only\n",
+            encoding="utf-8",
+        )
+        r_allowed = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self._assert_ok(r_allowed)
+        self.assertIn("ext_cmd_ok", r_allowed.stdout)
+        self.assertIn("Dynamic: dyn_val", r_allowed.stdout)
+
+        # 4. Per-bundle allow=... permits commands for that bundle without leaking Allow header
+        (self.tmp / ".agents_bundle").write_text(
+            "bundle vitalio/agents-rules:ext_pipe allow=printf,head\n",
+            encoding="utf-8",
+        )
+        r_per_bundle = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self._assert_ok(r_per_bundle)
+        self.assertNotIn("Allow:", r_per_bundle.stdout)
+        self.assertIn("===== $ printf 'a\\nb\\n' | head -n 1 =====\na\n", r_per_bundle.stdout)
+
+        # Missing second binary in pipeline is blocked
+        (self.tmp / ".agents_bundle").write_text(
+            "bundle vitalio/agents-rules:ext_pipe allow=printf\n",
+            encoding="utf-8",
+        )
+        r_pipe_block = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self.assertNotEqual(r_pipe_block.returncode, 0)
+        self.assertIn("executable 'head'", r_pipe_block.stderr)
+        self.assertIn("vitalio/agents-rules:ext_pipe", r_pipe_block.stderr)
+
+        # 5. External bundle cannot declare its own allow directive
+        (self.tmp / ".agents_bundle").write_text(
+            "bundle vitalio/agents-rules:ext_self_allow\n",
+            encoding="utf-8",
+        )
+        r_self_allow = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self.assertNotEqual(r_self_allow.returncode, 0)
+        self.assertIn("'allow' directive is only permitted in root .agents_bundle", r_self_allow.stderr)
+
+        # 6. File bundle outside spec_dir is treated as external
+        outside_dir = self.tmp.parent / f"{self.tmp.name}_ext_outside"
+        outside_dir.mkdir(exist_ok=True)
+        try:
+            outside_bundle = outside_dir / "out.bundle"
+            outside_bundle.write_text("$ printf outside_ran\n", encoding="utf-8")
+            (self.tmp / ".agents_bundle").write_text(
+                f"bundle {outside_bundle.as_posix()}\n",
+                encoding="utf-8",
+            )
+            r_out_blocked = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+            self.assertNotEqual(r_out_blocked.returncode, 0)
+            self.assertIn("executable 'printf'", r_out_blocked.stderr)
+
+            (self.tmp / ".agents_bundle").write_text(
+                f"bundle {outside_bundle.as_posix()} allow=printf\n",
+                encoding="utf-8",
+            )
+            r_out_ok = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+            self._assert_ok(r_out_ok)
+            self.assertIn("outside_ran", r_out_ok.stdout)
+        finally:
+            import shutil
+            shutil.rmtree(outside_dir, ignore_errors=True)
+
+    def test_external_bundle_include_restricted_to_spec_dir(self):
+        pkg_dir = Path(os.environ["AGENTS_BUNDLE_LOCAL_PKG_DIR"])
+        ext_bundles = pkg_dir / "bundles"
+        (self.tmp / "inside.txt").write_text("inside workspace\n", encoding="utf-8")
+
+        outside_dir = self.tmp.parent / f"{self.tmp.name}_outside_files"
+        outside_dir.mkdir(exist_ok=True)
+        try:
+            outside_file = outside_dir / "secret.txt"
+            outside_file.write_text("top secret\n", encoding="utf-8")
+            rel_outside = f"../{outside_dir.name}/secret.txt"
+
+            (ext_bundles / "inc_inside.bundle").write_text(
+                "include inside.txt\n",
+                encoding="utf-8",
+            )
+            (ext_bundles / "inc_abs_out.bundle").write_text(
+                f"include {outside_file.as_posix()}\n",
+                encoding="utf-8",
+            )
+            (ext_bundles / "inc_rel_out.bundle").write_text(
+                f"include {rel_outside}:1-1\n",
+                encoding="utf-8",
+            )
+            (ext_bundles / "inc_glob_out.bundle").write_text(
+                f"include ../{outside_dir.name}/*.txt\n",
+                encoding="utf-8",
+            )
+
+            # 1. Include inside repository root succeeds
+            (self.tmp / ".agents_bundle").write_text(
+                "bundle vitalio/agents-rules:inc_inside\n",
+                encoding="utf-8",
+            )
+            r_in = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+            self._assert_ok(r_in)
+            self.assertIn("===== $ cat inside.txt =====\ninside workspace", r_in.stdout)
+
+            # 2. Absolute, parent-relative slice, and glob outside spec_dir fail fast
+            for bname in ("inc_abs_out", "inc_rel_out", "inc_glob_out"):
+                with self.subTest(bundle=bname):
+                    (self.tmp / ".agents_bundle").write_text(
+                        f"bundle vitalio/agents-rules:{bname}\n",
+                        encoding="utf-8",
+                    )
+                    r_out = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+                    self.assertNotEqual(r_out.returncode, 0)
+                    self.assertIn("resolves outside repository root", r_out.stderr)
+                    self.assertIn(f"vitalio/agents-rules:{bname}", r_out.stderr)
+                    self.assertNotIn("top secret", r_out.stdout)
+
+            # 3. Symlink inside spec_dir pointing outside spec_dir is blocked for external bundle
+            if os.name != "nt":
+                sym = self.tmp / "leak_link.txt"
+                sym.symlink_to(outside_file)
+                (ext_bundles / "inc_symlink.bundle").write_text(
+                    "include leak_link.txt\n",
+                    encoding="utf-8",
+                )
+                (self.tmp / ".agents_bundle").write_text(
+                    "bundle vitalio/agents-rules:inc_symlink\n",
+                    encoding="utf-8",
+                )
+                r_sym = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+                self.assertNotEqual(r_sym.returncode, 0)
+                self.assertIn("resolves outside repository root", r_sym.stderr)
+                self.assertNotIn("top secret", r_sym.stdout)
+        finally:
+            import shutil
+            shutil.rmtree(outside_dir, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()

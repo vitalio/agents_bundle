@@ -517,6 +517,35 @@ def _find_bundle_file_in_pkg(pkg_dir: Path, ik: str) -> Path | None:
     return None
 
 
+def _is_external_bundle_source(
+    canonical_id: str,
+    child_pkg: str | None,
+    child_bdir: Path | None,
+    root_dir: Path | None,
+    parent_is_external: bool = False,
+) -> bool:
+    if parent_is_external or child_pkg is not None or child_bdir is None or root_dir is None:
+        return True
+    try:
+        fpath = Path(canonical_id).resolve()
+        fpath.relative_to(root_dir.resolve())
+    except ValueError:
+        return True
+    try:
+        fpath.relative_to(cache_dir_path().resolve())
+        return True
+    except ValueError:
+        pass
+    local_override = os.environ.get("AGENTS_BUNDLE_LOCAL_PKG_DIR")
+    if local_override:
+        try:
+            fpath.relative_to(Path(local_override).resolve())
+            return True
+        except ValueError:
+            pass
+    return False
+
+
 def _resolve_bundle_context(
     target_spec: str,
     work_dir: Path | None = None,

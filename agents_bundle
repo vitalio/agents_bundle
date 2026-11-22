@@ -19,7 +19,7 @@ import textwrap
 import time
 from pathlib import Path
 
-VERSION = "0.17.3"
+VERSION = "0.18.0"
 REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/agents_bundle/main/agents_bundle"
 SPEC_FILE_NAME = ".agents_bundle"
@@ -56,7 +56,7 @@ HELP_SECTIONS = (
             (
                 "{prog} bundle <pkg>[:<name>] [k=v]",
                 "Render a bundle from agents/ or bundles/ without .agents_bundle (reads no stdin; "
-                "honors -C, -p, --plain, -v, --refresh)",
+                "honors -C, -p, --plain, -v, --refresh, allow=<cmd,...>)",
             ),
             (
                 "{prog} --list | -l [pkg]",
@@ -1049,6 +1049,35 @@ def _find_bundle_file_in_pkg(pkg_dir: Path, ik: str) -> Path | None:
     return None
 
 
+def _is_external_bundle_source(
+    canonical_id: str,
+    child_pkg: str | None,
+    child_bdir: Path | None,
+    root_dir: Path | None,
+    parent_is_external: bool = False,
+) -> bool:
+    if parent_is_external or child_pkg is not None or child_bdir is None or root_dir is None:
+        return True
+    try:
+        fpath = Path(canonical_id).resolve()
+        fpath.relative_to(root_dir.resolve())
+    except ValueError:
+        return True
+    try:
+        fpath.relative_to(cache_dir_path().resolve())
+        return True
+    except ValueError:
+        pass
+    local_override = os.environ.get("AGENTS_BUNDLE_LOCAL_PKG_DIR")
+    if local_override:
+        try:
+            fpath.relative_to(Path(local_override).resolve())
+            return True
+        except ValueError:
+            pass
+    return False
+
+
 def _resolve_bundle_context(
     target_spec: str,
     work_dir: Path | None = None,
@@ -1494,20 +1523,43 @@ _HEAD_SLICE_RE = re.compile(r"^===== [$] sed -n '(\d+),(\d+)p' (.+) =====\Z")
 _HEAD_CAT_RE = re.compile(r"^===== [$] cat (.+) =====\Z")
 
 
-def _expand_include(wdir: Path, spec: str) -> list[tuple[Path, int | None, int | None]]:
+def _is_within_root(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _expand_include(
+    wdir: Path,
+    spec: str,
+    root_dir: Path | None = None,
+    bundle_label: str | None = None,
+) -> list[tuple[Path, int | None, int | None]]:
     """Resolve an include item to (file, start, end) slices; empty when nothing matches.
 
     An existing file named exactly by spec is always included whole. Otherwise an
     optional :START-END (or :LINE) 1-based inclusive suffix is split off and the
     remaining path is used as a file or, when relative, as a glob pattern.
     """
+    resolved_root = root_dir.resolve() if root_dir is not None else None
 
     def to_abs(raw: str) -> Path:
         p = Path(raw)
         return p.resolve() if p.is_absolute() else (wdir / raw).resolve()
 
+    def ensure_within_root(candidate: Path) -> None:
+        if resolved_root is not None and not _is_within_root(candidate, resolved_root):
+            prog = prog_name()
+            origin = f" in external bundle {bundle_label!r}" if bundle_label else ""
+            raise SystemExit(
+                f"{prog}: include path {spec!r}{origin} resolves outside repository root {resolved_root}"
+            )
+
     whole = to_abs(spec)
     if whole.is_file():
+        ensure_within_root(whole)
         return [(whole, None, None)]
     base, start, end = spec, None, None
     m = _LINE_RANGE_RE.match(spec)
@@ -1521,16 +1573,29 @@ def _expand_include(wdir: Path, spec: str) -> list[tuple[Path, int | None, int |
         return []
     if Path(base).is_absolute() or not any(c in base for c in "*?["):
         target = to_abs(base)
+        ensure_within_root(target)
         return [(target, start, end)] if target.is_file() else []
+    if resolved_root is not None:
+        prefix_parts: list[str] = []
+        for part in Path(base).parts:
+            if any(c in part for c in "*?["):
+                break
+            prefix_parts.append(part)
+        if prefix_parts:
+            ensure_within_root(to_abs(Path(*prefix_parts).as_posix()))
+        if ".." in Path(base).parts:
+            ensure_within_root(to_abs(base))
     try:
         matches = sorted(wdir.glob(base))
     except (ValueError, NotImplementedError):
         return []
-    return [
-        (p.resolve(), start, end)
-        for p in matches
-        if p.is_file() and not _GLOB_SKIP_DIRS.intersection(p.parts[len(wdir.parts) :])
-    ]
+    results: list[tuple[Path, int | None, int | None]] = []
+    for p in matches:
+        if p.is_file() and not _GLOB_SKIP_DIRS.intersection(p.parts[len(wdir.parts) :]):
+            resolved_p = p.resolve()
+            ensure_within_root(resolved_p)
+            results.append((resolved_p, start, end))
+    return results
 
 
 def display_path(path: Path, base: Path) -> str:
@@ -1814,7 +1879,8 @@ def default_spec_template(prog: str | None = None) -> str:
         "# Directives:",
         f"#   ruleset <owner>/<repo>:<name> [-exclude ...] [key=val ...]",
         f"#   rule <owner>/<repo>:<name> [key=val ...]",
-        f"#   bundle <owner>/<repo>[:<name>] [key=val ...]",
+        f"#   bundle <owner>/<repo>[:<name>] [allow=<cmd,...>] [key=val ...]",
+        "#   allow <cmd...>  (permit external bundles to run listed executables)",
         "#   var <name>=$(<shell command>)  (or var <name>=<value>; sets variable if not already passed)",
         "#   expose <key...>  (add header names to Bundle-Expose alongside Role, Task, Title)",
         "#   include $(<shell command>)  (includes existing repository files listed by command or path)",
@@ -1884,12 +1950,193 @@ def find_spec_file(start_dir: Path | None = None) -> Path | None:
     return None
 
 
-def _eval_dynamic_expr(expr: str, work_dir: Path | None = None) -> str:
+_SHELL_WRAPPER_BINS = {"command", "builtin", "exec", "nohup", "time", "env", "nice"}
+
+
+def _parse_allow_bins(raw_args: str, source_label: str, prog: str) -> list[str]:
+    tokens = [tok for tok in re.split(r"[\s,]+", raw_args.strip()) if tok]
+    if not tokens:
+        raise SystemExit(f"{prog}: empty allow list in {source_label}")
+    bins: list[str] = []
+    for tok in tokens:
+        if not re.fullmatch(r"[A-Za-z0-9_./+-]+", tok):
+            raise SystemExit(f"{prog}: invalid command name {tok!r} in {source_label}")
+        if tok not in bins:
+            bins.append(tok)
+    return bins
+
+
+def _extract_subshells_and_segments(cmd_str: str) -> list[str]:
+    segments: list[str] = []
+    subshells: list[str] = []
+    buf: list[str] = []
+    in_single = False
+    in_double = False
+    escaped = False
+    i = 0
+    n = len(cmd_str)
+    while i < n:
+        ch = cmd_str[i]
+        if escaped:
+            buf.append(ch)
+            escaped = False
+            i += 1
+            continue
+        if ch == "\\" and not in_single:
+            escaped = True
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            buf.append(ch)
+            i += 1
+            continue
+        if not in_single and ch == "$" and i + 1 < n and cmd_str[i + 1] == "(":
+            depth = 1
+            j = i + 2
+            sub_s = False
+            sub_d = False
+            sub_esc = False
+            while j < n and depth > 0:
+                c2 = cmd_str[j]
+                if sub_esc:
+                    sub_esc = False
+                elif c2 == "\\" and not sub_s:
+                    sub_esc = True
+                elif c2 == "'" and not sub_d:
+                    sub_s = not sub_s
+                elif c2 == '"' and not sub_s:
+                    sub_d = not sub_d
+                elif not sub_s and not sub_d:
+                    if c2 == "(":
+                        depth += 1
+                    elif c2 == ")":
+                        depth -= 1
+                j += 1
+            inner = cmd_str[i + 2 : j - 1 if depth == 0 else j].strip()
+            if inner:
+                subshells.append(inner)
+            buf.append("__SUBSHELL__")
+            i = j
+            continue
+        if not in_single and ch == "`":
+            j = i + 1
+            sub_esc = False
+            while j < n:
+                c2 = cmd_str[j]
+                if sub_esc:
+                    sub_esc = False
+                elif c2 == "\\":
+                    sub_esc = True
+                elif c2 == "`":
+                    break
+                j += 1
+            inner = cmd_str[i + 1 : j].strip()
+            if inner:
+                subshells.append(inner)
+            buf.append("__SUBSHELL__")
+            i = min(n, j + 1)
+            continue
+        if not in_single and not in_double:
+            if cmd_str[i : i + 2] in ("&&", "||"):
+                seg = "".join(buf).strip()
+                if seg:
+                    segments.append(seg)
+                buf = []
+                i += 2
+                continue
+            if ch in ("|", ";", "&", "\n"):
+                seg = "".join(buf).strip()
+                if seg:
+                    segments.append(seg)
+                buf = []
+                i += 1
+                continue
+        buf.append(ch)
+        i += 1
+    tail = "".join(buf).strip()
+    if tail:
+        segments.append(tail)
+    for sub in subshells:
+        segments.extend(_extract_subshells_and_segments(sub))
+    return segments
+
+
+def _extract_command_executables(cmd_str: str) -> list[str]:
+    exes: list[str] = []
+    for raw_seg in _extract_subshells_and_segments(cmd_str):
+        seg = raw_seg.strip()
+        while seg and seg[0] in ("(", "{", "!"):
+            seg = seg[1:].strip()
+        while seg and seg[-1] in (")", "}"):
+            seg = seg[:-1].strip()
+        if not seg or seg.startswith("#"):
+            continue
+        try:
+            tokens = shlex.split(seg, posix=True)
+        except ValueError:
+            tokens = seg.split()
+        idx = 0
+        while idx < len(tokens):
+            tok = tokens[idx].lstrip("({!").rstrip(")}")
+            if not tok or tok in ("!", "(", ")", "{", "}"):
+                idx += 1
+                continue
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tok, flags=re.DOTALL):
+                idx += 1
+                continue
+            if tok != "__SUBSHELL__":
+                exes.append(tok)
+            if tok in _SHELL_WRAPPER_BINS:
+                idx += 1
+                if tok == "command" and idx < len(tokens) and tokens[idx] in ("-v", "-V"):
+                    break
+                while idx < len(tokens) and (
+                    tokens[idx].startswith("-")
+                    or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[idx], flags=re.DOTALL)
+                ):
+                    idx += 1
+                continue
+            break
+    return exes
+
+
+def _check_command_allowed(
+    cmd_str: str,
+    allowed_cmds: set[str],
+    bundle_label: str,
+    prog: str,
+) -> None:
+    exes = _extract_command_executables(cmd_str)
+    for exe in exes:
+        if exe not in allowed_cmds:
+            raise SystemExit(
+                f"{prog}: command {cmd_str!r} (executable {exe!r}) in external bundle "
+                f"{bundle_label!r} is not in allowlist (add 'allow {exe}' in {SPEC_FILE_NAME} "
+                f"or 'bundle {bundle_label} allow={exe}')"
+            )
+
+
+def _eval_dynamic_expr(
+    expr: str,
+    work_dir: Path | None = None,
+    allowed_cmds: set[str] | None = None,
+    bundle_label: str | None = None,
+    prog: str | None = None,
+) -> str:
     s = expr.strip()
     if s.startswith("$(") and s.endswith(")") and len(s) >= 3:
         cmd = s[2:-1].strip()
         if not cmd:
             return ""
+        if allowed_cmds is not None:
+            _check_command_allowed(cmd, allowed_cmds, bundle_label or SPEC_FILE_NAME, prog or prog_name())
         cwd = (work_dir if work_dir is not None else Path.cwd()).resolve()
         rc, out, _ = _run_spec_command(cmd, cwd)
         if rc != 0:
@@ -1925,6 +2172,43 @@ def _qualify_nested_target(
     return target
 
 
+def _static_inspect_bundle_commands(
+    text: str,
+    bvars: dict[str, str],
+    allowed_cmds: set[str],
+    bundle_label: str,
+    prog: str,
+) -> None:
+    for cond_expr, raw_line in strip_if_blocks_and_lines(text, prog):
+        if cond_expr and not eval_if_condition(cond_expr, bvars, prog):
+            continue
+        line = _render_rule_vars(raw_line, bvars).strip()
+        if line == "allow" or line.startswith("allow "):
+            raise SystemExit(
+                f"{prog}: 'allow' directive is only permitted in root {SPEC_FILE_NAME} "
+                f"(found in bundle {bundle_label!r}: {line!r})"
+            )
+        if line.startswith("$ ") or line.startswith("! "):
+            cmd_str = line[2:].strip()
+            if cmd_str:
+                _check_command_allowed(cmd_str, allowed_cmds, bundle_label, prog)
+        elif line.startswith("var "):
+            assign = line[len("var ") :].strip()
+            if "=" in assign:
+                _k, v_expr = assign.split("=", 1)
+                s = v_expr.strip()
+                if s.startswith("$(") and s.endswith(")") and len(s) >= 3:
+                    cmd_str = s[2:-1].strip()
+                    if cmd_str:
+                        _check_command_allowed(cmd_str, allowed_cmds, bundle_label, prog)
+        elif line.startswith("include "):
+            inc_expr = line[len("include ") :].strip()
+            if inc_expr.startswith("$(") and inc_expr.endswith(")") and len(inc_expr) >= 3:
+                cmd_str = inc_expr[2:-1].strip()
+                if cmd_str:
+                    _check_command_allowed(cmd_str, allowed_cmds, bundle_label, prog)
+
+
 def parse_spec(
     text: str,
     work_dir: Path | None = None,
@@ -1937,18 +2221,48 @@ def parse_spec(
     default_pkg: str | None = None,
     pkg_dir: Path | None = None,
     bundle_dir: Path | None = None,
+    is_external: bool = False,
+    allowed_cmds: set[str] | None = None,
+    enforce_allowlist: bool = True,
+    external_chains: dict[tuple[str, ...], tuple[str, set[str] | None]] | None = None,
 ) -> list[tuple[str, str, str | None, list[str]]]:
     prog = prog_name()
     active_vars: dict[str, str] = dict(cli_vars) if cli_vars is not None else {}
     bvars = {**builtin_vars(work_dir, piped=piped), **active_vars}
     cur_chain = list(chain) if chain else []
     cur_bdir = bundle_dir if bundle_dir is not None else work_dir
+    in_child_bundle = bool(cur_chain and cur_chain != [SPEC_FILE_NAME])
+    bundle_label = cur_chain[-1] if in_child_bundle else SPEC_FILE_NAME
+    cur_allowed: set[str] = set(allowed_cmds) if allowed_cmds is not None else set()
+    if not in_child_bundle:
+        for cond_expr, raw_line in strip_if_blocks_and_lines(text, prog):
+            if cond_expr and not eval_if_condition(cond_expr, bvars, prog):
+                continue
+            line = _render_rule_vars(raw_line, bvars).strip()
+            if line.startswith("allow "):
+                cur_allowed.update(_parse_allow_bins(line[len("allow ") :], SPEC_FILE_NAME, prog))
+    elif is_external and enforce_allowlist:
+        _static_inspect_bundle_commands(text, bvars, cur_allowed, bundle_label, prog)
+
+    effective_allow_set: set[str] | None = cur_allowed if (is_external and enforce_allowlist) else None
+    if is_external and external_chains is not None:
+        external_chains[tuple(cur_chain)] = (bundle_label, set(cur_allowed) if effective_allow_set is not None else None)
+
     entries: list[tuple[str, str, str | None, list[str]]] = []
     for cond_expr, raw_line in strip_if_blocks_and_lines(text, prog):
         if cond_expr and not eval_if_condition(cond_expr, bvars, prog):
             continue
         line = _render_rule_vars(raw_line, bvars).strip()
-        if line.startswith("var "):
+        if line == "allow" or line.startswith("allow "):
+            if in_child_bundle:
+                raise SystemExit(
+                    f"{prog}: 'allow' directive is only permitted in root {SPEC_FILE_NAME} "
+                    f"(found in bundle {bundle_label!r}: {line!r})"
+                )
+            if line == "allow":
+                raise SystemExit(f"{prog}: empty allow list in {SPEC_FILE_NAME}")
+            cur_allowed.update(_parse_allow_bins(line[len("allow ") :], SPEC_FILE_NAME, prog))
+        elif line.startswith("var "):
             assign = line[len("var ") :].strip()
             if "=" not in assign:
                 raise SystemExit(f"{prog}: invalid var directive in {SPEC_FILE_NAME}: {line!r} (expected 'var key=val')")
@@ -1957,7 +2271,13 @@ def parse_spec(
             if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k_clean):
                 raise SystemExit(f"{prog}: invalid variable name {k_clean!r} in {line!r}")
             if not active_vars.get(k_clean):
-                val = _eval_dynamic_expr(v_expr, work_dir=work_dir)
+                val = _eval_dynamic_expr(
+                    v_expr,
+                    work_dir=work_dir,
+                    allowed_cmds=effective_allow_set,
+                    bundle_label=bundle_label,
+                    prog=prog,
+                )
                 if val:
                     active_vars[k_clean] = val
                     bvars[k_clean] = val
@@ -1966,16 +2286,26 @@ def parse_spec(
         elif line.startswith("include "):
             inc_expr = line[len("include ") :].strip()
             if inc_expr:
-                resolved_inc = _eval_dynamic_expr(inc_expr, work_dir=work_dir)
+                resolved_inc = _eval_dynamic_expr(
+                    inc_expr,
+                    work_dir=work_dir,
+                    allowed_cmds=effective_allow_set,
+                    bundle_label=bundle_label,
+                    prog=prog,
+                )
                 for item in resolved_inc.splitlines():
                     clean_item = item.strip()
                     if clean_item:
+                        if is_external and work_dir is not None:
+                            _expand_include(work_dir, clean_item, root_dir=work_dir, bundle_label=bundle_label)
                         entries.append(("include", clean_item, cond_expr, list(cur_chain)))
         elif line == "include":
             continue
         elif line.startswith("$ ") or line.startswith("! "):
             cmd_str = line[2:].strip()
             if cmd_str:
+                if effective_allow_set is not None:
+                    _check_command_allowed(cmd_str, effective_allow_set, bundle_label, prog)
                 entries.append(("cmd", cmd_str, cond_expr, list(cur_chain)))
         elif line in ("$", "!"):
             continue
@@ -1992,6 +2322,22 @@ def parse_spec(
             target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
             if excls:
                 raise SystemExit(f"{prog}: bundle directive does not support excludes: {line!r}")
+            bundle_allow_raw = vmap.pop("allow", None)
+            child_allowed = set(cur_allowed)
+            child_enforce = enforce_allowlist
+            if bundle_allow_raw is not None:
+                parsed_bins = set(_parse_allow_bins(bundle_allow_raw, f"bundle {target}", prog))
+                if is_external and enforce_allowlist:
+                    disallowed = sorted(parsed_bins - cur_allowed)
+                    if disallowed:
+                        raise SystemExit(
+                            f"{prog}: external bundle {bundle_label!r} cannot grant allow={','.join(disallowed)!r} "
+                            f"to child bundle {target!r}"
+                        )
+                    child_allowed = cur_allowed & parsed_bins
+                else:
+                    child_allowed.update(parsed_bins)
+                    child_enforce = True
             lookup_target = target
             if _is_local_path_spec(target) and not Path(target).expanduser().is_absolute():
                 if default_pkg is not None and pkg_dir is not None and cur_bdir is not None:
@@ -2011,6 +2357,13 @@ def parse_spec(
             if any(cid == canonical_bundle for cid, _ in cur_active):
                 cycle_path = " -> ".join([*(lbl for _, lbl in cur_active), target])
                 raise SystemExit(f"{prog}: circular bundle reference detected: {cycle_path}")
+            child_is_external = _is_external_bundle_source(
+                canonical_bundle,
+                child_pkg,
+                child_bdir,
+                work_dir,
+                parent_is_external=is_external,
+            )
             merged_cli = {**active_vars, **vmap}
             sub_resolved: dict[str, str] = {}
             child_chain = [*cur_chain, target]
@@ -2026,6 +2379,10 @@ def parse_spec(
                 default_pkg=child_pkg,
                 pkg_dir=child_pkg_dir,
                 bundle_dir=child_bdir,
+                is_external=child_is_external,
+                allowed_cmds=child_allowed,
+                enforce_allowlist=child_enforce,
+                external_chains=external_chains,
             ):
                 comb_cond = " ".join(c for c in (cond_expr, sub_cond) if c) or None
                 entries.append((sub_kind, sub_val, comb_cond, sub_chain))
@@ -2049,7 +2406,7 @@ def parse_spec(
             continue
         else:
             raise SystemExit(
-                f"{prog}: invalid line in {SPEC_FILE_NAME}: {line!r} (expected 'ruleset ...', 'rule ...', 'bundle ...', 'var ...', 'expose ...', 'include ...', 'prompt ...', '[if ...]', or '$ <command>')"
+                f"{prog}: invalid line in {SPEC_FILE_NAME}: {line!r} (expected 'ruleset ...', 'rule ...', 'bundle ...', 'allow ...', 'var ...', 'expose ...', 'include ...', 'prompt ...', '[if ...]', or '$ <command>')"
             )
     return entries
 
@@ -2134,6 +2491,12 @@ def build_bundle(
         spec_source = spec_text or ""
         root_bundles = []
     effective_cli_vars: dict[str, str] = dict(cli_vars or {})
+    cli_allow_raw = effective_cli_vars.pop("allow", None) if spec_file is None else None
+    init_allowed: set[str] | None = (
+        set(_parse_allow_bins(cli_allow_raw, "allow", prog)) if cli_allow_raw is not None else None
+    )
+    enforce_allowlist = spec_file is not None or cli_allow_raw is not None
+    external_chains: dict[tuple[str, ...], tuple[str, set[str] | None]] = {}
     resolved_vars: dict[str, str] = {}
     entries = parse_spec(
         spec_source,
@@ -2144,6 +2507,9 @@ def build_bundle(
         piped=piped,
         chain=[SPEC_FILE_NAME] if spec_file is not None else None,
         active_bundles=root_bundles,
+        allowed_cmds=init_allowed,
+        enforce_allowlist=enforce_allowlist,
+        external_chains=external_chains,
     )
     effective_cli_vars.update(resolved_vars)
     boundary = secrets.token_hex(16)
@@ -2247,6 +2613,11 @@ def build_bundle(
             records.append(dict(up_meta))
 
     for cmd_val, cmd_chain in pending_cmds:
+        ext_policy = external_chains.get(tuple(cmd_chain))
+        if ext_policy is not None and ext_policy[1] is not None:
+            _check_command_allowed(cmd_val, ext_policy[1], ext_policy[0], prog)
+
+    for cmd_val, cmd_chain in pending_cmds:
         rc, out, elapsed_ms = _run_spec_command(cmd_val, spec_dir)
         if rc != 0:
             warnings.append(f"command exited {rc}: {cmd_val}")
@@ -2270,7 +2641,13 @@ def build_bundle(
         clean = raw_file.strip()
         if not clean:
             continue
-        slices = _expand_include(wdir, clean)
+        ext_policy = external_chains.get(tuple(inc_chain))
+        slices = _expand_include(
+            wdir,
+            clean,
+            root_dir=spec_dir if ext_policy is not None else None,
+            bundle_label=ext_policy[0] if ext_policy is not None else None,
+        )
         if not slices:
             if warn_missing:
                 warnings.append(f"missing file: {clean}")

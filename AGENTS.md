@@ -26,15 +26,18 @@ rules are loaded via `.agents_bundle`.
   explicit `@<ref>` refs into the package cache even when
   `AGENTS_BUNDLE_LOCAL_PKG_DIR` is set; and evaluates `[if ...]` conditions
   against `os`, `vcs`, and CLI `key=val` overrides.
-- `src/includes.py` — include item expansion (globs, `path:start-end`) and
-  range-aware span deduplication shared by upstream, `.agents_bundle`, and CLI
-  includes.
+- `src/includes.py` — include item expansion (globs, `path:start-end`),
+  repository-root boundary enforcement (`root_dir`) for external bundle includes,
+  and range-aware span deduplication shared by upstream, `.agents_bundle`, and
+  CLI includes.
 - `src/upstream.py` — parses piped stdin (preamble headers, upstream fragments by
   `Bundle-Boundary`) into `PipedInput`.
 - `src/bundle.py` — parses `.agents_bundle` (`ruleset`, `rule`, `bundle`,
-  `expose`, `prompt`, `[if ...]`, and `$` directives), resolves `work_dir` from
-  `-C/--dir` or a piped `Workdir:` preamble, handles `--plain` and
-  `AGENTS_BUNDLE_PLAIN`, emits `Workdir: <path>` in the bundle header, and
+  `allow`, `var`, `expose`, `include`, `prompt`, `[if ...]`, and `$` directives),
+  enforces the external bundle command allowlist (`allow <cmd...>` and
+  `bundle <pkg> allow=<cmd,...>`) before running shell commands, resolves
+  `work_dir` from `-C/--dir` or a piped `Workdir:` preamble, handles `--plain`
+  and `AGENTS_BUNDLE_PLAIN`, emits `Workdir: <path>` in the bundle header, and
   assembles the context bundle to `stdout`; `build_bundle(spec_text=...)` renders
   a synthetic `bundle <target>` spec for the `bundle` CLI subcommand.
 - `agents/agents_bundle.md` — embedded agent rule (chain `agents_bundle`).

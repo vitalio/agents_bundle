@@ -4,8 +4,8 @@
 
 `agents_bundle` executes `.agents_bundle` in the target working directory
 (`-C`/`--dir`, a piped `Workdir:` preamble on `stdin`, or the current directory),
-runs `ruleset ...`, `rule ...`, `bundle ...`, `expose ...`, `prompt ...`,
-`[if ...]`, and `$ <cmd>` directives, includes any extra files and
+runs `ruleset ...`, `rule ...`, `bundle ...`, `allow ...`, `var ...`,
+`expose ...`, `include ...`, `prompt ...`, `[if ...]`, and `$ <cmd>` directives, includes any extra files and
 `-p/--prompt` text, emits `Bundle-Command`, `Bundle-Boundary`, `Bundle-Expose`
 (default: `Role, Task, Title`, extensible via `expose` or
 `AGENTS_BUNDLE_EXPOSE`), and `Workdir: <path>` in the bundle header (or plain
@@ -126,17 +126,24 @@ lines and `#` comments are ignored:
   `agents/` directory (with fallback to legacy `rules/`, `rulesets/`, and
   `src/`), an explicit package-relative path, a local relative path (`./...`,
   `../...`), or a URL.
-- `bundle <owner>/<repo>[@<ref>][:<name|path>] [k=v ...]` (or a local path
-  `./...`, `../...`) includes another bundle from `agents/` (`<repo>.bundle` or
-  `default.bundle` for `<owner>/<repo>`, `<domain>.bundle`,
+- `bundle <owner>/<repo>[@<ref>][:<name|path>] [allow=<cmd,...>] [k=v ...]` (or a
+  local path `./...`, `../...`) includes another bundle from `agents/`
+  (`<repo>.bundle` or `default.bundle` for `<owner>/<repo>`, `<domain>.bundle`,
   `<domain>/<domain>.bundle`, or `<domain>/default.bundle` for `:<domain>`,
   with fallback to legacy `bundles/` and `src/bundles/`, or an explicit
-  package-relative path); circular references fail fast.
+  package-relative path); circular references fail fast. Pass `allow=<cmd,...>`
+  to permit an external bundle to run specific executables.
+- `allow <cmd1> <cmd2> ...` (root `.agents_bundle` only) permits external
+  bundles to run the listed executables in `$ <cmd>`, `var <name>=$(<cmd>)`, and
+  `include $(<cmd>)`. All commands from external bundles are inspected statically
+  before any shell command runs; unlisted executables fail fast naming the
+  blocked command and originating bundle.
 - `var <name>=$(<cmd>)` or `var <name>=<value>` sets a variable that CLI
   `k=v` and `AGENTS_BUNDLE_VARS` override.
 - `expose <key...>` adds header names to `Bundle-Expose`.
 - `include <path>` or `include $(<cmd>)` adds repository files, globs,
-  and `path:START-END` slices.
+  and `path:START-END` slices (external bundles are restricted to files within
+  the repository root).
 - `prompt <text>` appends text to the Prompt section.
 - `$ <cmd>` runs a command and includes its output.
 - `[if key=val] <line>` guards a line; multi-line `[if ...]` ...

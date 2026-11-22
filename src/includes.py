@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from src.core import prog_name
+
 
 _LINE_RANGE_RE = re.compile(r"^(.*?):(\d+)(?:-(\d+))?$")
 _GLOB_SKIP_DIRS = {".git", "__pycache__"}
@@ -10,20 +12,43 @@ _HEAD_SLICE_RE = re.compile(r"^===== [$] sed -n '(\d+),(\d+)p' (.+) =====\Z")
 _HEAD_CAT_RE = re.compile(r"^===== [$] cat (.+) =====\Z")
 
 
-def _expand_include(wdir: Path, spec: str) -> list[tuple[Path, int | None, int | None]]:
+def _is_within_root(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _expand_include(
+    wdir: Path,
+    spec: str,
+    root_dir: Path | None = None,
+    bundle_label: str | None = None,
+) -> list[tuple[Path, int | None, int | None]]:
     """Resolve an include item to (file, start, end) slices; empty when nothing matches.
 
     An existing file named exactly by spec is always included whole. Otherwise an
     optional :START-END (or :LINE) 1-based inclusive suffix is split off and the
     remaining path is used as a file or, when relative, as a glob pattern.
     """
+    resolved_root = root_dir.resolve() if root_dir is not None else None
 
     def to_abs(raw: str) -> Path:
         p = Path(raw)
         return p.resolve() if p.is_absolute() else (wdir / raw).resolve()
 
+    def ensure_within_root(candidate: Path) -> None:
+        if resolved_root is not None and not _is_within_root(candidate, resolved_root):
+            prog = prog_name()
+            origin = f" in external bundle {bundle_label!r}" if bundle_label else ""
+            raise SystemExit(
+                f"{prog}: include path {spec!r}{origin} resolves outside repository root {resolved_root}"
+            )
+
     whole = to_abs(spec)
     if whole.is_file():
+        ensure_within_root(whole)
         return [(whole, None, None)]
     base, start, end = spec, None, None
     m = _LINE_RANGE_RE.match(spec)
@@ -37,16 +62,29 @@ def _expand_include(wdir: Path, spec: str) -> list[tuple[Path, int | None, int |
         return []
     if Path(base).is_absolute() or not any(c in base for c in "*?["):
         target = to_abs(base)
+        ensure_within_root(target)
         return [(target, start, end)] if target.is_file() else []
+    if resolved_root is not None:
+        prefix_parts: list[str] = []
+        for part in Path(base).parts:
+            if any(c in part for c in "*?["):
+                break
+            prefix_parts.append(part)
+        if prefix_parts:
+            ensure_within_root(to_abs(Path(*prefix_parts).as_posix()))
+        if ".." in Path(base).parts:
+            ensure_within_root(to_abs(base))
     try:
         matches = sorted(wdir.glob(base))
     except (ValueError, NotImplementedError):
         return []
-    return [
-        (p.resolve(), start, end)
-        for p in matches
-        if p.is_file() and not _GLOB_SKIP_DIRS.intersection(p.parts[len(wdir.parts) :])
-    ]
+    results: list[tuple[Path, int | None, int | None]] = []
+    for p in matches:
+        if p.is_file() and not _GLOB_SKIP_DIRS.intersection(p.parts[len(wdir.parts) :]):
+            resolved_p = p.resolve()
+            ensure_within_root(resolved_p)
+            results.append((resolved_p, start, end))
+    return results
 
 
 def display_path(path: Path, base: Path) -> str:

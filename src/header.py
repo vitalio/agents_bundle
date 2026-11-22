@@ -56,7 +56,7 @@ HELP_SECTIONS = (
             (
                 "{prog} bundle <pkg>[:<name>] [k=v]",
                 "Render a bundle from agents/ or bundles/ without .agents_bundle (reads no stdin; "
-                "honors -C, -p, --plain, -v, --refresh)",
+                "honors -C, -p, --plain, -v, --refresh, allow=<cmd,...>)",
             ),
             (
                 "{prog} --list | -l [pkg]",
