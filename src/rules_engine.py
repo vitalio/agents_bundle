@@ -9,11 +9,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from src.header import DEFAULT_RULES_PKG, VERSION
+from src.header import DEFAULT_RULES_PKG, VAR_NAME_PATTERN, VERSION
 from src.core import cache_dir_path, prog_name
 
 
-RULE_VAR_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*):([^{}]*)\}")
+VAR_NAME_RE = re.compile(VAR_NAME_PATTERN)
+RULE_VAR_RE = re.compile(rf"\{{({VAR_NAME_PATTERN}):([^{{}}]*)\}}")
 IF_PREFIX_RE = re.compile(r"^\[if\s+([^\]]+)\]\s*(.*)$")
 
 
@@ -22,8 +23,6 @@ def _render_rule_vars(text: str, vars_map: dict[str, str]) -> str:
 
 
 def _detect_os_name() -> str:
-    if os.name == "nt":
-        return "windows"
     if sys.platform == "darwin":
         return "macos"
     return "linux"
@@ -66,67 +65,216 @@ def env_vars(prog: str | None = None) -> dict[str, str]:
             raise SystemExit(f"{p}: invalid entry {tok!r} in AGENTS_BUNDLE_VARS (expected key=val)")
         k, v = tok.split("=", 1)
         k_clean = k.strip()
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k_clean):
+        if not VAR_NAME_RE.fullmatch(k_clean):
             raise SystemExit(f"{p}: invalid variable name {k_clean!r} in AGENTS_BUNDLE_VARS")
         out[k_clean] = v.strip()
     return out
 
 
-def eval_if_condition(cond_expr: str, vars_map: dict[str, str], prog: str | None = None) -> bool:
-    p = prog or prog_name()
-    tokens = shlex.split(cond_expr.strip())
+def _validate_if_condition_tokens(cond_expr: str, prog: str) -> list[tuple[str, str, set[str]]]:
+    s = cond_expr.strip()
+    if s.endswith(":"):
+        raise SystemExit(f"{prog}: trailing ':' is not allowed in condition {cond_expr!r}")
+    try:
+        tokens = shlex.split(s)
+    except ValueError as exc:
+        raise SystemExit(f"{prog}: invalid condition {cond_expr!r}: {exc}")
     if not tokens:
-        raise SystemExit(f"{p}: empty [if ...] condition")
+        raise SystemExit(f"{prog}: empty if condition")
+    parsed: list[tuple[str, str, set[str]]] = []
     for tok in tokens:
         if "!=" in tok:
             k, expected = tok.split("!=", 1)
-            k = k.strip()
-            allowed = {v.strip() for v in expected.split(",")}
-            actual = vars_map.get(k, "")
-            if actual in allowed:
-                return False
+            op = "!="
         elif "=" in tok:
             k, expected = tok.split("=", 1)
-            k = k.strip()
-            allowed = {v.strip() for v in expected.split(",")}
-            actual = vars_map.get(k, "")
-            if actual not in allowed:
+            op = "="
+        else:
+            raise SystemExit(
+                f"{prog}: invalid condition token {tok!r} in 'if {cond_expr}' (expected key=val or key!=val)"
+            )
+        k_clean = k.strip()
+        if not VAR_NAME_RE.fullmatch(k_clean):
+            raise SystemExit(f"{prog}: invalid variable name {k_clean!r} in condition {cond_expr!r}")
+        allowed = {v.strip() for v in expected.split(",")}
+        parsed.append((op, k_clean, allowed))
+    return parsed
+
+
+def eval_if_condition(cond_expr: str, vars_map: dict[str, str], prog: str | None = None) -> bool:
+    p = prog or prog_name()
+    for op, k, allowed in _validate_if_condition_tokens(cond_expr, p):
+        actual = vars_map.get(k, "")
+        if op == "!=":
+            if actual in allowed:
                 return False
         else:
-            raise SystemExit(f"{p}: invalid condition token {tok!r} in '[if {cond_expr}]' (expected key=val or key!=val)")
+            if actual not in allowed:
+                return False
     return True
 
 
-def strip_if_blocks_and_lines(raw_text: str, prog: str | None = None) -> list[tuple[str | None, str]]:
-    """Parses raw lines supporting '[if cond] <line>' and '[if cond] ... [/if]' blocks.
-    Returns list of (cond_expr_or_None, inner_line).
-    """
-    p = prog or prog_name()
-    out: list[tuple[str | None, str]] = []
-    block_stack: list[str] = []
+def _expand_legacy_if_lines(raw_text: str, prog: str) -> list[tuple[int, str]]:
+    """Pre-process legacy '[if cond] ... [/if]' and '[if cond] <line>' into indented 'if cond' lines."""
+    lines_out: list[tuple[int, str]] = []
+    legacy_stack: list[tuple[str, int]] = []
     for raw_line in raw_text.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
             continue
-        if line.lower() in ("[/if]", "[endif]"):
-            if not block_stack:
-                raise SystemExit(f"{p}: unexpected {line!r} without matching '[if ...]'")
-            block_stack.pop()
+        leading = raw_line[: len(raw_line) - len(raw_line.lstrip())]
+        if "\t" in leading:
+            raise SystemExit(f"{prog}: tabs are not allowed in indentation: {raw_line!r}")
+        raw_indent = len(leading)
+        if not legacy_stack and raw_indent % 4 != 0:
+            raise SystemExit(f"{prog}: indentation must be a multiple of 4 spaces: {raw_line!r}")
+        if stripped.lower() in ("[/if]", "[endif]"):
+            if not legacy_stack:
+                raise SystemExit(f"{prog}: unexpected {stripped!r} without matching '[if ...]'")
+            legacy_stack.pop()
             continue
-        m = IF_PREFIX_RE.match(line)
+        if stripped.lower() == "endif":
+            raise SystemExit(f"{prog}: 'endif' is not supported; use 4-space indented blocks: {raw_line!r}")
+        base_indent = len(legacy_stack) * 4 if legacy_stack else raw_indent
+        m = IF_PREFIX_RE.match(stripped)
         if m:
             cond_s = m.group(1).strip()
+            _validate_if_condition_tokens(cond_s, prog)
             rest = m.group(2).strip()
             if not rest:
-                block_stack.append(cond_s)
+                lines_out.append((base_indent, f"if {cond_s}"))
+                legacy_stack.append((cond_s, raw_indent))
                 continue
-            combined = " ".join([*block_stack, cond_s])
-            out.append((combined, rest))
+            cur_indent = base_indent
+            cur_rest = stripped
+            while True:
+                m_inner = IF_PREFIX_RE.match(cur_rest)
+                if not m_inner:
+                    break
+                c_inner = m_inner.group(1).strip()
+                _validate_if_condition_tokens(c_inner, prog)
+                r_inner = m_inner.group(2).strip()
+                if not r_inner:
+                    raise SystemExit(f"{prog}: empty inline '[if {c_inner}]' directive")
+                lines_out.append((cur_indent, f"if {c_inner}"))
+                cur_indent += 4
+                cur_rest = r_inner
+            lines_out.append((cur_indent, cur_rest))
             continue
-        combined = " ".join(block_stack) if block_stack else None
-        out.append((combined, line))
-    if block_stack:
-        raise SystemExit(f"{p}: unclosed '[if {block_stack[-1]}]' block (missing '[/if]')")
+        lines_out.append((base_indent, stripped))
+    if legacy_stack:
+        raise SystemExit(f"{prog}: unclosed '[if {legacy_stack[-1][0]}]' block (missing '[/if]')")
+    return lines_out
+
+
+def _match_cond_header(text: str, prog: str) -> tuple[str, str | None] | None:
+    if text == "if" or text.startswith("if ") or text.startswith("if:"):
+        cond = text[2:].strip()
+        if not cond or cond == ":":
+            raise SystemExit(f"{prog}: empty if condition")
+        _validate_if_condition_tokens(cond, prog)
+        return "if", cond
+    if text in ("else if", "elif") or text.startswith("else if ") or text.startswith("elif "):
+        kw = "else if" if text.startswith("else if") else "elif"
+        cond = text[len(kw) :].strip()
+        if not cond or cond == ":":
+            raise SystemExit(f"{prog}: empty {kw} condition")
+        _validate_if_condition_tokens(cond, prog)
+        return "elif", cond
+    if text == "else" or text.startswith("else ") or text == "else:":
+        if text == "else:":
+            raise SystemExit(f"{prog}: trailing ':' is not allowed in 'else'")
+        rest = text[4:].strip()
+        if rest:
+            raise SystemExit(f"{prog}: unexpected text after 'else': {text!r}")
+        return "else", None
+    return None
+
+
+def parse_bundle_ast(raw_text: str, prog: str | None = None) -> list[tuple[str, object]]:
+    """Parse bundle text into an AST of ('line', text) and ('if_chain', branches).
+
+    Each branch in 'if_chain' is (cond_expr_or_None, trace_cond_str, body_ast).
+    """
+    p = prog or prog_name()
+    lines = _expand_legacy_if_lines(raw_text, p)
+    n = len(lines)
+
+    def parse_block(start_idx: int, expected_indent: int) -> tuple[list[tuple[str, object]], int]:
+        stmts: list[tuple[str, object]] = []
+        idx = start_idx
+        while idx < n:
+            indent, text = lines[idx]
+            if indent < expected_indent:
+                break
+            if indent > expected_indent:
+                raise SystemExit(f"{p}: unexpected indentation at {text!r}")
+            hdr = _match_cond_header(text, p)
+            if hdr is None:
+                stmts.append(("line", text))
+                idx += 1
+                continue
+            kw, cond = hdr
+            if kw in ("elif", "else"):
+                raise SystemExit(f"{p}: unexpected {kw!r} without matching 'if': {text!r}")
+            assert cond is not None
+            branches: list[tuple[str | None, str, list[tuple[str, object]]]] = []
+            idx += 1
+            if idx >= n or lines[idx][0] <= expected_indent:
+                raise SystemExit(f"{p}: expected 4-space indented block after 'if {cond}'")
+            if lines[idx][0] != expected_indent + 4:
+                raise SystemExit(f"{p}: expected 4-space indented block after 'if {cond}' (got {lines[idx][0] - expected_indent} spaces)")
+            body, idx = parse_block(idx, expected_indent + 4)
+            if not body:
+                raise SystemExit(f"{p}: empty 'if {cond}' block")
+            branches.append((cond, cond, body))
+            seen_else = False
+            while idx < n and lines[idx][0] == expected_indent:
+                next_hdr = _match_cond_header(lines[idx][1], p)
+                if next_hdr is None or next_hdr[0] == "if":
+                    break
+                n_kw, n_cond = next_hdr
+                if seen_else:
+                    raise SystemExit(f"{p}: unexpected {n_kw!r} after 'else': {lines[idx][1]!r}")
+                hdr_label = lines[idx][1]
+                idx += 1
+                if idx >= n or lines[idx][0] <= expected_indent:
+                    raise SystemExit(f"{p}: expected 4-space indented block after {hdr_label!r}")
+                if lines[idx][0] != expected_indent + 4:
+                    raise SystemExit(f"{p}: expected 4-space indented block after {hdr_label!r}")
+                b_body, idx = parse_block(idx, expected_indent + 4)
+                if not b_body:
+                    raise SystemExit(f"{p}: empty {hdr_label!r} block")
+                if n_kw == "else":
+                    seen_else = True
+                    branches.append((None, "else", b_body))
+                else:
+                    assert n_cond is not None
+                    branches.append((n_cond, n_cond, b_body))
+            stmts.append(("if_chain", branches))
+        return stmts, idx
+
+    ast_root, end_idx = parse_block(0, 0)
+    if end_idx < n:
+        raise SystemExit(f"{p}: unexpected indentation at {lines[end_idx][1]!r}")
+    return ast_root
+
+
+def strip_if_blocks_and_lines(raw_text: str, prog: str | None = None) -> list[tuple[str | None, str]]:
+    """Flatten bundle AST into (cond_expr_or_None, inner_line) pairs."""
+    p = prog or prog_name()
+    out: list[tuple[str | None, str]] = []
+
+    def walk(nodes: list[tuple[str, object]], stack: list[str]) -> None:
+        for kind, payload in nodes:
+            if kind == "line":
+                comb = " ".join(c for c in stack if c and c != "else") or None
+                out.append((comb, str(payload)))
+            elif kind == "if_chain":
+                for _cond, trace_c, body in payload:  # type: ignore[misc]
+                    walk(body, [*stack, trace_c])
+
+    walk(parse_bundle_ast(raw_text, p), [])
     return out
 
 
@@ -146,65 +294,55 @@ def _parse_md_text(raw_text: str, fallback_desc: str) -> tuple[str, str]:
         if not in_fence and re.match(r"^#(?!#)", s):
             continue
         body_lines.append(line)
-    return desc, "\n".join(body_lines).strip()
+    return desc, "\n".join(body_lines).strip("\r\n")
+
+
+def _parse_rule_directive_tokens(tokens: list[str], prog: str) -> tuple[list[str], dict[str, str]]:
+    if not tokens:
+        raise SystemExit(f"{prog}: missing target in rule directive")
+    targets: list[str] = []
+    vars_map: dict[str, str] = {}
+    seen_var = False
+    for tok in tokens:
+        s = tok.strip()
+        if not s:
+            continue
+        if s.startswith("-"):
+            raise SystemExit(f"{prog}: excludes are not supported: {s!r}")
+        if "=" in s:
+            seen_var = True
+            k, v = s.split("=", 1)
+            k_clean = k.strip()
+            if not VAR_NAME_RE.fullmatch(k_clean):
+                raise SystemExit(f"{prog}: invalid variable name {k_clean!r} in {s!r}")
+            vars_map[k_clean] = v.strip()
+        elif not seen_var:
+            targets.append(s)
+        else:
+            raise SystemExit(f"{prog}: unexpected argument {s!r} after key=val in rule directive")
+    if not targets:
+        raise SystemExit(f"{prog}: missing target in rule directive")
+    return targets, vars_map
 
 
 def _parse_directive_tokens(tokens: list[str], prog: str) -> tuple[str, list[str], dict[str, str]]:
     if not tokens:
-        raise SystemExit(f"{prog}: missing target in ruleset/rule/bundle directive")
-    target = tokens[0].strip()
-    excludes: list[str] = []
-    vars_map: dict[str, str] = {}
-    for tok in tokens[1:]:
-        s = tok.strip()
-        if not s:
-            continue
-        if "=" in s and not s.startswith("-"):
-            k, v = s.split("=", 1)
-            k_clean = k.strip()
-            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k_clean):
-                raise SystemExit(f"{prog}: invalid variable name {k_clean!r} in {s!r}")
-            vars_map[k_clean] = v.strip()
-        elif s.startswith("-") and len(s) > 1:
-            excludes.append(s[1:].strip())
-        else:
-            raise SystemExit(f"{prog}: unexpected argument {s!r} after target {target!r}")
-    return target, excludes, vars_map
-
-
-def _parse_ruleset_file(
-    raw_text: str,
-    fallback_desc: str,
-) -> tuple[str, list[tuple[str | None, str, str, list[str], dict[str, str]]]]:
-    prog = prog_name()
-    desc = fallback_desc
-    for raw_line in raw_text.splitlines():
-        s = raw_line.strip()
-        if s.startswith("# Description:"):
-            desc = s.split(":", 1)[1].strip()
-            break
-    directives: list[tuple[str | None, str, str, list[str], dict[str, str]]] = []
-    for cond_expr, line in strip_if_blocks_and_lines(raw_text, prog):
-        parts = shlex.split(line)
-        if not parts or parts[0] not in ("ruleset", "rule"):
-            raise SystemExit(
-                f"{prog}: invalid line in ruleset {fallback_desc!r}: {line!r} (expected 'ruleset ...' or 'rule ...')"
-            )
-        kind = parts[0]
-        target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
-        directives.append((cond_expr, kind, target, excls, vmap))
-    return desc, directives
+        raise SystemExit(f"{prog}: missing target in bundle/rule directive")
+    targets, vars_map = _parse_rule_directive_tokens(tokens, prog)
+    if len(targets) > 1:
+        raise SystemExit(f"{prog}: unexpected argument {targets[1]!r} after target {targets[0]!r}")
+    return targets[0], [], vars_map
 
 
 def _load_package_from_dir(
     pkg_dir: Path,
 ) -> tuple[
     dict[str, tuple[str, str]],
-    dict[str, tuple[str, list[tuple[str | None, str, str, list[str], dict[str, str]]]]],
+    dict[str, tuple[str, str]],
     dict[str, tuple[str, str]],
 ]:
     rules: dict[str, tuple[str, str]] = {}
-    rulesets: dict[str, tuple[str, list[tuple[str | None, str, str, list[str], dict[str, str]]]]] = {}
+    rulesets: dict[str, tuple[str, str]] = {}
     bundles: dict[str, tuple[str, str]] = {}
     r_root = pkg_dir / "rules" if (pkg_dir / "rules").is_dir() else (pkg_dir / "src/rules")
     p_root = pkg_dir / "rulesets" if (pkg_dir / "rulesets").is_dir() else (pkg_dir / "src/rulesets")
@@ -221,7 +359,9 @@ def _load_package_from_dir(
             for p in sorted(root.rglob("*.ruleset")):
                 if p.is_file():
                     rel = p.relative_to(root).with_suffix("").as_posix().lower()
-                    rulesets[rel] = _parse_ruleset_file(p.read_text(encoding="utf-8", errors="replace"), rel)
+                    parsed = _parse_md_text(p.read_text(encoding="utf-8", errors="replace"), rel)
+                    rulesets[rel] = parsed
+                    bundles[rel] = parsed
     for root in (i_root, a_root):
         if root.is_dir():
             for p in sorted(root.rglob("*.bundle")):
@@ -327,7 +467,7 @@ def _get_package_catalog(
     work_dir: Path | None = None,
 ) -> tuple[
     dict[str, tuple[str, str]],
-    dict[str, tuple[str, list[tuple[str | None, str, str, list[str], dict[str, str]]]]],
+    dict[str, tuple[str, str]],
     dict[str, tuple[str, str]],
 ]:
     pkg_dir = _resolve_package_dir(pkg_id, work_dir=work_dir, refresh=refresh)
@@ -444,23 +584,16 @@ def _match_rule_in_dict(name: str, rules_dict: dict[str, tuple[str, str]]) -> st
     return None
 
 
-def _match_ruleset_in_dict(
-    name: str,
-    rulesets_dict: dict[str, tuple[str, list[tuple[str | None, str, str, list[str], dict[str, str]]]]],
-) -> str | None:
-    for cand in _strip_item_affixes(name, ("agents/", "rulesets/", "src/rulesets/"), (".ruleset",)):
-        hit = _match_exact_or_norm(cand, rulesets_dict)
-        if hit is not None:
-            return hit
-    return None
-
-
 def _match_bundle_in_dict(
     name: str,
     bundles_dict: dict[str, tuple[str, str]],
     repo_shorthand: bool = False,
 ) -> str | None:
-    for cand in _strip_item_affixes(name, ("agents/", "bundles/", "src/bundles/"), (".bundle",)):
+    for cand in _strip_item_affixes(
+        name,
+        ("agents/", "bundles/", "src/bundles/", "rulesets/", "src/rulesets/"),
+        (".bundle", ".ruleset"),
+    ):
         leaf = cand.rsplit("/", 1)[-1]
         for probe in (cand, f"{cand}/{leaf}", f"{cand}/default"):
             hit = _match_exact_or_norm(probe, bundles_dict)
@@ -510,8 +643,15 @@ def _resolve_package_rel_file(
 
 
 def _find_bundle_file_in_pkg(pkg_dir: Path, ik: str) -> Path | None:
-    for root_rel in ("agents", "bundles", "src/bundles"):
-        cand = pkg_dir / root_rel / f"{ik}.bundle"
+    for root_rel, ext in (
+        ("agents", ".bundle"),
+        ("bundles", ".bundle"),
+        ("src/bundles", ".bundle"),
+        ("agents", ".ruleset"),
+        ("rulesets", ".ruleset"),
+        ("src/rulesets", ".ruleset"),
+    ):
+        cand = pkg_dir / root_rel / f"{ik}{ext}"
         if cand.is_file():
             return cand.resolve()
     return None
@@ -551,6 +691,7 @@ def _resolve_bundle_context(
     work_dir: Path | None = None,
     refresh: bool = False,
     default_pkg: str | None = DEFAULT_RULES_PKG,
+    kind_label: str = "bundle",
 ) -> tuple[str, str, str | None, Path | None, Path | None]:
     prog = prog_name()
     pkg_id, item_name = _parse_target_spec(target_spec, default_pkg=default_pkg, allow_repo_shorthand=True)
@@ -570,16 +711,19 @@ def _resolve_bundle_context(
             if ik is None:
                 avail_i = sorted(bundles_dict.keys())
                 raise SystemExit(
-                    f"{prog}: unknown bundle {fpath.name!r} in package {str(fpath)!r} "
-                    f"(available bundles: {', '.join(avail_i)})"
+                    f"{prog}: unknown {kind_label} {fpath.name!r} in package {str(fpath)!r} "
+                    f"(available {kind_label}s: {', '.join(avail_i)})"
                 )
             bfile = _find_bundle_file_in_pkg(fpath, ik)
             bdir = bfile.parent if bfile is not None else fpath
             return f"{fpath}:{ik}", bundles_dict[ik][1], str(fpath), fpath, bdir
-        if not fpath.is_file() and not fpath.suffix and fpath.with_suffix(".bundle").is_file():
-            fpath = fpath.with_suffix(".bundle").resolve()
+        if not fpath.is_file() and not fpath.suffix:
+            for ext in (".bundle", ".ruleset"):
+                if fpath.with_suffix(ext).is_file():
+                    fpath = fpath.with_suffix(ext).resolve()
+                    break
         if not fpath.is_file():
-            raise SystemExit(f"{prog}: bundle file not found: {item_name}")
+            raise SystemExit(f"{prog}: {kind_label} file not found: {item_name}")
         raw = fpath.read_text(encoding="utf-8", errors="replace")
         return str(fpath), _parse_md_text(raw, fpath.stem)[1], None, None, fpath.parent
 
@@ -593,11 +737,12 @@ def _resolve_bundle_context(
         bfile = _find_bundle_file_in_pkg(pkg_dir, ik)
         bdir = bfile.parent if bfile is not None else pkg_dir
         return f"{pkg_id}:{ik}", bundles_dict[ik][1], pkg_id, pkg_dir, bdir
-    rel_match = _resolve_package_rel_file(pkg_dir, raw_item, (".bundle",))
+    rel_match = _resolve_package_rel_file(pkg_dir, raw_item, (".bundle", ".ruleset"))
     if rel_match is None:
         avail_i = sorted(bundles_dict.keys())
         raise SystemExit(
-            f"{prog}: unknown bundle {item_name!r} in package {pkg_id!r} (available bundles: {', '.join(avail_i)})"
+            f"{prog}: unknown {kind_label} {item_name!r} in package {pkg_id!r} "
+            f"(available {kind_label}s: {', '.join(avail_i)})"
         )
     ik, bfile = rel_match
     raw = bfile.read_text(encoding="utf-8", errors="replace")
@@ -617,6 +762,7 @@ def resolve_bundle_source(
         default_pkg=default_pkg,
     )
     return canonical_id, body
+
 
 def resolve_bundle_text(
     target_spec: str,
@@ -647,85 +793,124 @@ def collect_directive_items(
 ) -> list[tuple[str, str, str, list[str]]]:
     """Returns list of (rule_uid, provenance_comment, rendered_body, chain)."""
     prog = prog_name()
-    if kind not in ("ruleset", "rule"):
-        raise SystemExit(f"{prog}: directive kind must be 'ruleset' or 'rule' (got {kind!r})")
+    if kind not in ("bundle", "ruleset", "rule"):
+        raise SystemExit(f"{prog}: directive kind must be 'bundle', 'ruleset', or 'rule' (got {kind!r})")
+    if excludes:
+        raise SystemExit(f"{prog}: excludes are not supported: {excludes[0]!r}")
 
     effective_vars = {**builtin_vars(work_dir, piped=piped), **(cli_vars or {})}
     target_spec = _render_rule_vars(target_spec, effective_vars)
     base_chain = list(chain) if chain else []
-    pkg_id, item_name = _parse_target_spec(target_spec, default_pkg=default_pkg)
-    next_rulesets: list[tuple[str, str]] = list(active_rulesets) if active_rulesets else []
-    if kind == "ruleset":
-        ruleset_spec = target_spec if pkg_id in ("__file__", "__url__") else f"{pkg_id}:{item_name}"
-        ruleset_chain = [*base_chain, ruleset_spec]
-        if pkg_id == "__file__":
-            resolved_rs = Path(item_name).expanduser()
-            if work_dir is not None and not resolved_rs.is_absolute():
-                resolved_rs = (work_dir / resolved_rs).resolve()
-            else:
-                resolved_rs = resolved_rs.resolve()
-            canonical_ruleset = str(resolved_rs)
-        elif pkg_id == "__url__":
-            canonical_ruleset = item_name
-        else:
-            canonical_ruleset = f"{pkg_id}:{item_name}"
-        if any(cid == canonical_ruleset for cid, _ in next_rulesets):
-            cycle_path = " -> ".join([*(lbl for _, lbl in next_rulesets), ruleset_spec])
-            raise SystemExit(f"{prog}: circular ruleset reference detected: {cycle_path}")
-        next_rulesets = [*next_rulesets, (canonical_ruleset, ruleset_spec)]
-    excl_set: set[str] = set()
-    for ex in excludes or []:
-        clean_ex = ex.lstrip("-").strip().lower()
-        if ":" in clean_ex:
-            _, clean_ex = clean_ex.split(":", 1)
-        if clean_ex:
-            excl_set.add(clean_ex)
     cur_trace = list(trace_prefix or [f"{kind} {target_spec}"])
 
+    if kind in ("bundle", "ruleset"):
+        canonical_id, body_text, child_pkg, _child_pkg_dir, child_bdir = _resolve_bundle_context(
+            target_spec,
+            work_dir=work_dir,
+            refresh=refresh,
+            default_pkg=default_pkg or DEFAULT_RULES_PKG,
+            kind_label=kind,
+        )
+        pkg_id, item_name = _parse_target_spec(
+            target_spec,
+            default_pkg=default_pkg or DEFAULT_RULES_PKG,
+            allow_repo_shorthand=True,
+        )
+        bundle_spec = (
+            target_spec
+            if (pkg_id in ("__file__", "__url__") or _is_repo_shorthand_spec(target_spec.strip()))
+            else f"{pkg_id}:{item_name}"
+        )
+        next_bundles: list[tuple[str, str]] = list(active_rulesets) if active_rulesets else []
+        if any(cid == canonical_id for cid, _ in next_bundles):
+            cycle_path = " -> ".join([*(lbl for _, lbl in next_bundles), bundle_spec])
+            raise SystemExit(f"{prog}: circular {kind} reference detected: {cycle_path}")
+        next_bundles = [*next_bundles, (canonical_id, bundle_spec)]
+        bundle_chain = [*base_chain, bundle_spec]
+        base_url = item_name.rsplit("/", 1)[0] if (pkg_id == "__url__" and "/" in item_name) else None
+        sub_wdir = child_bdir if child_bdir is not None else work_dir
+        local_vars = dict(effective_vars)
+        items_out: list[tuple[str, str, str, list[str]]] = []
+
+        def exec_nodes(nodes: list[tuple[str, object]], cond_stack: list[str]) -> None:
+            for n_kind, payload in nodes:
+                if n_kind == "if_chain":
+                    for b_cond, b_trace, b_body in payload:  # type: ignore[misc]
+                        if b_cond is None or eval_if_condition(b_cond, local_vars, prog):
+                            exec_nodes(b_body, [*cond_stack, b_trace])
+                            break
+                    continue
+                raw_line = str(payload)
+                rendered_line = _render_rule_vars(raw_line, local_vars).strip()
+                if not rendered_line:
+                    continue
+                if rendered_line.startswith("let ") or rendered_line.startswith("var "):
+                    kw = "let " if rendered_line.startswith("let ") else "var "
+                    assign = rendered_line[len(kw) :].strip()
+                    if "=" not in assign:
+                        raise SystemExit(f"{prog}: invalid {kw.strip()} directive: {rendered_line!r}")
+                    k, v_expr = assign.split("=", 1)
+                    k_clean = k.strip()
+                    if not VAR_NAME_RE.fullmatch(k_clean):
+                        raise SystemExit(f"{prog}: invalid variable name {k_clean!r} in {rendered_line!r}")
+                    if not local_vars.get(k_clean) and v_expr.strip():
+                        local_vars[k_clean] = v_expr.strip()
+                    continue
+                if rendered_line == "export" or rendered_line.startswith(("export ", "expose ", "file ", "include ", "cmd ", "$ ", "! ", "prompt ", "allow ")):
+                    continue
+                parts = shlex.split(rendered_line)
+                if not parts or parts[0] not in ("bundle", "ruleset", "rule"):
+                    raise SystemExit(
+                        f"{prog}: invalid line in {kind} {target_spec!r}: {rendered_line!r}"
+                    )
+                sub_kind = parts[0]
+                if sub_kind == "rule":
+                    sub_targets, sub_vars = _parse_rule_directive_tokens(parts[1:], prog)
+                else:
+                    s_tgt, _ex, sub_vars = _parse_directive_tokens(parts[1:], prog)
+                    sub_targets = [s_tgt]
+                merged_vars = {**local_vars, **sub_vars, **(cli_vars or {})}
+                cond_s = " ".join(c for c in cond_stack if c and c != "else")
+                for sub_target in sub_targets:
+                    step_label = f"[if {cond_s}] {sub_kind} {sub_target}" if cond_s else f"{sub_kind} {sub_target}"
+                    qual_target = (
+                        f"{base_url}/{sub_target}"
+                        if (base_url and ":" not in sub_target and sub_target.endswith((".md", ".ruleset", ".bundle")))
+                        else sub_target
+                    )
+                    items_out.extend(
+                        collect_directive_items(
+                            sub_kind,
+                            qual_target,
+                            cli_vars=merged_vars,
+                            work_dir=sub_wdir,
+                            refresh=refresh,
+                            default_pkg=child_pkg or DEFAULT_RULES_PKG,
+                            trace_prefix=[*cur_trace, step_label],
+                            piped=piped,
+                            chain=bundle_chain,
+                            active_rulesets=next_bundles,
+                        )
+                    )
+
+        exec_nodes(parse_bundle_ast(body_text, prog), [])
+        return items_out
+
+    pkg_id, item_name = _parse_target_spec(target_spec, default_pkg=default_pkg)
     if pkg_id in ("__file__", "__url__"):
         if pkg_id == "__url__":
             fpath = _fetch_url_file(item_name, refresh=refresh)
-            base_url = item_name.rsplit("/", 1)[0] if "/" in item_name else DEFAULT_RULES_PKG
-            sub_wdir = work_dir
         else:
             fpath = Path(item_name).expanduser()
             if work_dir is not None and not fpath.is_absolute():
                 fpath = (work_dir / fpath).resolve()
             else:
                 fpath = fpath.resolve()
-            ext = ".ruleset" if kind == "ruleset" else ".md"
-            if not fpath.is_file() and not fpath.suffix and fpath.with_suffix(ext).is_file():
-                fpath = fpath.with_suffix(ext).resolve()
+            if not fpath.is_file() and not fpath.suffix and fpath.with_suffix(".md").is_file():
+                fpath = fpath.with_suffix(".md").resolve()
             if not fpath.is_file():
-                raise SystemExit(f"{prog}: {kind} file not found: {item_name}")
-            base_url = DEFAULT_RULES_PKG
-            sub_wdir = fpath.parent
+                raise SystemExit(f"{prog}: rule file not found: {item_name}")
         raw = fpath.read_text(encoding="utf-8", errors="replace")
-        if kind == "ruleset":
-            _, directives = _parse_ruleset_file(raw, fpath.stem)
-            items_out: list[tuple[str, str, str, list[str]]] = []
-            for cond_expr, sub_kind, sub_target, sub_excls, sub_vars in directives:
-                merged_vars = {**effective_vars, **sub_vars, **(cli_vars or {})}
-                if cond_expr and not eval_if_condition(cond_expr, merged_vars, prog):
-                    continue
-                merged_excls = list(excludes or []) + sub_excls
-                step_label = f"[if {cond_expr}] {sub_kind} {sub_target}" if cond_expr else f"{sub_kind} {sub_target}"
-                items_out.extend(
-                    collect_directive_items(
-                        sub_kind,
-                        (f"{base_url}/{sub_target}" if (pkg_id == "__url__" and ":" not in sub_target and sub_target.endswith((".md", ".ruleset"))) else sub_target),
-                        excludes=merged_excls,
-                        cli_vars=merged_vars,
-                        work_dir=sub_wdir,
-                        refresh=refresh,
-                        default_pkg=DEFAULT_RULES_PKG,
-                        trace_prefix=[*cur_trace, step_label],
-                        piped=piped,
-                        chain=ruleset_chain,
-                        active_rulesets=next_rulesets,
-                    )
-                )
-            return items_out
         _, body = _parse_md_text(raw, fpath.stem)
         rendered = _render_rule_vars(body, effective_vars).strip()
         if not rendered:
@@ -736,76 +921,36 @@ def collect_directive_items(
         prov = f"# [{' -> '.join(cur_trace)}]{vars_s}"
         return [(str(fpath), prov, rendered, list(base_chain))]
 
-    def is_excluded(rk: str) -> bool:
-        leaf = rk.rsplit("/", 1)[-1]
-        return rk in excl_set or leaf in excl_set
-
     s_clean = target_spec.strip()
     raw_item = s_clean.split(":", 1)[1].strip() if ":" in s_clean else item_name
     pkg_dir = _resolve_package_dir(pkg_id, work_dir=work_dir, refresh=refresh)
-    rules_dict, rulesets_dict, _ = _load_package_from_dir(pkg_dir)
+    rules_dict, _, _ = _load_package_from_dir(pkg_dir)
 
-    if kind == "rule":
-        rk = _match_rule_in_dict(item_name, rules_dict)
-        if rk is not None:
-            raw_body = rules_dict[rk][1].strip()
-        else:
-            rel_match = _resolve_package_rel_file(pkg_dir, raw_item, (".md",))
-            if rel_match is None:
-                avail_r = sorted(rules_dict.keys())
-                raise SystemExit(
-                    f"{prog}: unknown rule {item_name!r} in package {pkg_id!r} (available rules: {', '.join(avail_r)})"
-                )
-            rk, fpath = rel_match
-            raw_body = _parse_md_text(fpath.read_text(encoding="utf-8", errors="replace"), rk)[1].strip()
-        if is_excluded(rk):
-            return []
-        rendered = _render_rule_vars(raw_body, effective_vars)
-        if not rendered:
-            return []
-        used_keys = {m.group(1) for m in RULE_VAR_RE.finditer(raw_body)}
-        active_vars = {k: v for k, v in effective_vars.items() if k in used_keys}
-        trace_chain = [*cur_trace, f"rules/{rk}.md"] if (len(cur_trace) > 1 and cur_trace[-1].startswith("[if ")) else [*(cur_trace[:-1] if len(cur_trace) > 1 else cur_trace), f"rules/{rk}.md"]
-        vars_s = f" ({', '.join(f'{k}={v}' for k, v in active_vars.items())})" if active_vars else ""
-        prov = f"# [{' -> '.join(trace_chain)}]{vars_s}"
-        return [(f"{pkg_id}:{rk}", prov, rendered, list(base_chain))]
-
-    # kind == "ruleset"
-    pk = _match_ruleset_in_dict(item_name, rulesets_dict)
-    if pk is not None:
-        _, directives = rulesets_dict[pk]
+    rk = _match_rule_in_dict(item_name, rules_dict)
+    if rk is not None:
+        raw_body = rules_dict[rk][1].strip()
     else:
-        rel_match = _resolve_package_rel_file(pkg_dir, raw_item, (".ruleset",))
+        rel_match = _resolve_package_rel_file(pkg_dir, raw_item, (".md",))
         if rel_match is None:
-            avail_p = sorted(rulesets_dict.keys())
+            avail_r = sorted(rules_dict.keys())
             raise SystemExit(
-                f"{prog}: unknown ruleset {item_name!r} in package {pkg_id!r} (available rulesets: {', '.join(avail_p)})"
+                f"{prog}: unknown rule {item_name!r} in package {pkg_id!r} (available rules: {', '.join(avail_r)})"
             )
-        pk, fpath = rel_match
-        _, directives = _parse_ruleset_file(fpath.read_text(encoding="utf-8", errors="replace"), pk)
-    out_items: list[tuple[str, str, str, list[str]]] = []
-    for cond_expr, sub_kind, sub_target, sub_excls, sub_vars in directives:
-        merged_vars = {**effective_vars, **sub_vars, **(cli_vars or {})}
-        if cond_expr and not eval_if_condition(cond_expr, merged_vars, prog):
-            continue
-        merged_excls = list(excludes or []) + sub_excls
-        step_label = f"[if {cond_expr}] {sub_kind} {sub_target}" if cond_expr else f"{sub_kind} {sub_target}"
-        out_items.extend(
-            collect_directive_items(
-                sub_kind,
-                sub_target,
-                excludes=merged_excls,
-                cli_vars=merged_vars,
-                work_dir=work_dir,
-                refresh=refresh,
-                default_pkg=pkg_id,
-                trace_prefix=[*cur_trace, step_label],
-                piped=piped,
-                chain=ruleset_chain,
-                active_rulesets=next_rulesets,
-            )
-        )
-    return out_items
+        rk, fpath = rel_match
+        raw_body = _parse_md_text(fpath.read_text(encoding="utf-8", errors="replace"), rk)[1].strip()
+    rendered = _render_rule_vars(raw_body, effective_vars)
+    if not rendered:
+        return []
+    used_keys = {m.group(1) for m in RULE_VAR_RE.finditer(raw_body)}
+    active_vars = {k: v for k, v in effective_vars.items() if k in used_keys}
+    trace_chain = (
+        [*cur_trace, f"rules/{rk}.md"]
+        if (len(cur_trace) > 1 and cur_trace[-1].startswith("[if "))
+        else [*(cur_trace[:-1] if len(cur_trace) > 1 else cur_trace), f"rules/{rk}.md"]
+    )
+    vars_s = f" ({', '.join(f'{k}={v}' for k, v in active_vars.items())})" if active_vars else ""
+    prov = f"# [{' -> '.join(trace_chain)}]{vars_s}"
+    return [(f"{pkg_id}:{rk}", prov, rendered, list(base_chain))]
 
 
 def format_bundle_part_marker(nonce: str, meta: dict[str, object]) -> str:
@@ -879,30 +1024,24 @@ def render_directive(
 
 
 def cmd_list_rules(pkg_id: str = DEFAULT_RULES_PKG) -> int:
-    rules_dict, rulesets_dict, bundles_dict = _get_package_catalog(pkg_id)
+    rules_dict, _rulesets_dict, bundles_dict = _get_package_catalog(pkg_id)
     bvars = builtin_vars()
-    sys.stdout.write("Built-in variables (usable in '[if key=val]' conditions and rule templates):\n")
-    sys.stdout.write(f"  {'os':<38}  Active operating system (linux, macos, windows; current: {bvars['os']!r})\n")
+    sys.stdout.write("Built-in variables (usable in 'if key=val' conditions and rule templates):\n")
+    sys.stdout.write(f"  {'os':<38}  Active operating system (linux, macos; current: {bvars['os']!r})\n")
     sys.stdout.write(f"  {'vcs':<38}  Detected repository VCS (git, cvs, or ''; current: {bvars['vcs']!r})\n")
     sys.stdout.write(f"  {'piped':<38}  Set to '1' when stdin prompt text is present, else '' (current: {bvars['piped']!r})\n\n")
-    sys.stdout.write(f"Rulesets in '{pkg_id}' (use as 'ruleset {pkg_id}:<ruleset>'):\n")
-    for k, (desc, directives) in rulesets_dict.items():
-        target_tag = f"{pkg_id}:{k}"
-        sys.stdout.write(f"  {target_tag:<38}  {desc}\n")
-        for cond_expr, d_kind, d_tgt, d_ex, d_vars in directives:
-            cond_s = f"[if {cond_expr}] " if cond_expr else ""
-            ex_s = (" " + " ".join(f"-{e}" for e in d_ex)) if d_ex else ""
-            var_s = (" " + " ".join(f"{vk}={vv}" for vk, vv in d_vars.items())) if d_vars else ""
-            sys.stdout.write(f"  {'':<38}    {cond_s}{d_kind} {d_tgt}{ex_s}{var_s}\n")
+    if bundles_dict:
+        sys.stdout.write(f"Bundles in '{pkg_id}' (use as 'bundle {pkg_id}:<bundle>'):\n")
+        for k, (desc, body) in bundles_dict.items():
+            target_tag = f"{pkg_id}:{k}"
+            sys.stdout.write(f"  {target_tag:<38}  {desc}\n")
+            for cond_expr, line in strip_if_blocks_and_lines(body):
+                cond_s = f"[if {cond_expr}] " if cond_expr else ""
+                sys.stdout.write(f"  {'':<38}    {cond_s}{line}\n")
     sys.stdout.write(f"\nAtomic rules in '{pkg_id}' (use as 'rule {pkg_id}:<rule>'):\n")
     for k, (desc, _) in rules_dict.items():
         target_tag = f"{pkg_id}:{k}"
         sys.stdout.write(f"  {target_tag:<38}  {desc}\n")
-    if bundles_dict:
-        sys.stdout.write(f"\nBundles in '{pkg_id}' (use as 'bundle {pkg_id}:<bundle>'):\n")
-        for k, (desc, _) in bundles_dict.items():
-            target_tag = f"{pkg_id}:{k}"
-            sys.stdout.write(f"  {target_tag:<38}  {desc}\n")
     return 0
 
 

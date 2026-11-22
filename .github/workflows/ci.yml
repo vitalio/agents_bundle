@@ -38,5 +38,4 @@ jobs:
           files: |
             agents_bundle
             install.sh
-            install.ps1
             LICENSE

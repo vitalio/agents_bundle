@@ -202,5 +202,5 @@ def render_span(span: IncludeSpan) -> tuple[dict[str, object], str]:
         name = f"{span.disp}:{span.start}-{span.end}"
         heading = f"sed -n '{span.start},{span.end}p' {span.disp}"
         content = "\n".join(span.lines[n] for n in sorted(span.lines)).rstrip()
-    meta: dict[str, object] = {"kind": "include", "name": name, "chain": list(span.chain)}
+    meta: dict[str, object] = {"kind": "file", "name": name, "chain": list(span.chain)}
     return meta, f"===== $ {heading} =====\n{content}"

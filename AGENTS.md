@@ -1,13 +1,15 @@
 # `agents_bundle` — Project-Specific Agent Rules
 
 Universal workflow, language, Git, SemVer, Python CLI, and single-file build
-rules are loaded via `.agents_bundle`.
+rules are loaded via `.ctx.bundle` (or `.agents_bundle`).
 
 ## Architecture & Module Boundaries
 
 - `src/header.py` — table-driven help data (`HELP_SECTIONS` and the `HELP_*`
   width constants), the standard library imports shared by the assembled
-  executable, and version constants.
+  executable, and version/protocol constants (`SPEC_FILE_NAME = ".ctx.bundle"`,
+  `LEGACY_SPEC_FILE_NAME = ".agents_bundle"`, `PRODUCER_NAME = "agents_bundle"`,
+  `VAR_NAME_PATTERN`).
 - `src/core.py` — `prog_name()`, `cache_dir_path()`, and `usage_text()`
   helpers shared by all modules; `usage_text()` expands `{prog}`,
   `{default_pkg}`, and `{cache_dir}` in `HELP_SECTIONS`, aligns each section's
@@ -15,31 +17,35 @@ rules are loaded via `.agents_bundle`.
 - `src/tree.py` — `agents_bundle --tree` token-budgeted repository file tree
   with `-x/--exclude`, `AGENTS.md` pinning, deep directory collapsing, and file
   list truncation.
-- `src/rules_engine.py` — resolves rules (`.md`), reusable bundles
-  (`.bundle`), and rulesets (`.ruleset`) from canonical `agents/` (including
+- `src/rules_engine.py` — resolves atomic rules (`.md`) and composite bundles
+  (`.bundle` and legacy `.ruleset`) from canonical `agents/` (including
   `<repo>.bundle` / `default.bundle` for `<owner>/<repo>` and
   `agents/<domain>/<domain>.bundle` or `agents/<domain>/default.bundle` for
-  `<owner>/<repo>:<domain>`, with fallback to legacy `rules/`, `rulesets/`,
-  `bundles/`, and `src/`), explicit package-relative paths
+  `<owner>/<repo>:<domain>`, with fallback to legacy `rules/`, `bundles/`,
+  `rulesets/`, and `src/`), explicit package-relative paths
   (`<owner>/<repo>[@<ref>]:path/to/file`), local relative paths (`./...`,
   `../...`), or direct URLs (`http://`, `https://`, `file://`); fetches
   explicit `@<ref>` refs into the package cache even when
-  `AGENTS_BUNDLE_LOCAL_PKG_DIR` is set; and evaluates `[if ...]` conditions
-  against `os`, `vcs`, and CLI `key=val` overrides.
-- `src/includes.py` — include item expansion (globs, `path:start-end`),
-  repository-root boundary enforcement (`root_dir`) for external bundle includes,
-  and range-aware span deduplication shared by upstream, `.agents_bundle`, and
-  CLI includes.
-- `src/upstream.py` — parses piped stdin (preamble headers, upstream fragments by
-  `Bundle-Boundary`) into `PipedInput`.
-- `src/bundle.py` — parses `.agents_bundle` (`ruleset`, `rule`, `bundle`,
-  `allow`, `var`, `expose`, `include`, `prompt`, `[if ...]`, and `$` directives),
-  enforces the external bundle command allowlist (`allow <cmd...>` and
-  `bundle <pkg> allow=<cmd,...>`) before running shell commands, resolves
-  `work_dir` from `-C/--dir` or a piped `Workdir:` preamble, handles `--plain`
-  and `AGENTS_BUNDLE_PLAIN`, emits `Workdir: <path>` in the bundle header, and
-  assembles the context bundle to `stdout`; `build_bundle(spec_text=...)` renders
-  a synthetic `bundle <target>` spec for the `bundle` CLI subcommand.
+  `AGENTS_BUNDLE_LOCAL_PKG_DIR` is set; parses Python-indented `if <cond>`,
+  `else if <cond>` (`elif <cond>`), and `else` blocks (with legacy `[if ...]`
+  compatibility); and evaluates conditions against `os` (`linux`, `macos`),
+  `vcs`, and dot-separated variables.
+- `src/includes.py` — `file` item expansion (globs, `path:start-end`),
+  repository-root boundary enforcement (`root_dir`) for external bundle files,
+  and range-aware span deduplication shared by upstream, `.ctx.bundle` /
+  `.agents_bundle`, and CLI files; emits canonical `"kind": "file"` metadata.
+- `src/upstream.py` — parses piped stdin (preamble headers, `Bundle-Name:
+  <producer>` producer namespacing `<producer>.<key_lower>` with duplicate
+  producer rejection, and upstream fragments by `Bundle-Boundary` normalized to
+  canonical `"rule"`, `"file"`, `"cmd"`, `"prompt"` kinds) into `PipedInput`.
+- `src/bundle.py` — locates `.ctx.bundle` (with fallback to `.agents_bundle`),
+  parses the 9-keyword `.bundle` language (`bundle`, `rule`, `file`, `cmd`,
+  `prompt`, `let`, `export`, `if`/`else if`/`elif`/`else`, `allow` plus legacy
+  aliases `ruleset`, `include`, `$`, `var`, `expose`, `[if ...]`), enforces
+  lexical scoping on `let` and session/header promotion on `export`, enforces
+  the external bundle command allowlist before running shell commands,
+  assembles `file` and `cmd` in declaration order, and writes the bundle to
+  `stdout`.
 - `agents/agents_bundle.md` — embedded agent rule (chain `agents_bundle`).
   `build.py` embeds it into `src/header.py` as `EMBEDDED_RULE_AGENTS_BUNDLE`;
   source-tree runs fall back to the file via `embedded_rule_text()` in
@@ -63,32 +69,35 @@ rules are loaded via `.agents_bundle`.
 ## Bundle Output Protocol
 
 - Header visibility (`Bundle-*`): Emit `Bundle-Command`,
-  `Bundle-Boundary: <nonce>`, `Bundle-Protocol: 1`, and
-  `Bundle-Expose: Role, Task, Title` (extensible via
-  `expose` or `AGENTS_BUNDLE_EXPOSE`) by default so downstream runners
-  (`run_block`) keep transport headers in session metadata while forwarding
-  exposed headers into the final prompt header.
-- Fragment markers: Wrap emitted rules, commands (`rc`, `ms`), included files,
-  and prompts in `<!-- bundle:<nonce>:part <json> -->` and
-  `<!-- bundle:<nonce>:end -->` JSON markers using neutral `kind`, `id`/`name`,
-  `chain` (`[]` at root/CLI or ordered inclusion path of bundle/ruleset
-  specifiers), `rc`, and `ms` fields without hardcoding `run_block` internals.
+  `Bundle-Name: agents_bundle`, `Bundle-Boundary: <nonce>`,
+  `Bundle-Protocol: 1`, exported `Key: Value` variable headers (promoted via
+  `export`), and `Workdir: <path>` by default. Unexported variables do not
+  appear in the output preamble.
+- Fragment markers: Wrap emitted rules, files, commands (`rc`, `ms`), and
+  prompts in `<!-- bundle:<nonce>:part <json> -->` and
+  `<!-- bundle:<nonce>:end -->` JSON markers using the 4 canonical `kind`
+  values (`rule`, `file`, `cmd`, `prompt`), `id`/`name`, `chain` (`[]` at
+  root/CLI or ordered inclusion path of bundle specifiers), `rc`, and `ms`
+  fields without hardcoding `run_block` internals.
 - Plain output (`--plain`): Pass `--plain` or set `AGENTS_BUNDLE_PLAIN=1` to
-  omit transport `Bundle-*` headers (`Bundle-Command`, `Bundle-Boundary`,
-  `Bundle-Expose`) and JSON fragment markers when pure Markdown/text output is
-  requested.
+  omit transport `Bundle-*` headers (`Bundle-Command`, `Bundle-Name`,
+  `Bundle-Boundary`, `Bundle-Protocol`) and JSON fragment markers when pure
+  Markdown/text output is requested.
 - Piped upstream bundles (`context-bundle-protocol` v1): stdin with
-  `Bundle-Boundary` is unpacked by `src/upstream.py`; `rule` fragments merge by `id`,
-  `include`/`file` fragments merge with `.agents_bundle` and CLI includes through
-  `merge_spans()` (whole file absorbs slices, overlaps merge), and
-  `task`/`context`/`prompt` fragments are re-wrapped inside the Prompt section
-  keeping their metadata. `Bundle-Command` is chained with ` | `; `Bundle-Expose`
-  and `Bundle-Hide` are merged.
+  `Bundle-Boundary` is unpacked by `src/upstream.py`; when `Bundle-Name:
+  <producer>` is present, non-transport preamble headers (except `Workdir`) are
+  namespaced as `<producer>.<key_lower>` and duplicate producer names in the
+  same pipeline are rejected. `rule` fragments merge by `id`, `file` (and
+  legacy `include`) fragments merge with bundle and CLI files through
+  `merge_spans()` at first occurrence, and `prompt` (and legacy
+  `task`/`context`) fragments are re-wrapped inside the Prompt section keeping
+  their metadata. `Bundle-Command` is chained with ` | `.
 - Rule body normalization: embedded and upstream `rule` fragments go through
   `normalize_rule_body()` (`_parse_md_text()` then `_render_rule_vars()`).
   Rule `.md` bodies are static Markdown: only `# Description:` stripping and
-  `{name:default}` substitution apply; `[if ...]` conditions belong to
-  `.bundle` and `.agents_bundle` specs, never to rule bodies.
-- Chain provenance: `build_bundle()` passes `chain=[SPEC_FILE_NAME]` to `parse_spec()`
-  only when `.agents_bundle` is read; `bundle` subcommand, piped, CLI, and embedded
-  fragments stay outside it. Keep the `.bundle` directive reference in `README.md`.
+  `{name:default}` substitution apply; `if` conditions belong to `.bundle`
+  specs, never to rule bodies.
+- Chain provenance: `build_bundle()` passes `chain=[spec_file.name]` to
+  `parse_spec()` only when `.ctx.bundle` or `.agents_bundle` is read; `bundle`
+  subcommand, piped, CLI, and embedded fragments stay outside it. Keep the
+  `.bundle` directive reference in `README.md`.

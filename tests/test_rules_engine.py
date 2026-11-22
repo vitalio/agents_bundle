@@ -12,17 +12,39 @@ from tests.helpers import AgentsBundleTestCase, SCRIPT
 class TestRulesEngine(AgentsBundleTestCase):
     def test_builtin_vars_override_in_ruleset(self):
         rp = self._run(
-            [str(SCRIPT), "ruleset", "vitalio/agents-rules:default", "os=windows", "vcs=cvs", "-v"],
+            [str(SCRIPT), "ruleset", "vitalio/agents-rules:default", "os=macos", "vcs=cvs", "-v"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
             check=False,
         )
         self._assert_ok(rp)
-        self.assertIn("[if os=windows] rule os/windows -> rules/os/windows.md", rp.stdout)
+        self.assertIn("[if os=macos] rule os/macos -> rules/os/macos.md", rp.stdout)
         self.assertIn("[if vcs=cvs] rule vcs/cvs -> rules/vcs/cvs.md", rp.stdout)
         self.assertNotIn("rules/os/linux.md", rp.stdout)
         self.assertNotIn("rules/vcs/git.md", rp.stdout)
+
+        # Multi-target rule CLI and exclude rejection
+        rm = self._run(
+            [str(SCRIPT), "rule", "vitalio/agents-rules:core/start", "vitalio/agents-rules:core/ssot"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self._assert_ok(rm)
+        self.assertIn("Start priority", rm.stdout)
+        self.assertIn("Single source of truth", rm.stdout)
+
+        rex = self._run(
+            [str(SCRIPT), "ruleset", "vitalio/agents-rules:default", "-core/ssot"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(rex.returncode, 0)
+        self.assertIn("excludes are not supported", rex.stderr)
 
     def test_cli_ruleset_rule_and_list(self):
         rl = self._run([str(SCRIPT), "--list"], capture_output=True, text=True, check=False)

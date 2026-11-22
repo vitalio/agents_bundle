@@ -4,7 +4,6 @@ import os
 import re
 import secrets
 import shlex
-import shutil
 import stat
 import subprocess
 import sys
@@ -15,18 +14,23 @@ from src.header import (
     DEFAULT_RULES_PKG,
     EMBEDDED_RULE_NAME,
     LEGACY_RULE_ID,
+    LEGACY_SPEC_FILE_NAME,
+    PRODUCER_NAME,
     PROMPT_HEADER,
     PROTOCOL_VERSION,
     RULES_HEADER,
     SPEC_FILE_NAME,
+    VAR_NAME_PATTERN,
 )
 from src.core import embedded_rule_text, prog_name
 from src.tree import _tree_from_args
 from src.rules_engine import (
+    VAR_NAME_RE,
     _is_external_bundle_source,
     _is_local_path_spec,
     _parse_directive_tokens,
     _parse_md_text,
+    _parse_rule_directive_tokens,
     _render_rule_vars,
     _resolve_bundle_context,
     builtin_vars,
@@ -34,11 +38,12 @@ from src.rules_engine import (
     env_vars,
     eval_if_condition,
     format_collected_rules,
+    parse_bundle_ast,
     resolve_bundle_source,
     strip_if_blocks_and_lines,
     wrap_bundle_fragment,
 )
-from src.includes import _expand_include, display_path, merge_spans, read_span, render_span, span_from_fragment
+from src.includes import IncludeSpan, _expand_include, display_path, merge_spans, read_span, render_span, span_from_fragment
 from src.upstream import (
     PipedInput,
     group_fragments,
@@ -51,26 +56,25 @@ from src.upstream import (
 def default_spec_template(prog: str | None = None) -> str:
     cmd = prog or prog_name()
     lines = [
-        f"# {SPEC_FILE_NAME} — root context ruleset and command bundle for '{cmd}'",
+        f"# {SPEC_FILE_NAME} — root context bundle for '{cmd}'",
         "# Directives:",
-        f"#   ruleset <owner>/<repo>:<name> [-exclude ...] [key=val ...]",
-        f"#   rule <owner>/<repo>:<name> [key=val ...]",
-        f"#   bundle <owner>/<repo>[:<name>] [allow=<cmd,...>] [key=val ...]",
-        "#   allow <cmd...>  (permit external bundles to run listed executables)",
-        "#   var <name>=$(<shell command>)  (or var <name>=<value>; sets variable if not already passed)",
-        "#   expose <key...>  (add header names to Bundle-Expose alongside Role, Task, Title)",
-        "#   include $(<shell command>)  (includes existing repository files listed by command or path)",
+        "#   bundle <owner>/<repo>[:<name>] [allow=<cmd,...>] [key=val ...]",
+        "#   rule <owner>/<repo>:<name...> [key=val ...]",
+        "#   file <path|glob|slice...>  (or file $(<shell command>))",
+        "#   cmd <shell command>",
         "#   prompt <text>",
-        "#   [if os=linux] rule <owner>/<repo>:os/linux  (or multi-line [if ...] ... [/if])",
-        "#   $ <shell command>  (use '$ cat <file>' to include a file)",
+        "#   let <name>=<value>  (or let <name>=$(<shell command>); bundle-scoped)",
+        "#   export <name...>  (promote to session scope and output preamble)",
+        "#   if <cond> / else if <cond> / else  (4-space indented blocks)",
+        "#   allow <bin...>  (permit external bundles to run listed executables)",
         "",
-        f"ruleset {DEFAULT_RULES_PKG}:default",
+        f"bundle {DEFAULT_RULES_PKG}:default",
         "",
-        "include AGENTS.md",
-        f"$ {cmd} --tree",
-        "$ git status -sb",
-        "$ git branch -vv",
-        "$ git log --oneline -10",
+        "file AGENTS.md",
+        f"cmd {cmd} --tree",
+        "cmd git status -sb",
+        "cmd git branch -vv",
+        "cmd git log --oneline -10",
         "",
     ]
     return "\n".join(lines)
@@ -89,28 +93,24 @@ def cmd_init(force: bool = False, target_dir: Path | None = None) -> int:
 
 
 def _normalize_header_name(raw_key: str) -> str:
-    parts = [part.capitalize() for part in re.split(r"[-_]+", raw_key.strip()) if part]
-    return "-".join(parts)
+    segments = []
+    for dot_part in raw_key.strip().split("."):
+        parts = [part.capitalize() for part in re.split(r"[-_]+", dot_part) if part]
+        if parts:
+            segments.append("-".join(parts))
+    return ".".join(segments)
 
 
-def _parse_expose_keys(raw_args: str, source_label: str, prog: str) -> list[str]:
+def _parse_export_keys(raw_args: str, source_label: str, prog: str) -> list[str]:
     tokens = [tok for tok in re.split(r"[\s,]+", raw_args.strip()) if tok]
     keys: list[str] = []
     for tok in tokens:
-        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", tok):
-            raise SystemExit(f"{prog}: invalid header name {tok!r} in {source_label}")
-        hdr = _normalize_header_name(tok)
-        if hdr and hdr not in keys:
-            keys.append(hdr)
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*", tok):
+            raise SystemExit(f"{prog}: invalid variable name {tok!r} in {source_label}")
+        norm = tok.lower().replace("-", "_")
+        if norm and norm not in keys:
+            keys.append(norm)
     return keys
-
-
-def env_expose(prog: str | None = None) -> list[str]:
-    raw = os.environ.get("AGENTS_BUNDLE_EXPOSE", "").strip()
-    if not raw:
-        return []
-    p = prog or prog_name()
-    return _parse_expose_keys(raw, "AGENTS_BUNDLE_EXPOSE", p)
 
 
 def env_plain() -> bool:
@@ -120,9 +120,10 @@ def env_plain() -> bool:
 
 def find_spec_file(start_dir: Path | None = None) -> Path | None:
     cur = (start_dir if start_dir is not None else Path.cwd()).resolve()
-    candidate = cur / SPEC_FILE_NAME
-    if candidate.is_file():
-        return candidate
+    for name in (SPEC_FILE_NAME, LEGACY_SPEC_FILE_NAME):
+        candidate = cur / name
+        if candidate.is_file():
+            return candidate
     return None
 
 
@@ -321,6 +322,17 @@ def _eval_dynamic_expr(
     return s
 
 
+def _split_file_items(raw_expr: str, is_dynamic: bool) -> list[str]:
+    if not raw_expr.strip():
+        return []
+    if is_dynamic and "\n" in raw_expr:
+        return [ln.strip() for ln in raw_expr.splitlines() if ln.strip()]
+    try:
+        return [tok.strip() for tok in shlex.split(raw_expr) if tok.strip()]
+    except ValueError:
+        return [tok.strip() for tok in raw_expr.split() if tok.strip()]
+
+
 def _qualify_nested_target(
     target: str,
     work_dir: Path | None,
@@ -348,41 +360,58 @@ def _qualify_nested_target(
     return target
 
 
-def _static_inspect_bundle_commands(
-    text: str,
+def _static_inspect_bundle_ast(
+    nodes: list[tuple[str, object]],
     bvars: dict[str, str],
     allowed_cmds: set[str],
     bundle_label: str,
+    root_label: str,
     prog: str,
 ) -> None:
-    for cond_expr, raw_line in strip_if_blocks_and_lines(text, prog):
-        if cond_expr and not eval_if_condition(cond_expr, bvars, prog):
-            continue
-        line = _render_rule_vars(raw_line, bvars).strip()
-        if line == "allow" or line.startswith("allow "):
-            raise SystemExit(
-                f"{prog}: 'allow' directive is only permitted in root {SPEC_FILE_NAME} "
-                f"(found in bundle {bundle_label!r}: {line!r})"
-            )
-        if line.startswith("$ ") or line.startswith("! "):
-            cmd_str = line[2:].strip()
-            if cmd_str:
-                _check_command_allowed(cmd_str, allowed_cmds, bundle_label, prog)
-        elif line.startswith("var "):
-            assign = line[len("var ") :].strip()
-            if "=" in assign:
-                _k, v_expr = assign.split("=", 1)
-                s = v_expr.strip()
-                if s.startswith("$(") and s.endswith(")") and len(s) >= 3:
-                    cmd_str = s[2:-1].strip()
-                    if cmd_str:
-                        _check_command_allowed(cmd_str, allowed_cmds, bundle_label, prog)
-        elif line.startswith("include "):
-            inc_expr = line[len("include ") :].strip()
-            if inc_expr.startswith("$(") and inc_expr.endswith(")") and len(inc_expr) >= 3:
-                cmd_str = inc_expr[2:-1].strip()
+    sim_vars = dict(bvars)
+
+    def walk(stmts: list[tuple[str, object]]) -> None:
+        for n_kind, payload in stmts:
+            if n_kind == "if_chain":
+                for b_cond, _b_trace, b_body in payload:  # type: ignore[misc]
+                    if b_cond is None or eval_if_condition(b_cond, sim_vars, prog):
+                        walk(b_body)
+                        break
+                continue
+            raw_line = str(payload)
+            line = _render_rule_vars(raw_line, sim_vars).strip()
+            if line == "allow" or line.startswith("allow "):
+                raise SystemExit(
+                    f"{prog}: 'allow' directive is only permitted in root {root_label} "
+                    f"(found in bundle {bundle_label!r}: {line!r})"
+                )
+            if line.startswith(("cmd ", "$ ", "! ")):
+                kw_len = 4 if line.startswith("cmd ") else 2
+                cmd_str = line[kw_len:].strip()
                 if cmd_str:
                     _check_command_allowed(cmd_str, allowed_cmds, bundle_label, prog)
+            elif line.startswith(("let ", "var ")):
+                kw_len = 4
+                assign = line[kw_len:].strip()
+                if "=" in assign:
+                    k, v_expr = assign.split("=", 1)
+                    k_clean = k.strip()
+                    s = v_expr.strip()
+                    if s.startswith("$(") and s.endswith(")") and len(s) >= 3:
+                        cmd_str = s[2:-1].strip()
+                        if cmd_str:
+                            _check_command_allowed(cmd_str, allowed_cmds, bundle_label, prog)
+                    elif not sim_vars.get(k_clean) and s:
+                        sim_vars[k_clean] = s
+            elif line.startswith(("file ", "include ")):
+                kw_len = 5 if line.startswith("file ") else 8
+                inc_expr = line[kw_len:].strip()
+                if inc_expr.startswith("$(") and inc_expr.endswith(")") and len(inc_expr) >= 3:
+                    cmd_str = inc_expr[2:-1].strip()
+                    if cmd_str:
+                        _check_command_allowed(cmd_str, allowed_cmds, bundle_label, prog)
+
+    walk(nodes)
 
 
 def parse_spec(
@@ -401,67 +430,101 @@ def parse_spec(
     allowed_cmds: set[str] | None = None,
     enforce_allowlist: bool = True,
     external_chains: dict[tuple[str, ...], tuple[str, set[str] | None]] | None = None,
+    session_vars: dict[str, str] | None = None,
 ) -> list[tuple[str, str, str | None, list[str]]]:
     prog = prog_name()
     active_vars: dict[str, str] = dict(cli_vars) if cli_vars is not None else {}
     bvars = {**builtin_vars(work_dir, piped=piped), **active_vars}
     cur_chain = list(chain) if chain else []
     cur_bdir = bundle_dir if bundle_dir is not None else work_dir
-    in_child_bundle = bool(cur_chain and cur_chain != [SPEC_FILE_NAME])
-    bundle_label = cur_chain[-1] if in_child_bundle else SPEC_FILE_NAME
+    root_label = (
+        cur_chain[0]
+        if (cur_chain and cur_chain[0] in (SPEC_FILE_NAME, LEGACY_SPEC_FILE_NAME))
+        else SPEC_FILE_NAME
+    )
+    in_child_bundle = bool(cur_chain and cur_chain != [root_label])
+    bundle_label = cur_chain[-1] if in_child_bundle else root_label
     cur_allowed: set[str] = set(allowed_cmds) if allowed_cmds is not None else set()
-    if not in_child_bundle:
-        for cond_expr, raw_line in strip_if_blocks_and_lines(text, prog):
-            if cond_expr and not eval_if_condition(cond_expr, bvars, prog):
-                continue
-            line = _render_rule_vars(raw_line, bvars).strip()
-            if line.startswith("allow "):
-                cur_allowed.update(_parse_allow_bins(line[len("allow ") :], SPEC_FILE_NAME, prog))
-    elif is_external and enforce_allowlist:
-        _static_inspect_bundle_commands(text, bvars, cur_allowed, bundle_label, prog)
+    ast_nodes = parse_bundle_ast(text, prog)
+
+    if is_external and enforce_allowlist and in_child_bundle:
+        _static_inspect_bundle_ast(ast_nodes, bvars, cur_allowed, bundle_label, root_label, prog)
 
     effective_allow_set: set[str] | None = cur_allowed if (is_external and enforce_allowlist) else None
     if is_external and external_chains is not None:
-        external_chains[tuple(cur_chain)] = (bundle_label, set(cur_allowed) if effective_allow_set is not None else None)
+        external_chains[tuple(cur_chain)] = (
+            bundle_label,
+            set(cur_allowed) if effective_allow_set is not None else None,
+        )
 
     entries: list[tuple[str, str, str | None, list[str]]] = []
-    for cond_expr, raw_line in strip_if_blocks_and_lines(text, prog):
-        if cond_expr and not eval_if_condition(cond_expr, bvars, prog):
-            continue
-        line = _render_rule_vars(raw_line, bvars).strip()
-        if line == "allow" or line.startswith("allow "):
-            if in_child_bundle:
-                raise SystemExit(
-                    f"{prog}: 'allow' directive is only permitted in root {SPEC_FILE_NAME} "
-                    f"(found in bundle {bundle_label!r}: {line!r})"
-                )
-            if line == "allow":
-                raise SystemExit(f"{prog}: empty allow list in {SPEC_FILE_NAME}")
-            cur_allowed.update(_parse_allow_bins(line[len("allow ") :], SPEC_FILE_NAME, prog))
-        elif line.startswith("var "):
-            assign = line[len("var ") :].strip()
-            if "=" not in assign:
-                raise SystemExit(f"{prog}: invalid var directive in {SPEC_FILE_NAME}: {line!r} (expected 'var key=val')")
-            k, v_expr = assign.split("=", 1)
-            k_clean = k.strip()
-            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k_clean):
-                raise SystemExit(f"{prog}: invalid variable name {k_clean!r} in {line!r}")
-            if not active_vars.get(k_clean):
-                val = _eval_dynamic_expr(
-                    v_expr,
-                    work_dir=work_dir,
-                    allowed_cmds=effective_allow_set,
-                    bundle_label=bundle_label,
-                    prog=prog,
-                )
-                if val:
-                    active_vars[k_clean] = val
-                    bvars[k_clean] = val
-                    if resolved_vars is not None:
-                        resolved_vars[k_clean] = val
-        elif line.startswith("include "):
-            inc_expr = line[len("include ") :].strip()
-            if inc_expr:
+    local_exports: list[str] = []
+
+    def promote_export(var_key: str) -> None:
+        if var_key not in local_exports:
+            local_exports.append(var_key)
+        val = active_vars.get(var_key, "")
+        if val:
+            if session_vars is not None:
+                session_vars[var_key] = val
+            if resolved_vars is not None:
+                resolved_vars[var_key] = val
+
+    def exec_nodes(nodes: list[tuple[str, object]], cond_stack: list[str]) -> None:
+        for n_kind, payload in nodes:
+            if n_kind == "if_chain":
+                for b_cond, b_trace, b_body in payload:  # type: ignore[misc]
+                    if b_cond is None or eval_if_condition(b_cond, bvars, prog):
+                        exec_nodes(b_body, [*cond_stack, b_trace])
+                        break
+                continue
+            raw_line = str(payload)
+            cond_expr = " ".join(c for c in cond_stack if c and c != "else") or None
+            line = _render_rule_vars(raw_line, bvars).strip()
+            if not line:
+                continue
+            if line == "allow" or line.startswith("allow "):
+                if in_child_bundle:
+                    raise SystemExit(
+                        f"{prog}: 'allow' directive is only permitted in root {root_label} "
+                        f"(found in bundle {bundle_label!r}: {line!r})"
+                    )
+                if line == "allow":
+                    raise SystemExit(f"{prog}: empty allow list in {root_label}")
+                cur_allowed.update(_parse_allow_bins(line[len("allow ") :], root_label, prog))
+            elif line in ("let", "var") or line.startswith(("let ", "var ")):
+                kw = "let" if (line == "let" or line.startswith("let ")) else "var"
+                assign = line[len(kw) :].strip()
+                if "=" not in assign:
+                    raise SystemExit(
+                        f"{prog}: invalid {kw} directive in {bundle_label}: {line!r} (expected '{kw} key=val')"
+                    )
+                k, v_expr = assign.split("=", 1)
+                k_clean = k.strip()
+                if not VAR_NAME_RE.fullmatch(k_clean):
+                    raise SystemExit(f"{prog}: invalid variable name {k_clean!r} in {line!r}")
+                if not active_vars.get(k_clean):
+                    val = _eval_dynamic_expr(
+                        v_expr,
+                        work_dir=work_dir,
+                        allowed_cmds=effective_allow_set,
+                        bundle_label=bundle_label,
+                        prog=prog,
+                    )
+                    if val:
+                        active_vars[k_clean] = val
+                        bvars[k_clean] = val
+                        if k_clean in local_exports:
+                            if session_vars is not None:
+                                session_vars[k_clean] = val
+                            if resolved_vars is not None:
+                                resolved_vars[k_clean] = val
+            elif line in ("file", "include") or line.startswith(("file ", "include ")):
+                kw = "file" if (line == "file" or line.startswith("file ")) else "include"
+                inc_expr = line[len(kw) :].strip()
+                if not inc_expr:
+                    continue
+                is_dyn = inc_expr.startswith("$(") and inc_expr.endswith(")") and len(inc_expr) >= 3
                 resolved_inc = _eval_dynamic_expr(
                     inc_expr,
                     work_dir=work_dir,
@@ -469,121 +532,125 @@ def parse_spec(
                     bundle_label=bundle_label,
                     prog=prog,
                 )
-                for item in resolved_inc.splitlines():
-                    clean_item = item.strip()
-                    if clean_item:
-                        if is_external and work_dir is not None:
-                            _expand_include(work_dir, clean_item, root_dir=work_dir, bundle_label=bundle_label)
-                        entries.append(("include", clean_item, cond_expr, list(cur_chain)))
-        elif line == "include":
-            continue
-        elif line.startswith("$ ") or line.startswith("! "):
-            cmd_str = line[2:].strip()
-            if cmd_str:
-                if effective_allow_set is not None:
-                    _check_command_allowed(cmd_str, effective_allow_set, bundle_label, prog)
-                entries.append(("cmd", cmd_str, cond_expr, list(cur_chain)))
-        elif line in ("$", "!"):
-            continue
-        elif line.startswith("ruleset ") or line.startswith("rule "):
-            parts = shlex.split(line)
-            target, _excls, _vmap = _parse_directive_tokens(parts[1:], prog)
-            new_target = _qualify_nested_target(target, work_dir, cur_bdir, default_pkg, pkg_dir, prog)
-            if new_target != target:
-                parts[1] = new_target
-                line = shlex.join(parts)
-            entries.append(("directive", line, cond_expr, list(cur_chain)))
-        elif line.startswith("bundle "):
-            parts = shlex.split(line)
-            target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
-            if excls:
-                raise SystemExit(f"{prog}: bundle directive does not support excludes: {line!r}")
-            bundle_allow_raw = vmap.pop("allow", None)
-            child_allowed = set(cur_allowed)
-            child_enforce = enforce_allowlist
-            if bundle_allow_raw is not None:
-                parsed_bins = set(_parse_allow_bins(bundle_allow_raw, f"bundle {target}", prog))
-                if is_external and enforce_allowlist:
-                    disallowed = sorted(parsed_bins - cur_allowed)
-                    if disallowed:
-                        raise SystemExit(
-                            f"{prog}: external bundle {bundle_label!r} cannot grant allow={','.join(disallowed)!r} "
-                            f"to child bundle {target!r}"
-                        )
-                    child_allowed = cur_allowed & parsed_bins
-                else:
-                    child_allowed.update(parsed_bins)
-                    child_enforce = True
-            lookup_target = target
-            if _is_local_path_spec(target) and not Path(target).expanduser().is_absolute():
-                if default_pkg is not None and pkg_dir is not None and cur_bdir is not None:
-                    resolved = (cur_bdir / target).resolve()
-                    try:
-                        rel = resolved.relative_to(pkg_dir.resolve())
-                    except ValueError:
-                        raise SystemExit(f"{prog}: package path escapes package root: {target}")
-                    lookup_target = f"{default_pkg}:{rel.as_posix()}"
-            canonical_bundle, inc_text, child_pkg, child_pkg_dir, child_bdir = _resolve_bundle_context(
-                lookup_target,
-                work_dir=cur_bdir,
-                refresh=refresh,
-                default_pkg=default_pkg or DEFAULT_RULES_PKG,
-            )
-            cur_active = list(active_bundles) if active_bundles else []
-            if any(cid == canonical_bundle for cid, _ in cur_active):
-                cycle_path = " -> ".join([*(lbl for _, lbl in cur_active), target])
-                raise SystemExit(f"{prog}: circular bundle reference detected: {cycle_path}")
-            child_is_external = _is_external_bundle_source(
-                canonical_bundle,
-                child_pkg,
-                child_bdir,
-                work_dir,
-                parent_is_external=is_external,
-            )
-            merged_cli = {**active_vars, **vmap}
-            sub_resolved: dict[str, str] = {}
-            child_chain = [*cur_chain, target]
-            for sub_kind, sub_val, sub_cond, sub_chain in parse_spec(
-                inc_text,
-                work_dir=work_dir,
-                cli_vars=merged_cli,
-                refresh=refresh,
-                resolved_vars=sub_resolved,
-                piped=piped,
-                chain=child_chain,
-                active_bundles=[*cur_active, (canonical_bundle, target)],
-                default_pkg=child_pkg,
-                pkg_dir=child_pkg_dir,
-                bundle_dir=child_bdir,
-                is_external=child_is_external,
-                allowed_cmds=child_allowed,
-                enforce_allowlist=child_enforce,
-                external_chains=external_chains,
-            ):
-                comb_cond = " ".join(c for c in (cond_expr, sub_cond) if c) or None
-                entries.append((sub_kind, sub_val, comb_cond, sub_chain))
-            for rk, rv in sub_resolved.items():
-                if not active_vars.get(rk):
-                    active_vars[rk] = rv
-                    bvars[rk] = rv
-                    if resolved_vars is not None:
-                        resolved_vars[rk] = rv
-        elif line.startswith("expose "):
-            exp_raw = line[len("expose ") :].strip()
-            for hdr in _parse_expose_keys(exp_raw, SPEC_FILE_NAME, prog):
-                entries.append(("expose", hdr, cond_expr, list(cur_chain)))
-        elif line == "expose":
-            continue
-        elif line.startswith("prompt "):
-            p_str = line[len("prompt ") :].strip()
-            if p_str:
-                entries.append(("prompt", p_str, cond_expr, list(cur_chain)))
-        elif line == "prompt":
-            continue
-        else:
-            raise SystemExit(
-                f"{prog}: invalid line in {SPEC_FILE_NAME}: {line!r} (expected 'ruleset ...', 'rule ...', 'bundle ...', 'allow ...', 'var ...', 'expose ...', 'include ...', 'prompt ...', '[if ...]', or '$ <command>')"
-            )
+                for clean_item in _split_file_items(resolved_inc, is_dyn):
+                    if is_external and work_dir is not None:
+                        _expand_include(work_dir, clean_item, root_dir=work_dir, bundle_label=bundle_label)
+                    entries.append(("file", clean_item, cond_expr, list(cur_chain)))
+            elif line in ("cmd", "$", "!") or line.startswith(("cmd ", "$ ", "! ")):
+                kw = "cmd" if (line == "cmd" or line.startswith("cmd ")) else line[0]
+                cmd_str = line[len(kw) :].strip()
+                if cmd_str:
+                    if effective_allow_set is not None:
+                        _check_command_allowed(cmd_str, effective_allow_set, bundle_label, prog)
+                    entries.append(("cmd", cmd_str, cond_expr, list(cur_chain)))
+            elif line == "rule" or line.startswith("rule "):
+                parts = shlex.split(line)
+                targets, vmap = _parse_rule_directive_tokens(parts[1:], prog)
+                var_tokens = [f"{k}={v}" for k, v in vmap.items()]
+                for tgt in targets:
+                    new_tgt = _qualify_nested_target(tgt, work_dir, cur_bdir, default_pkg, pkg_dir, prog)
+                    single_line = shlex.join(["rule", new_tgt, *var_tokens])
+                    entries.append(("directive", single_line, cond_expr, list(cur_chain)))
+            elif line in ("bundle", "ruleset") or line.startswith(("bundle ", "ruleset ")):
+                parts = shlex.split(line)
+                kw = parts[0]
+                target, _excls, vmap = _parse_directive_tokens(parts[1:], prog)
+                if kw == "ruleset":
+                    new_target = _qualify_nested_target(target, work_dir, cur_bdir, default_pkg, pkg_dir, prog)
+                    if new_target != target:
+                        parts[1] = new_target
+                        line = shlex.join(parts)
+                    entries.append(("directive", line, cond_expr, list(cur_chain)))
+                    continue
+                bundle_allow_raw = vmap.pop("allow", None)
+                child_allowed = set(cur_allowed)
+                child_enforce = enforce_allowlist
+                if bundle_allow_raw is not None:
+                    parsed_bins = set(_parse_allow_bins(bundle_allow_raw, f"bundle {target}", prog))
+                    if is_external and enforce_allowlist:
+                        disallowed = sorted(parsed_bins - cur_allowed)
+                        if disallowed:
+                            raise SystemExit(
+                                f"{prog}: external bundle {bundle_label!r} cannot grant allow={','.join(disallowed)!r} "
+                                f"to child bundle {target!r}"
+                            )
+                        child_allowed = cur_allowed & parsed_bins
+                    else:
+                        child_allowed.update(parsed_bins)
+                        child_enforce = True
+                lookup_target = _qualify_nested_target(target, work_dir, cur_bdir, default_pkg, pkg_dir, prog)
+                canonical_bundle, inc_text, child_pkg, child_pkg_dir, child_bdir = _resolve_bundle_context(
+                    lookup_target,
+                    work_dir=cur_bdir,
+                    refresh=refresh,
+                    default_pkg=default_pkg or DEFAULT_RULES_PKG,
+                )
+                cur_active = list(active_bundles) if active_bundles else []
+                if any(cid == canonical_bundle for cid, _ in cur_active):
+                    cycle_path = " -> ".join([*(lbl for _, lbl in cur_active), target])
+                    raise SystemExit(f"{prog}: circular bundle reference detected: {cycle_path}")
+                child_is_external = _is_external_bundle_source(
+                    canonical_bundle,
+                    child_pkg,
+                    child_bdir,
+                    work_dir,
+                    parent_is_external=is_external,
+                )
+                merged_cli = {**active_vars, **vmap}
+                sub_resolved: dict[str, str] = {}
+                child_chain_label = (
+                    lookup_target
+                    if (default_pkg is not None and ":" not in target and not _is_local_path_spec(target))
+                    else target
+                )
+                child_chain = [*cur_chain, child_chain_label]
+                for sub_kind, sub_val, sub_cond, sub_chain in parse_spec(
+                    inc_text,
+                    work_dir=work_dir,
+                    cli_vars=merged_cli,
+                    refresh=refresh,
+                    resolved_vars=sub_resolved,
+                    piped=piped,
+                    chain=child_chain,
+                    active_bundles=[*cur_active, (canonical_bundle, target)],
+                    default_pkg=child_pkg,
+                    pkg_dir=child_pkg_dir,
+                    bundle_dir=child_bdir,
+                    is_external=child_is_external,
+                    allowed_cmds=child_allowed,
+                    enforce_allowlist=child_enforce,
+                    external_chains=external_chains,
+                    session_vars=session_vars,
+                ):
+                    comb_cond = " ".join(c for c in (cond_expr, sub_cond) if c) or None
+                    entries.append((sub_kind, sub_val, comb_cond, sub_chain))
+                for rk, rv in sub_resolved.items():
+                    if not active_vars.get(rk):
+                        active_vars[rk] = rv
+                        bvars[rk] = rv
+                        if resolved_vars is not None:
+                            resolved_vars[rk] = rv
+                        if session_vars is not None:
+                            session_vars[rk] = rv
+            elif line in ("export", "expose") or line.startswith(("export ", "expose ")):
+                kw = "export" if (line == "export" or line.startswith("export ")) else "expose"
+                exp_raw = line[len(kw) :].strip()
+                if not exp_raw:
+                    continue
+                for var_key in _parse_export_keys(exp_raw, bundle_label, prog):
+                    promote_export(var_key)
+                    entries.append(("export", var_key, cond_expr, list(cur_chain)))
+            elif line == "prompt" or line.startswith("prompt "):
+                p_str = line[len("prompt") :].strip()
+                if p_str:
+                    entries.append(("prompt", p_str, cond_expr, list(cur_chain)))
+            else:
+                raise SystemExit(
+                    f"{prog}: invalid line in {bundle_label}: {line!r} (expected 'bundle ...', 'rule ...', "
+                    f"'file ...', 'cmd ...', 'prompt ...', 'let ...', 'export ...', 'if ...', or 'allow ...')"
+                )
+
+    exec_nodes(ast_nodes, [])
     return entries
 
 
@@ -601,19 +668,12 @@ def _run_spec_command(cmd_str: str, cwd: Path) -> tuple[int, str, int]:
             elapsed_ms = max(0, int(round((time.monotonic() - t0) * 1000)))
             return 1, str(exc), elapsed_ms
 
-    env_shell = os.environ.get("AGENTS_BUNDLE_SHELL", "").strip()
-    if env_shell:
-        shell_bin = env_shell
-    elif os.name == "nt":
-        shell_bin = "pwsh" if shutil.which("pwsh") else "powershell"
-    else:
-        shell_bin = "bash"
-    shell_flag = "-Command" if Path(shell_bin).stem.lower() in ("pwsh", "powershell") else "-c"
+    shell_bin = os.environ.get("AGENTS_BUNDLE_SHELL", "").strip() or "bash"
     env = {**os.environ, "PYTHONUTF8": "1"}
     env["PATH"] = f"{self_dir}{os.pathsep}{Path.home() / '.local/bin'}{os.pathsep}{env.get('PATH', '')}"
     try:
         r = subprocess.run(
-            [shell_bin, shell_flag, cmd_str],
+            [shell_bin, "-c", cmd_str],
             cwd=str(cwd),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -655,16 +715,21 @@ def build_bundle(
         wdir = Path.cwd().resolve()
     spec_file = find_spec_file(wdir) if spec_text is None else None
     if spec_text is None and spec_file is None:
-        sys.stderr.write(f"{prog}: {SPEC_FILE_NAME} not found in {wdir} (run '{prog} --init' to create a starter template)\n")
+        sys.stderr.write(
+            f"{prog}: {SPEC_FILE_NAME} or {LEGACY_SPEC_FILE_NAME} not found in {wdir} "
+            f"(run '{prog} --init' to create a starter template)\n"
+        )
         raise SystemExit(2)
 
     if spec_file is not None:
         spec_dir = spec_file.parent
         spec_source = spec_file.read_text(encoding="utf-8")
-        root_bundles = [(str(spec_file.resolve()), SPEC_FILE_NAME)]
+        spec_label = spec_file.name
+        root_bundles = [(str(spec_file.resolve()), spec_label)]
     else:
         spec_dir = wdir
         spec_source = spec_text or ""
+        spec_label = SPEC_FILE_NAME
         root_bundles = []
     effective_cli_vars: dict[str, str] = dict(cli_vars or {})
     cli_allow_raw = effective_cli_vars.pop("allow", None) if spec_file is None else None
@@ -673,6 +738,7 @@ def build_bundle(
     )
     enforce_allowlist = spec_file is not None or cli_allow_raw is not None
     external_chains: dict[tuple[str, ...], tuple[str, set[str] | None]] = {}
+    session_vars: dict[str, str] = dict(effective_cli_vars)
     resolved_vars: dict[str, str] = {}
     entries = parse_spec(
         spec_source,
@@ -681,29 +747,29 @@ def build_bundle(
         refresh=refresh,
         resolved_vars=resolved_vars,
         piped=piped,
-        chain=[SPEC_FILE_NAME] if spec_file is not None else None,
+        chain=[spec_label] if spec_file is not None else None,
         active_bundles=root_bundles,
         allowed_cmds=init_allowed,
         enforce_allowlist=enforce_allowlist,
         external_chains=external_chains,
+        session_vars=session_vars,
     )
-    effective_cli_vars.update(resolved_vars)
+    session_vars.update(resolved_vars)
     boundary = secrets.token_hex(16)
     fragment_boundary = None if plain else boundary
     section_blocks: list[str] = []
     warnings: list[str] = []
     pending_rules: list[tuple[str, str, str, list[str]]] = []
-    pending_cmds: list[tuple[str, list[str]]] = []
+    middle_items: list[tuple[str, object]] = []
     spec_prompts: list[tuple[str, list[str]]] = []
-    spec_expose: list[str] = []
-    included_files: list[tuple[str, bool, list[str]]] = []
+    spec_exports: list[str] = []
     up_groups: dict[str, list[tuple[dict[str, object], str]]] = {
         "rules": [],
         "cmds": [],
-        "includes": [],
+        "files": [],
         "prompts": [],
     }
-    rule_vars = {**builtin_vars(spec_dir, piped=piped), **effective_cli_vars}
+    rule_vars = {**builtin_vars(spec_dir, piped=piped), **session_vars}
 
     def normalize_rule_body(raw_body: str, name: str) -> str:
         return _render_rule_vars(_parse_md_text(raw_body, name)[1], rule_vars).strip()
@@ -720,6 +786,10 @@ def build_bundle(
             up_rendered = normalize_rule_body(up_body, up_uid)
             if up_rendered:
                 pending_rules.append((up_uid, f"# [upstream rule {up_uid}]", up_rendered, meta_chain(up_meta)))
+        for up_meta, up_content in up_groups["cmds"]:
+            middle_items.append(("up_cmd", (dict(up_meta), up_content)))
+        for up_meta, up_content in up_groups["files"]:
+            middle_items.append(("span", span_from_fragment(up_meta, up_content, wdir)))
 
     for kind, val, cond_expr, entry_chain in entries:
         if kind == "directive":
@@ -727,13 +797,13 @@ def build_bundle(
             d_kind = parts[0]
             target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
             base_trace = f"[if {cond_expr}] {d_kind} {target}" if cond_expr else f"{d_kind} {target}"
-            trace_chain = [b for b in entry_chain if b != SPEC_FILE_NAME]
+            trace_chain = [b for b in entry_chain if b not in (SPEC_FILE_NAME, LEGACY_SPEC_FILE_NAME)]
             if trace_chain:
                 bundle_trace = " -> ".join(f"bundle {b}" for b in trace_chain)
                 trace_start = f"{bundle_trace} -> {base_trace}"
             else:
                 trace_start = base_trace
-            merged_vmap = {**vmap, **effective_cli_vars}
+            merged_vmap = {**vmap, **session_vars}
             pending_rules.extend(
                 collect_directive_items(
                     d_kind,
@@ -748,14 +818,39 @@ def build_bundle(
                 )
             )
         elif kind == "cmd":
-            pending_cmds.append((val, entry_chain))
-        elif kind == "expose":
-            if val not in spec_expose:
-                spec_expose.append(val)
-        elif kind == "include":
-            included_files.append((val, False, entry_chain))
+            ext_policy = external_chains.get(tuple(entry_chain))
+            if ext_policy is not None and ext_policy[1] is not None:
+                _check_command_allowed(val, ext_policy[1], ext_policy[0], prog)
+            middle_items.append(("cmd", (val, list(entry_chain))))
+        elif kind == "export":
+            if val not in spec_exports:
+                spec_exports.append(val)
+        elif kind in ("file", "include"):
+            clean = val.strip()
+            if not clean:
+                continue
+            ext_policy = external_chains.get(tuple(entry_chain))
+            slices = _expand_include(
+                wdir,
+                clean,
+                root_dir=spec_dir if ext_policy is not None else None,
+                bundle_label=ext_policy[0] if ext_policy is not None else None,
+            )
+            for p, start, end in slices:
+                middle_items.append(("span", read_span(p, display_path(p, spec_dir), start, end, entry_chain)))
         elif kind == "prompt":
             spec_prompts.append((val, entry_chain))
+
+    for extra in extra_files or []:
+        clean = extra.strip()
+        if not clean:
+            continue
+        slices = _expand_include(wdir, clean)
+        if not slices:
+            warnings.append(f"missing file: {clean}")
+            continue
+        for p, start, end in slices:
+            middle_items.append(("span", read_span(p, display_path(p, spec_dir), start, end, [])))
 
     pending_rules = [r for r in pending_rules if r[0] != LEGACY_RULE_ID]
     embedded = normalize_rule_body(embedded_rule_text(), EMBEDDED_RULE_NAME)
@@ -782,60 +877,62 @@ def build_bundle(
                         }
                     )
 
-    for up_meta, up_content in up_groups["cmds"]:
-        wrapped_up = wrap_bundle_fragment(fragment_boundary, dict(up_meta), up_content)
-        section_blocks.append(f"{wrapped_up}\n")
-        if records is not None:
-            records.append(dict(up_meta))
+    raw_spans: list[IncludeSpan] = [item[1] for item in middle_items if item[0] == "span"]  # type: ignore[misc]
+    merged_span_list = merge_spans(raw_spans)
+    merged_by_id = {id(s): s for s in merged_span_list}
+    # Map each first-occurrence key/range position to the surviving merged span
+    surviving_spans = list(merged_span_list)
+    used_merged: set[int] = set()
 
-    for cmd_val, cmd_chain in pending_cmds:
-        ext_policy = external_chains.get(tuple(cmd_chain))
-        if ext_policy is not None and ext_policy[1] is not None:
-            _check_command_allowed(cmd_val, ext_policy[1], ext_policy[0], prog)
-
-    for cmd_val, cmd_chain in pending_cmds:
-        rc, out, elapsed_ms = _run_spec_command(cmd_val, spec_dir)
-        if rc != 0:
-            warnings.append(f"command exited {rc}: {cmd_val}")
-        cmd_meta: dict[str, object] = {
-            "kind": "cmd",
-            "name": cmd_val,
-            "chain": list(cmd_chain),
-            "rc": rc,
-            "ms": elapsed_ms,
-        }
-        wrapped_cmd = wrap_bundle_fragment(fragment_boundary, cmd_meta, f"===== $ {cmd_val} =====\n{out}")
-        section_blocks.append(f"{wrapped_cmd}\n")
-        if records is not None:
-            records.append(cmd_meta)
-
-    for extra in extra_files or []:
-        included_files.append((extra, True, []))
-
-    spans = [span_from_fragment(m, c, wdir) for m, c in up_groups["includes"]]
-    for raw_file, warn_missing, inc_chain in included_files:
-        clean = raw_file.strip()
-        if not clean:
-            continue
-        ext_policy = external_chains.get(tuple(inc_chain))
-        slices = _expand_include(
-            wdir,
-            clean,
-            root_dir=spec_dir if ext_policy is not None else None,
-            bundle_label=ext_policy[0] if ext_policy is not None else None,
-        )
-        if not slices:
-            if warn_missing:
-                warnings.append(f"missing file: {clean}")
-            continue
-        for p, start, end in slices:
-            spans.append(read_span(p, display_path(p, spec_dir), start, end, inc_chain))
-    for span in merge_spans(spans):
-        inc_meta, inc_text = render_span(span)
-        wrapped_inc = wrap_bundle_fragment(fragment_boundary, inc_meta, inc_text)
-        section_blocks.append(f"{wrapped_inc}\n")
-        if records is not None:
-            records.append(inc_meta)
+    for m_kind, m_payload in middle_items:
+        if m_kind == "up_cmd":
+            up_meta, up_content = m_payload  # type: ignore[misc]
+            wrapped_up = wrap_bundle_fragment(fragment_boundary, dict(up_meta), up_content)
+            section_blocks.append(f"{wrapped_up}\n")
+            if records is not None:
+                records.append(dict(up_meta))
+        elif m_kind == "cmd":
+            cmd_val, cmd_chain = m_payload  # type: ignore[misc]
+            rc, out, elapsed_ms = _run_spec_command(cmd_val, spec_dir)
+            if rc != 0:
+                warnings.append(f"command exited {rc}: {cmd_val}")
+            cmd_meta: dict[str, object] = {
+                "kind": "cmd",
+                "name": cmd_val,
+                "chain": list(cmd_chain),
+                "rc": rc,
+                "ms": elapsed_ms,
+            }
+            wrapped_cmd = wrap_bundle_fragment(fragment_boundary, cmd_meta, f"===== $ {cmd_val} =====\n{out}")
+            section_blocks.append(f"{wrapped_cmd}\n")
+            if records is not None:
+                records.append(cmd_meta)
+        elif m_kind == "span":
+            orig_span: IncludeSpan = m_payload  # type: ignore[assignment]
+            chosen: IncludeSpan | None = None
+            if id(orig_span) in merged_by_id and id(orig_span) not in used_merged:
+                chosen = orig_span
+            else:
+                for cand in surviving_spans:
+                    if id(cand) not in used_merged and cand.key == orig_span.key:
+                        if cand.whole_text is not None or (
+                            orig_span.start is not None
+                            and orig_span.end is not None
+                            and cand.start is not None
+                            and cand.end is not None
+                            and cand.start <= orig_span.end
+                            and orig_span.start <= cand.end
+                        ):
+                            chosen = cand
+                            break
+            if chosen is None:
+                continue
+            used_merged.add(id(chosen))
+            inc_meta, inc_text = render_span(chosen)
+            wrapped_inc = wrap_bundle_fragment(fragment_boundary, inc_meta, inc_text)
+            section_blocks.append(f"{wrapped_inc}\n")
+            if records is not None:
+                records.append(inc_meta)
 
     all_prompt_items = [*spec_prompts]
     if prompt_text and prompt_text.strip():
@@ -871,29 +968,24 @@ def build_bundle(
 
     header_lines: list[str] = []
     if not plain:
-        exposed_headers = ["Role", "Task", "Title"]
-        up_expose = [_normalize_header_name(h) for h in (upstream.expose if upstream else [])]
-        for hdr in [*spec_expose, *env_expose(prog), *up_expose]:
-            if hdr not in exposed_headers:
-                exposed_headers.append(hdr)
         cmd_line = shlex.join([prog, *raw_argv]) if raw_argv else prog
         if upstream is not None and upstream.command:
             cmd_line = f"{upstream.command} | {cmd_line}"
         header_lines.extend(
             [
                 f"Bundle-Command: {cmd_line}",
+                f"Bundle-Name: {PRODUCER_NAME}",
                 f"Bundle-Boundary: {boundary}",
                 f"Bundle-Protocol: {PROTOCOL_VERSION}",
-                f"Bundle-Expose: {', '.join(exposed_headers)}",
             ]
         )
-        hidden_headers = [_normalize_header_name(h) for h in (upstream.hide if upstream else [])]
-        if hidden_headers:
-            header_lines.append(f"Bundle-Hide: {', '.join(dict.fromkeys(hidden_headers))}")
-    for k, v in effective_cli_vars.items():
-        if v != "" and k != "workdir":
-            hdr_key = _normalize_header_name(k)
-            header_lines.append(f"{hdr_key}: {v}")
+    for exp_key in spec_exports:
+        if exp_key == "workdir":
+            continue
+        val = session_vars.get(exp_key, "")
+        if val != "":
+            hdr_key = _normalize_header_name(exp_key)
+            header_lines.append(f"{hdr_key}: {val}")
     header_lines.append(f"Workdir: {wdir}")
     header = "\n".join(header_lines) + "\n"
     blocks = [header, *section_blocks]
@@ -944,7 +1036,7 @@ def cmd_bundle(
             i += 2
         elif a.startswith("-"):
             raise SystemExit(f"{prog}: unknown option: {a}")
-        elif "=" in a and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", a, flags=re.DOTALL) and not Path(a).exists():
+        elif "=" in a and re.fullmatch(rf"{VAR_NAME_PATTERN}=.*", a, flags=re.DOTALL) and not Path(a).exists():
             k, v = a.split("=", 1)
             cli_vars[k.strip()] = v.strip()
             i += 1

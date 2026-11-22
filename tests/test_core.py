@@ -17,7 +17,6 @@ class TestCoreHelpers(unittest.TestCase):
         for argv0, expected in (
             ("/x/agents_bundle", "agents_bundle"),
             ("agents_bundle.py", "agents_bundle"),
-            ("/x/ab.cmd", "ab"),
             (".py", ".py"),
             ("", "agents_bundle"),
         ):

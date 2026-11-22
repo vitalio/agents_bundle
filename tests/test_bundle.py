@@ -12,14 +12,14 @@ from tests.helpers import AgentsBundleTestCase, SCRIPT
 
 class TestBundle(AgentsBundleTestCase):
     def test_ruleset_rule_if_conditions_and_dollar_commands(self):
-        cur_os = "windows" if os.name == "nt" else ("macos" if sys.platform == "darwin" else "linux")
-        other_os = "windows" if cur_os != "windows" else "linux"
+        cur_os = "macos" if sys.platform == "darwin" else "linux"
+        other_os = "macos" if cur_os == "linux" else "linux"
         (self.tmp / "AGENTS.md").write_text("# Project Rules\n", encoding="utf-8")
         (self.tmp / "extra.txt").write_text("extra content\n", encoding="utf-8")
         (self.tmp / ".agents_bundle").write_text(
             "ruleset vitalio/agents-rules:core lang=Spanish\n"
             f"[if os={cur_os}] rule vitalio/agents-rules:os/linux\n"
-            f"[if os={other_os}] rule vitalio/agents-rules:os/windows\n"
+            f"[if os={other_os}] rule vitalio/agents-rules:os/macos\n"
             f"[if os={cur_os}]\n"
             "    rule vitalio/agents-rules:stack/python-cli py_min=3.12\n"
             "[/if]\n"
@@ -37,12 +37,13 @@ class TestBundle(AgentsBundleTestCase):
         )
         self._assert_ok(rb)
         self.assertIn("Bundle-Command: agents_bundle extra.txt -p 'Solve task 1'", rb.stdout)
+        self.assertIn("Bundle-Name: agents_bundle\n", rb.stdout)
         self.assertIn("===== Rules =====", rb.stdout)
         self.assertNotIn("# [ruleset", rb.stdout)
         self.assertIn("in Spanish", rb.stdout)
         self.assertNotIn("Clean external text & two-step external changes:", rb.stdout)
         self.assertIn("Linux & POSIX shell rules:", rb.stdout)
-        self.assertNotIn("Windows & PowerShell 7+ (`pwsh`) rules:", rb.stdout)
+        self.assertNotIn("macOS & BSD userland rules:", rb.stdout)
         self.assertIn("Python 3.12+ compatibility", rb.stdout)
 
         # Verify -v / --verbose includes provenance trace comments with [if ...]
@@ -98,7 +99,8 @@ class TestBundle(AgentsBundleTestCase):
             "bundle vitalio/agents_bundle\n"
             "ruleset vitalio/agents-rules:core\n"
             "bundle vitalio/todo_md\n"
-            f"bundle {inc_file.as_posix()}\n",
+            f"bundle {inc_file.as_posix()}\n"
+            "export role task\n",
             encoding="utf-8",
         )
         r_none = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
@@ -112,7 +114,8 @@ class TestBundle(AgentsBundleTestCase):
         r_plan = self._run([str(SCRIPT), "role=plan"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
         self._assert_ok(r_plan)
         self.assertIn("Bundle-Command: agents_bundle role=plan\n", r_plan.stdout)
-        self.assertIn("Bundle-Expose: Role, Task, Title\n", r_plan.stdout)
+        self.assertIn("Bundle-Name: agents_bundle\n", r_plan.stdout)
+        self.assertNotIn("Bundle-Expose:", r_plan.stdout)
         self.assertIn("Role: plan\n", r_plan.stdout)
         self.assertIn("all_tasks", r_plan.stdout)
         self.assertNotIn("focused_task_", r_plan.stdout)
@@ -121,7 +124,7 @@ class TestBundle(AgentsBundleTestCase):
         r_exec = self._run([str(SCRIPT), "role=execute"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
         self._assert_ok(r_exec)
         self.assertIn("Bundle-Command: agents_bundle role=execute\n", r_exec.stdout)
-        self.assertIn("Bundle-Expose: Role, Task, Title\n", r_exec.stdout)
+        self.assertIn("Bundle-Name: agents_bundle\n", r_exec.stdout)
         self.assertIn("Role: execute\n", r_exec.stdout)
         self.assertIn("all_tasks", r_exec.stdout)
         self.assertNotIn("focused_task_", r_exec.stdout)
@@ -136,7 +139,8 @@ class TestBundle(AgentsBundleTestCase):
         )
         self._assert_ok(r_foc)
         self.assertIn("Bundle-Command: agents_bundle role=execute task=A2 lang=German -p 'Focus on edge cases'", r_foc.stdout)
-        self.assertIn("Role: execute\nTask: A2\nLang: German\n", r_foc.stdout)
+        self.assertIn("Role: execute\nTask: A2\n", r_foc.stdout)
+        self.assertNotIn("Lang: German\n", r_foc.stdout)
         self.assertIn("focused_task_A2", r_foc.stdout)
         self.assertNotIn("all_tasks", r_foc.stdout)
         self.assertIn("in German", r_foc.stdout)
@@ -190,6 +194,7 @@ class TestBundle(AgentsBundleTestCase):
     def test_agents_bundle_vars_env_and_cli_override(self):
         (self.tmp / ".agents_bundle").write_text(
             "ruleset vitalio/agents-rules:core lang=English\n"
+            "export lang mode\n"
             "[if mode=custom] prompt Custom mode active ({chat_lang:default})\n",
             encoding="utf-8",
         )
@@ -197,8 +202,9 @@ class TestBundle(AgentsBundleTestCase):
         r_env = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, env=env, check=False)
         self._assert_ok(r_env)
         self.assertIn("Bundle-Command: agents_bundle\n", r_env.stdout)
-        self.assertIn("Bundle-Expose: Role, Task, Title\n", r_env.stdout)
-        self.assertIn("Lang: Spanish\nMode: custom\nChat-Lang: French\n", r_env.stdout)
+        self.assertIn("Bundle-Name: agents_bundle\n", r_env.stdout)
+        self.assertIn("Lang: Spanish\nMode: custom\n", r_env.stdout)
+        self.assertNotIn("Chat-Lang:", r_env.stdout)
         self.assertIn("in Spanish", r_env.stdout)
         self.assertIn("Custom mode active (French)", r_env.stdout)
 
@@ -251,6 +257,7 @@ class TestBundle(AgentsBundleTestCase):
             "ruleset vitalio/agents-rules:core\n"
             "[if role=execute]\n"
             "    var task=$(printf 'F7')\n"
+            "    export role task\n"
             "    include $(printf 'src/target.py\\nmissing/file.py\\n')\n"
             "    prompt Executing {task:}\n"
             "[/if]\n",
@@ -322,28 +329,27 @@ class TestBundle(AgentsBundleTestCase):
         self.assertIn("Role: execute\nTask: F15\n", r_pipe_id.stdout)
         self.assertIn("===== Prompt =====\nExecuting F15\n", r_pipe_id.stdout)
 
-    def test_windows_default_pwsh_shell_and_posix_include_paths(self):
+    def test_custom_posix_shell_and_posix_file_paths(self):
         fake_bin = self.tmp / "fake_bin"
         fake_bin.mkdir()
-        pwsh_shim = fake_bin / "pwsh"
-        pwsh_shim.write_text(
+        sh_shim = fake_bin / "custom_sh"
+        sh_shim.write_text(
             "#!/usr/bin/env python3\n"
             "import sys\n"
-            "print('PWSH_ARGS:' + '|'.join(sys.argv[1:]))\n",
+            "print('SH_ARGS:' + '|'.join(sys.argv[1:]))\n",
             encoding="utf-8",
         )
-        pwsh_shim.chmod(0o755)
+        sh_shim.chmod(0o755)
         sub = self.tmp / "pkg"
         sub.mkdir()
         (sub / "mod.py").write_text("X = 1\n", encoding="utf-8")
-        (self.tmp / ".agents_bundle").write_text(
-            "ruleset vitalio/agents-rules:core\n"
-            "include pkg/mod.py\n"
-            "$ git status -sb\n",
+        (self.tmp / ".ctx.bundle").write_text(
+            "bundle vitalio/agents-rules:core\n"
+            "file pkg/mod.py\n"
+            "cmd git status -sb\n",
             encoding="utf-8",
         )
-        # Verify pwsh uses -Command flag when configured via AGENTS_BUNDLE_SHELL
-        env = {**os.environ, "AGENTS_BUNDLE_SHELL": str(pwsh_shim)}
+        env = {**os.environ, "AGENTS_BUNDLE_SHELL": str(sh_shim)}
         r = self._run(
             [str(SCRIPT)],
             cwd=str(self.tmp),
@@ -353,7 +359,7 @@ class TestBundle(AgentsBundleTestCase):
             check=False,
         )
         self._assert_ok(r)
-        self.assertIn("PWSH_ARGS:-Command|git status -sb", r.stdout)
+        self.assertIn("SH_ARGS:-c|git status -sb", r.stdout)
         self.assertIn("===== $ cat pkg/mod.py =====\nX = 1\n", r.stdout)
 
     def test_single_rules_section_when_bundles_contain_commands(self):
@@ -396,12 +402,11 @@ class TestBundle(AgentsBundleTestCase):
         self._assert_ok(ri)
         init_lines = [
             ln.strip()
-            for ln in (init_dir / ".agents_bundle").read_text(encoding="utf-8").splitlines()
+            for ln in (init_dir / ".ctx.bundle").read_text(encoding="utf-8").splitlines()
             if ln.strip() and not ln.strip().startswith("#")
         ]
-        self.assertFalse([ln for ln in init_lines if ln.startswith("bundle ")])
-        self.assertIn("include AGENTS.md", init_lines)
-        self.assertIn("ruleset vitalio/agents-rules:default", init_lines)
+        self.assertIn("file AGENTS.md", init_lines)
+        self.assertIn("bundle vitalio/agents-rules:default", init_lines)
 
     def test_piped_workdir_preamble_and_dir_priority(self):
         proj = self.tmp / "target_proj"
@@ -410,6 +415,7 @@ class TestBundle(AgentsBundleTestCase):
         (proj / "note.txt").write_text("hello from target\n", encoding="utf-8")
         (proj / ".agents_bundle").write_text(
             "ruleset vitalio/agents-rules:core\n"
+            "export project task title role chat_lang\n"
             "$ cat AGENTS.md\n"
             "$ agents_bundle --tree\n"
             "$ pwd\n",
@@ -441,7 +447,7 @@ class TestBundle(AgentsBundleTestCase):
         self._assert_ok(r)
         self.assertIn(f"Workdir: {proj.resolve()}\n", r.stdout)
         self.assertIn("Project: demo\n", r.stdout)
-        self.assertIn("Bundle-Expose: Role, Task, Title\n", r.stdout)
+        self.assertIn("Bundle-Name: agents_bundle\n", r.stdout)
         self.assertIn("Task: F18\n", r.stdout)
         self.assertIn("Title: Demo task title\n", r.stdout)
         self.assertIn("Role: execute\n", r.stdout)
@@ -500,6 +506,7 @@ class TestBundle(AgentsBundleTestCase):
         (override_proj / "AGENTS.md").write_text("# Override Rules\n", encoding="utf-8")
         (override_proj / ".agents_bundle").write_text(
             "ruleset vitalio/agents-rules:core\n"
+            "export task\n"
             "$ cat AGENTS.md\n",
             encoding="utf-8",
         )
@@ -601,72 +608,70 @@ class TestBundle(AgentsBundleTestCase):
         self._assert_ok(r_null)
         self.assertIn("marker_should_not_run", r_null.stdout)
 
-    def test_bundle_boundary_nonce_and_expose_control(self):
+    def test_bundle_boundary_nonce_and_export_lexical_scoping(self):
         sub_bundle = self.tmp / "extra.bundle"
         sub_bundle.write_text(
-            "expose project_id\n"
-            "[if role=execute] expose work_item, role\n",
+            "let local_only=secret_val\n"
+            "let project_id=from_child\n"
+            "export project_id\n"
+            "if role=execute\n"
+            "    export work_item, role\n",
             encoding="utf-8",
         )
-        (self.tmp / ".agents_bundle").write_text(
-            "ruleset vitalio/agents-rules:core\n"
-            "expose chat_lang custom-key\n"
-            "expose {opt_hdr:}\n"
-            f"bundle {sub_bundle.as_posix()}\n",
+        sibling_bundle = self.tmp / "sibling.bundle"
+        sibling_bundle.write_text(
+            "prompt Sibling sees project={project_id:none} local={local_only:none}\n",
+            encoding="utf-8",
+        )
+        (self.tmp / ".ctx.bundle").write_text(
+            "bundle vitalio/agents-rules:core\n"
+            "export chat_lang title\n"
+            "export {opt_hdr:}\n"
+            f"bundle {sub_bundle.as_posix()}\n"
+            f"bundle {sibling_bundle.as_posix()}\n",
             encoding="utf-8",
         )
 
-        # Default + expose directives without AGENTS_BUNDLE_EXPOSE; unexposed vars stay out of Bundle-Expose
+        # Exported vars appear in preamble and sibling bundle; unexported CLI/let vars do not leak
         r1 = self._run(
-            [str(SCRIPT), "role=execute", "task=F19", "title=Expose check", "lang=German", "chat_lang=French", "project_id=demo"],
+            [str(SCRIPT), "role=execute", "task=F19", "title=Export check", "lang=German", "chat_lang=French"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
             check=False,
         )
         self._assert_ok(r1)
-        self.assertIn(
-            "Bundle-Expose: Role, Task, Title, Chat-Lang, Custom-Key, Project-Id, Work-Item\n",
-            r1.stdout,
-        )
-        self.assertIn("Title: Expose check\n", r1.stdout)
-        self.assertIn("Lang: German\n", r1.stdout)
+        self.assertIn("Bundle-Name: agents_bundle\n", r1.stdout)
+        self.assertNotIn("Bundle-Expose:", r1.stdout)
+        self.assertNotIn("Bundle-Hide:", r1.stdout)
+        self.assertIn("Chat-Lang: French\n", r1.stdout)
+        self.assertIn("Title: Export check\n", r1.stdout)
+        self.assertIn("Project-Id: from_child\n", r1.stdout)
+        self.assertIn("Role: execute\n", r1.stdout)
+        self.assertNotIn("Task:", r1.stdout)
+        self.assertNotIn("\nLang:", r1.stdout)
+        self.assertNotIn("Local-Only:", r1.stdout)
+        self.assertIn("Sibling sees project=from_child local=none", r1.stdout)
         m1 = re.search(r"^Bundle-Boundary: ([0-9a-f]+)$", r1.stdout, flags=re.MULTILINE)
         self.assertIsNotNone(m1, msg=r1.stdout)
 
-        # Second run generates a distinct nonce and excludes conditional expose when condition is false
-        env_exp = {**os.environ, "AGENTS_BUNDLE_EXPOSE": "build_id, chat-lang, trace_tag"}
+        # Second run generates a distinct nonce and excludes conditional export when condition is false
         r2 = self._run(
-            [str(SCRIPT), "role=plan", "opt_hdr=extra_scope"],
+            [str(SCRIPT), "role=plan", "opt_hdr=extra_scope", "extra_scope=yes"],
             cwd=str(self.tmp),
-            env=env_exp,
             capture_output=True,
             text=True,
             check=False,
         )
         self._assert_ok(r2)
-        self.assertIn(
-            "Bundle-Expose: Role, Task, Title, Chat-Lang, Custom-Key, Extra-Scope, Project-Id, Build-Id, Trace-Tag\n",
-            r2.stdout,
-        )
+        self.assertIn("Extra-Scope: yes\n", r2.stdout)
+        self.assertNotIn("Role: plan\n", r2.stdout)
         m2 = re.search(r"^Bundle-Boundary: ([0-9a-f]+)$", r2.stdout, flags=re.MULTILINE)
         self.assertIsNotNone(m2, msg=r2.stdout)
         self.assertNotEqual(m1.group(1), m2.group(1))
 
-        # Invalid AGENTS_BUNDLE_EXPOSE or expose key fails explicitly
-        bad_env = {**os.environ, "AGENTS_BUNDLE_EXPOSE": "bad=key"}
-        r_bad = self._run(
-            [str(SCRIPT)],
-            cwd=str(self.tmp),
-            env=bad_env,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertNotEqual(r_bad.returncode, 0, msg=f"stdout:\n{r_bad.stdout}\nstderr:\n{r_bad.stderr}")
-        self.assertIn("AGENTS_BUNDLE_EXPOSE", r_bad.stderr)
-
-        (self.tmp / ".agents_bundle").write_text("expose bad=key\n", encoding="utf-8")
+        # Invalid export variable name fails explicitly
+        (self.tmp / ".ctx.bundle").write_text("export bad=key\n", encoding="utf-8")
         r_bad_spec = self._run(
             [str(SCRIPT)],
             cwd=str(self.tmp),
@@ -675,7 +680,7 @@ class TestBundle(AgentsBundleTestCase):
             check=False,
         )
         self.assertNotEqual(r_bad_spec.returncode, 0, msg=f"stdout:\n{r_bad_spec.stdout}\nstderr:\n{r_bad_spec.stderr}")
-        self.assertIn(".agents_bundle", r_bad_spec.stderr)
+        self.assertIn(".ctx.bundle", r_bad_spec.stderr)
 
     def test_source_provenance_and_command_telemetry(self):
         mod = self._load_bundle_module()
@@ -715,7 +720,7 @@ class TestBundle(AgentsBundleTestCase):
             by_val[("directive", "rule vitalio/agents-rules:release/single-file-build")],
             [],
         )
-        self.assertEqual(by_val[("include", "root_note.txt")], [])
+        self.assertEqual(by_val[("file", "root_note.txt")], [])
         self.assertEqual(by_val[("cmd", "printf root_ok")], [])
         self.assertEqual(by_val[("prompt", "Root prompt")], [])
 
@@ -723,7 +728,7 @@ class TestBundle(AgentsBundleTestCase):
         leaf_ref = leaf_bundle.as_posix()
         self.assertEqual(by_val[("directive", "rule vitalio/agents-rules:stack/python-cli")], [top_ref])
         self.assertEqual(by_val[("directive", "ruleset vitalio/agents-rules:default")], [top_ref, leaf_ref])
-        self.assertEqual(by_val[("include", "leaf_note.txt")], [top_ref, leaf_ref])
+        self.assertEqual(by_val[("file", "leaf_note.txt")], [top_ref, leaf_ref])
         self.assertEqual(by_val[("cmd", "printf leaf_ok")], [top_ref, leaf_ref])
         self.assertEqual(by_val[("prompt", "Leaf prompt")], [top_ref, leaf_ref])
 
@@ -812,7 +817,7 @@ class TestBundle(AgentsBundleTestCase):
         self.assertEqual(cmd_recs["exit 7"]["rc"], 7)
         self.assertIsInstance(cmd_recs["exit 7"]["ms"], int)
 
-        inc_recs = {r["name"]: r for r in records if r["kind"] == "include"}
+        inc_recs = {r["name"]: r for r in records if r["kind"] == "file"}
         self.assertEqual(inc_recs["leaf_note.txt"]["chain"], [".agents_bundle", top_ref, leaf_ref])
         self.assertEqual(inc_recs["root_note.txt"]["chain"], [".agents_bundle"])
         self.assertEqual(inc_recs["cli_note.txt"]["chain"], [])
@@ -947,20 +952,20 @@ class TestBundle(AgentsBundleTestCase):
         self.assertEqual(exit_meta["rc"], 3)
         self.assertEqual(exit_meta["chain"], [".agents_bundle"])
 
-        # Verify include fragments across bundle, .agents_bundle, and CLI
-        inc_frags = {meta["name"]: (meta, body) for meta, body in fragments if meta["kind"] == "include"}
+        # Verify file fragments across bundle, .agents_bundle, and CLI
+        inc_frags = {meta["name"]: (meta, body) for meta, body in fragments if meta["kind"] == "file"}
         self.assertEqual(
             inc_frags["sub_doc.txt"][0],
-            {"kind": "include", "name": "sub_doc.txt", "chain": [".agents_bundle", sub_ref]},
+            {"kind": "file", "name": "sub_doc.txt", "chain": [".agents_bundle", sub_ref]},
         )
         self.assertIn("sub doc line 1\nsub doc line 2", inc_frags["sub_doc.txt"][1])
         self.assertEqual(
             inc_frags["root_doc.txt"][0],
-            {"kind": "include", "name": "root_doc.txt", "chain": [".agents_bundle"]},
+            {"kind": "file", "name": "root_doc.txt", "chain": [".agents_bundle"]},
         )
         self.assertEqual(
             inc_frags["cli_doc.txt"][0],
-            {"kind": "include", "name": "cli_doc.txt", "chain": []},
+            {"kind": "file", "name": "cli_doc.txt", "chain": []},
         )
 
         # Verify prompt fragment
@@ -997,7 +1002,7 @@ class TestBundle(AgentsBundleTestCase):
     def test_plain_flag_and_env_omit_transport_headers_and_markers(self):
         (self.tmp / "sub.bundle").write_text(
             "rule vitalio/agents-rules:core/start\n"
-            "expose project_id\n"
+            "export role task project_id\n"
             "$ printf 'sub_cmd_out\\n'\n",
             encoding="utf-8",
         )
@@ -1054,8 +1059,9 @@ class TestBundle(AgentsBundleTestCase):
         )
         self._assert_ok(r_default)
         self.assertIn("Bundle-Command:", r_default.stdout)
+        self.assertIn("Bundle-Name: agents_bundle\n", r_default.stdout)
         self.assertIn("Bundle-Boundary:", r_default.stdout)
-        self.assertIn("Bundle-Expose: Role, Task, Title, Project-Id\n", r_default.stdout)
+        self.assertNotIn("Bundle-Expose:", r_default.stdout)
         _, frags = self._extract_fragments(r_default.stdout)
         self.assertTrue(len(frags) >= 5)
 
@@ -1069,10 +1075,8 @@ class TestBundle(AgentsBundleTestCase):
         (src / "sub" / "c.py").write_text("c1\n", encoding="utf-8")
         (src / "__pycache__" / "x.py").write_text("x1\n", encoding="utf-8")
         (self.tmp / "big.txt").write_text("".join(f"line{i}\n" for i in range(1, 11)), encoding="utf-8")
-        extras = ["big.txt:9-20", "nomatch/*.py", "big.txt:0-2", "big.txt:4-2"]
-        if os.name != "nt":
-            (self.tmp / "odd:1-2.txt").write_text("whole\n", encoding="utf-8")
-            extras.append("odd:1-2.txt")
+        extras = ["big.txt:9-20", "nomatch/*.py", "big.txt:0-2", "big.txt:4-2", "odd:1-2.txt"]
+        (self.tmp / "odd:1-2.txt").write_text("whole\n", encoding="utf-8")
         (self.tmp / ".agents_bundle").write_text(
             "include src/*.py\n"
             "include big.txt:2-3\n"
@@ -1084,7 +1088,7 @@ class TestBundle(AgentsBundleTestCase):
         records: list[dict[str, object]] = []
         body, warnings = mod.build_bundle(work_dir=self.tmp, extra_files=extras, records=records)
 
-        names = [r["name"] for r in records if r["kind"] == "include"]
+        names = [r["name"] for r in records if r["kind"] == "file"]
         expected = [
             "src/a.py",
             "src/b.py",
@@ -1092,25 +1096,23 @@ class TestBundle(AgentsBundleTestCase):
             "big.txt:5-5",
             "src/sub/c.py",
             "big.txt:9-20",
+            "odd:1-2.txt",
         ]
-        if os.name != "nt":
-            expected.append("odd:1-2.txt")
         self.assertEqual(names, expected)
         self.assertEqual(
             next(r for r in records if r.get("name") == "big.txt:2-3"),
-            {"kind": "include", "name": "big.txt:2-3", "chain": [".agents_bundle"]},
+            {"kind": "file", "name": "big.txt:2-3", "chain": [".agents_bundle"]},
         )
         for missing in ("nomatch/*.py", "big.txt:0-2", "big.txt:4-2"):
             self.assertIn(f"missing file: {missing}", warnings)
 
         _, frags = self._extract_fragments(body)
-        by_name = {m["name"]: b for m, b in frags if m["kind"] == "include"}
+        by_name = {m["name"]: b for m, b in frags if m["kind"] == "file"}
         self.assertEqual(by_name["src/a.py"], "===== $ cat src/a.py =====\na1\na2")
         self.assertEqual(by_name["big.txt:2-3"], "===== $ sed -n '2,3p' big.txt =====\nline2\nline3")
         self.assertEqual(by_name["big.txt:5-5"], "===== $ sed -n '5,5p' big.txt =====\nline5")
         self.assertEqual(by_name["big.txt:9-20"], "===== $ sed -n '9,20p' big.txt =====\nline9\nline10")
-        if os.name != "nt":
-            self.assertEqual(by_name["odd:1-2.txt"], "===== $ cat odd:1-2.txt =====\nwhole")
+        self.assertEqual(by_name["odd:1-2.txt"], "===== $ cat odd:1-2.txt =====\nwhole")
 
     def test_external_bundle_command_allowlist_and_static_inspection(self):
         pkg_dir = Path(os.environ["AGENTS_BUNDLE_LOCAL_PKG_DIR"])
@@ -1285,24 +1287,85 @@ class TestBundle(AgentsBundleTestCase):
                     self.assertNotIn("top secret", r_out.stdout)
 
             # 3. Symlink inside spec_dir pointing outside spec_dir is blocked for external bundle
-            if os.name != "nt":
-                sym = self.tmp / "leak_link.txt"
-                sym.symlink_to(outside_file)
-                (ext_bundles / "inc_symlink.bundle").write_text(
-                    "include leak_link.txt\n",
-                    encoding="utf-8",
-                )
-                (self.tmp / ".agents_bundle").write_text(
-                    "bundle vitalio/agents-rules:inc_symlink\n",
-                    encoding="utf-8",
-                )
-                r_sym = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
-                self.assertNotEqual(r_sym.returncode, 0)
-                self.assertIn("resolves outside repository root", r_sym.stderr)
-                self.assertNotIn("top secret", r_sym.stdout)
+            sym = self.tmp / "leak_link.txt"
+            sym.symlink_to(outside_file)
+            (ext_bundles / "inc_symlink.bundle").write_text(
+                "include leak_link.txt\n",
+                encoding="utf-8",
+            )
+            (self.tmp / ".agents_bundle").write_text(
+                "bundle vitalio/agents-rules:inc_symlink\n",
+                encoding="utf-8",
+            )
+            r_sym = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+            self.assertNotEqual(r_sym.returncode, 0)
+            self.assertIn("resolves outside repository root", r_sym.stderr)
+            self.assertNotIn("top secret", r_sym.stdout)
         finally:
             import shutil
             shutil.rmtree(outside_dir, ignore_errors=True)
+
+    def test_python_indented_if_elif_else_and_declaration_order_assembly(self):
+        (self.tmp / "first.txt").write_text("FIRST_FILE\n", encoding="utf-8")
+        (self.tmp / "second.txt").write_text("SECOND_FILE\n", encoding="utf-8")
+        adapter = self.tmp / "adapter.bundle"
+        adapter.write_text(
+            "if todo_md.role!=\n"
+            "    let role={todo_md.role:}\n"
+            "else if todo_md.prefix=D\n"
+            "    let role=design\n"
+            "elif todo_md.status=WIP,NEXT\n"
+            "    let role=work\n"
+            "else\n"
+            "    let role=plan\n"
+            "export role\n",
+            encoding="utf-8",
+        )
+        (self.tmp / ".ctx.bundle").write_text(
+            f"bundle {adapter.as_posix()}\n"
+            "rule vitalio/agents-rules:core/start vitalio/agents-rules:core/ssot\n"
+            "file first.txt {empty_files:}\n"
+            "cmd printf 'BETWEEN_FILES'\n"
+            "file second.txt first.txt\n",
+            encoding="utf-8",
+        )
+
+        for label, cli_args, expected_role in [
+            ("explicit_role", ["todo_md.role=audit", "todo_md.prefix=D"], "audit"),
+            ("else_if_branch", ["todo_md.prefix=D", "todo_md.status=WIP"], "design"),
+            ("elif_branch", ["todo_md.prefix=F", "todo_md.status=NEXT"], "work"),
+            ("else_branch", ["todo_md.prefix=F", "todo_md.status=NEW"], "plan"),
+        ]:
+            with self.subTest(branch=label):
+                r = self._run([str(SCRIPT), *cli_args], cwd=str(self.tmp))
+                self._assert_ok(r)
+                self.assertIn(f"Role: {expected_role}\n", r.stdout)
+                _n, frags = self._extract_fragments(r.stdout)
+                middle = [(m["kind"], m["name"]) for m, _ in frags if m["kind"] in ("file", "cmd")]
+                self.assertEqual(
+                    middle,
+                    [
+                        ("file", "first.txt"),
+                        ("cmd", "printf 'BETWEEN_FILES'"),
+                        ("file", "second.txt"),
+                    ],
+                )
+
+        # Syntax errors in Python-indented blocks fail fast
+        for label, bad_spec, err_sub in [
+            ("trailing_colon", "if role=work:\n    prompt x\n", "trailing ':'"),
+            ("endif_forbidden", "if role=work\n    prompt x\nendif\n", "'endif' is not supported"),
+            ("empty_block", "if role=work\nprompt x\n", "expected 4-space indented block"),
+            ("bad_indent_width", "if role=work\n  prompt x\n", "multiple of 4 spaces"),
+            ("tab_indent", "if role=work\n\tprompt x\n", "tabs are not allowed"),
+            ("orphan_else", "else\n    prompt x\n", "without matching 'if'"),
+            ("elif_after_else", "if a=1\n    prompt x\nelse\n    prompt y\nelif a=2\n    prompt z\n", "after 'else'"),
+        ]:
+            with self.subTest(syntax_error=label):
+                (self.tmp / ".ctx.bundle").write_text(bad_spec, encoding="utf-8")
+                r_bad = self._run([str(SCRIPT)], cwd=str(self.tmp))
+                self.assertNotEqual(r_bad.returncode, 0, msg=r_bad.stdout)
+                self.assertIn(err_sub, r_bad.stderr)
 
 
 if __name__ == "__main__":

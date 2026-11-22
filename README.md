@@ -1,44 +1,40 @@
 # agents_bundle
 
-**Unix-style context bundler, rule/ruleset engine, and token-budgeted repository file tree for AI coding agents.**
+Unix-style context bundler, rule/bundle engine, and token-budgeted repository
+file tree for AI coding agents on POSIX (`linux` and `macos`).
 
-`agents_bundle` executes `.agents_bundle` in the target working directory
-(`-C`/`--dir`, a piped `Workdir:` preamble on `stdin`, or the current directory),
-runs `ruleset ...`, `rule ...`, `bundle ...`, `allow ...`, `var ...`,
-`expose ...`, `include ...`, `prompt ...`, `[if ...]`, and `$ <cmd>` directives, includes any extra files and
-`-p/--prompt` text, emits `Bundle-Command`, `Bundle-Boundary`, `Bundle-Expose`
-(default: `Role, Task, Title`, extensible via `expose` or
-`AGENTS_BUNDLE_EXPOSE`), and `Workdir: <path>` in the bundle header (or plain
-Markdown/text via `--plain` / `AGENTS_BUNDLE_PLAIN=1`), and writes the assembled
-bundle strictly to `stdout` (sending warnings or errors to `stderr`) so it
-composes cleanly via Unix pipes.
+`agents_bundle` executes `.ctx.bundle` (with fallback to `.agents_bundle`) in
+the target working directory (`-C`/`--dir`, a piped `Workdir:` preamble on
+`stdin`, or the current directory), runs the 9-keyword `.bundle` language
+(`bundle`, `rule`, `file`, `cmd`, `prompt`, `let`, `export`,
+`if`/`else if`/`elif`/`else`, and `allow`), includes any extra CLI files and
+`-p/--prompt` text, emits `Bundle-Command`, `Bundle-Name: agents_bundle`,
+`Bundle-Boundary`, `Bundle-Protocol: 1`, exported `Key: Value` variable
+headers, and `Workdir: <path>` in the bundle header (or plain Markdown/text via
+`--plain` / `AGENTS_BUNDLE_PLAIN=1`), and writes the assembled bundle strictly
+to `stdout` (sending warnings or errors to `stderr`) so it composes cleanly via
+Unix pipes.
 
 When `stdin` is piped, leading `Key: Value` preamble headers (terminated by a
 blank line or EOF) are parsed automatically: `Workdir:` selects the working
-directory unless overridden by `-C`/`--dir`, `Bundle-*` transport headers are
-ignored, and other headers (`Task:`, `Role:`, etc.) map to lowercase template
-variables (`task`, `role`, ...) when not overridden by CLI `k=v` or
-`AGENTS_BUNDLE_VARS`. A single-token body still sets `task=<ID>`, any remaining
-body text is prepended to the prompt, and built-in `piped=1` is exposed when
-stdin prompt text is present so bundles can guard duplicate output with
-`[if piped!=1]`. When `stdin` is an actual pipe (FIFO) that delivers empty
-input, for example because an upstream command failed without writing to
-`stdout`, `agents_bundle` writes an error to `stderr` and exits `2` before
-running any `.agents_bundle` directives; non-FIFO non-TTY `stdin` such as
-`/dev/null` is still accepted.
+directory unless overridden by `-C`/`--dir`, and when `Bundle-Name: <producer>`
+is present, non-transport headers are automatically namespaced as
+`<producer>.<key_lower>` (for example `todo_md.task`, `todo_md.prefix`,
+`todo_md.status`, `todo_md.title`, `todo_md.files`, `todo_md.role`) while
+rejecting duplicate producer names in the same pipeline. A single-token body
+sets `task=<ID>` (or `<producer>.task=<ID>`), any remaining body text is
+prepended to the prompt, and built-in `piped=1` is exposed when stdin prompt
+text is present so bundles can guard duplicate output with `if piped!=1`. When
+`stdin` is an actual pipe (FIFO) that delivers empty input, `agents_bundle`
+writes an error to `stderr` and exits `2` before running any directives;
+non-FIFO non-TTY `stdin` such as `/dev/null` is still accepted.
 
 ## Quick Installation
 
-**Linux / macOS:**
+Linux / macOS:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/vitalio/agents_bundle/main/install.sh | sh
-```
-
-**Windows (PowerShell 7+):**
-
-```powershell
-irm https://raw.githubusercontent.com/vitalio/agents_bundle/main/install.ps1 | iex
 ```
 
 Custom command name or install directory:
@@ -54,25 +50,23 @@ agents_bundle --check-update
 agents_bundle --update
 ```
 
-## `.agents_bundle` Format
+## `.ctx.bundle` Format
 
 ```text
-ruleset vitalio/agents-rules:default
-rule vitalio/agents-rules:release/semver
-rule vitalio/agents-rules:stack/cli
+bundle vitalio/agents-rules:adapters/todo_md
+bundle vitalio/agents-rules:core
+rule vitalio/agents-rules:release/semver vitalio/agents-rules:stack/cli
 rule vitalio/agents-rules:stack/python-cli py_min=3.9
 
-$ cat AGENTS.md
-$ agents_bundle --tree -x archive_dir
-$ git status -sb
-[if role=work]
-    var task=$(todo_md next-id)
-    include $(todo_md files {task:})
-[/if]
-[if mode=summary]
-    $ git shortlog -sn
+file AGENTS.md
+if role=work
+    file {todo_md.files:}
+
+cmd agents_bundle --tree -x archive_dir
+cmd git status -sb
+if mode=summary
+    cmd git shortlog -sn
     prompt Summarize recent repository activity.
-[/if]
 ```
 
 ## CLI Usage
@@ -92,7 +86,7 @@ agents_bundle -p "Fix issue #12" src/main.py > bundle.txt
 agents_bundle -p "Review" 'src/*.py' src/bundle.py:395-445 > bundle.txt
 agents_bundle --plain role=work > plain_bundle.txt
 AGENTS_BUNDLE_PLAIN=1 agents_bundle > plain_bundle.txt
-agents_bundle ruleset vitalio/agents-rules:default os=windows
+agents_bundle bundle vitalio/agents-rules:default os=macos --plain
 agents_bundle rule vitalio/agents-rules:release/single-file-build
 agents_bundle bundle vitalio/todo_md role=design --plain
 agents_bundle --refresh > bundle.txt
@@ -101,72 +95,79 @@ agents_bundle --list
 agents_bundle --tree -x bumps -x resolutions --max-lines 160
 ```
 
-`agents_bundle bundle <pkg>[:<name>] [k=v]` renders a single bundle,
-symmetric with `ruleset` and `rule`, without requiring a `.agents_bundle`
-file: the bundle's rules, command sections, included files, and prompts are
-emitted in the regular bundle format. It accepts `k=v` variables and the
-bundle options (`-C`/`--dir`, `-p`/`--prompt`, `--plain`, `-v`/`--verbose`,
-`--refresh`) but does not read `stdin`.
+`agents_bundle bundle <pkg>[:<name>] [k=v]` renders a single bundle without
+requiring a `.ctx.bundle` file: the bundle's rules, file sections, command
+sections, and prompts are emitted in the regular bundle format. It accepts
+`k=v` variables and the bundle options (`-C`/`--dir`, `-p`/`--prompt`,
+`--plain`, `-v`/`--verbose`, `--refresh`) but does not read `stdin`.
 
-Extra file arguments and `include` directive items accept relative glob
-patterns (`*`, `?`, `[`, and recursive `**`; matches are sorted and `.git`
-and `__pycache__` are skipped) and 1-based inclusive line-range slices
-`path:START-END` or `path:LINE`. A string that names an existing file is
-always included whole. A slice is emitted as a
-`===== $ sed -n 'START,ENDp' <path> =====` section with the fragment name
-`<path>:START-END`, so several slices of one large file can be included.
+Extra file arguments and `file` directive items accept relative glob patterns
+(`*`, `?`, `[`, and recursive `**`; matches are sorted and `.git` and
+`__pycache__` are skipped) and 1-based inclusive line-range slices
+`path:START-END` or `path:LINE`. A string that names an existing file is always
+included whole. A slice is emitted as a `===== $ sed -n 'START,ENDp' <path>
+=====` section with the fragment name `<path>:START-END`, so several slices of
+one large file can be included.
 
-## Directive Reference
+## 9-Keyword `.bundle` Directive Reference
 
-`.agents_bundle` and `.bundle` files take one directive per line; blank
-lines and `#` comments are ignored:
+`.ctx.bundle` (legacy `.agents_bundle`) and package `.bundle` files share the
+same 9-keyword directive language; blank lines and `#` comments are ignored,
+and `file` and `cmd` fragments assemble in exact top-down declaration order:
 
-- `ruleset <pkg>[@<ref>]:<name|path> [-exclude ...] [k=v ...]` and
-  `rule <pkg>[@<ref>]:<name|path> [k=v ...]` add rule files from a package's
-  `agents/` directory (with fallback to legacy `rules/`, `rulesets/`, and
-  `src/`), an explicit package-relative path, a local relative path (`./...`,
-  `../...`), or a URL.
-- `bundle <owner>/<repo>[@<ref>][:<name|path>] [allow=<cmd,...>] [k=v ...]` (or a
-  local path `./...`, `../...`) includes another bundle from `agents/`
-  (`<repo>.bundle` or `default.bundle` for `<owner>/<repo>`, `<domain>.bundle`,
-  `<domain>/<domain>.bundle`, or `<domain>/default.bundle` for `:<domain>`,
-  with fallback to legacy `bundles/` and `src/bundles/`, or an explicit
-  package-relative path); circular references fail fast. Pass `allow=<cmd,...>`
-  to permit an external bundle to run specific executables.
-- `allow <cmd1> <cmd2> ...` (root `.agents_bundle` only) permits external
-  bundles to run the listed executables in `$ <cmd>`, `var <name>=$(<cmd>)`, and
-  `include $(<cmd>)`. All commands from external bundles are inspected statically
-  before any shell command runs; unlisted executables fail fast naming the
-  blocked command and originating bundle.
-- `var <name>=$(<cmd>)` or `var <name>=<value>` sets a variable that CLI
-  `k=v` and `AGENTS_BUNDLE_VARS` override.
-- `expose <key...>` adds header names to `Bundle-Expose`.
-- `include <path>` or `include $(<cmd>)` adds repository files, globs,
-  and `path:START-END` slices (external bundles are restricted to files within
-  the repository root).
+- `bundle <owner>/<repo>[@<ref>][:<name|path>] [allow=<cmd,...>] [k=v ...]`
+  (legacy alias `ruleset`; or a local path `./...`, `../...`, or URL) includes
+  a composite bundle from `agents/` (`<repo>.bundle` or `default.bundle` for
+  `<owner>/<repo>`, `<domain>.bundle`, `<domain>/<domain>.bundle`, or
+  `<domain>/default.bundle` for `:<domain>`, with fallback to legacy
+  `bundles/`, `rulesets/`, and `src/`, or an explicit package-relative path);
+  circular references fail fast. Pass `allow=<cmd,...>` to permit an external
+  bundle to run specific executables.
+- `rule <target...> [k=v ...]` includes one or more atomic `.md` rule files
+  from a package's `agents/` directory (with fallback to legacy `rules/` and
+  `src/rules/`), an explicit package-relative path, a local relative path
+  (`./...`, `../...`), or a URL.
+- `file <path|glob|slice...>` (legacy alias `include`) includes space-separated
+  repository files, globs, `path:START-END` slices, or `$(<cmd>)` output
+  (external bundles are restricted to files within the repository root). Empty
+  `file` after variable expansion (such as `file {todo_md.files:}` when unset)
+  is a no-op.
+- `cmd <shell command>` (legacy alias `$ <cmd>`) runs a command in `Workdir`
+  and includes its output.
 - `prompt <text>` appends text to the Prompt section.
-- `$ <cmd>` runs a command and includes its output.
-- `[if key=val] <line>` guards a line; multi-line `[if ...]` ...
-  `[/if]` blocks indent nested lines by 4 spaces.
-
-Keep shared files cross-platform: avoid POSIX-only shell syntax in
-`$ <cmd>` lines or guard it with `[if os=windows]` / `[if os!=windows]`.
+- `let <name>=<value>` or `let <name>=$(<cmd>)` (legacy alias `var`) sets a
+  lexically scoped bundle-local variable (set-if-unset; passed down to child
+  `rule` and `bundle` invocations, never leaking upward to parent/sibling
+  bundles or output preamble headers).
+- `export <name...>` (legacy alias `expose`) promotes variables to session
+  scope (visible to subsequent bundles) and emits them as capitalized `Key:
+  Value` output preamble headers when non-empty.
+- `if <cond>`, `else if <cond>` (synonym `elif <cond>`), `else` guard
+  4-space Python-style indented blocks without trailing colons or `endif`
+  (legacy `[if ...]` / `[/if]` syntax remains supported during migration).
+  Variable names in `if`, `let`, `export`, and `{name:default}` support
+  dot-separated producer namespaces (`<producer>.<key>`).
+- `allow <bin...>` (root `.ctx.bundle` / `.agents_bundle` only) permits
+  external bundles to run the listed executables in `cmd`, `let <k>=$(<cmd>)`,
+  and `file $(<cmd>)`. All commands from external bundles are inspected
+  statically before any shell command runs; unlisted executables fail fast
+  naming the blocked command and originating bundle.
 
 ## Bundle Output Protocol
 
 `agents_bundle` outputs a `Key: Value` header block separated by a blank line
-from the assembled body sections (`===== Rules =====`, `===== $ <cmd> =====`,
-`===== $ cat <file> =====`, and `===== Prompt =====`):
+from the assembled body sections (`===== Rules =====`, `===== $ cat <file>
+=====` / `===== $ <cmd> =====` in declaration order, and `===== Prompt =====`):
 
-- **Header visibility (`Bundle-*`):** By default, the header block starts with
-  `Bundle-Command`, `Bundle-Boundary: <nonce>` (a per-run hex token),
-  `Bundle-Protocol: 1`, and `Bundle-Expose: Role, Task, Title`.
-  Use the `expose <key...>` directive in `.agents_bundle` / `.bundle` or `AGENTS_BUNDLE_EXPOSE` in the environment to
-  add normalized Title-Case header names to `Bundle-Expose` while keeping
-  unexposed template variables in session metadata only.
-- **JSON fragment markers:** Each emitted rule, command section, included file
-  section, and prompt block is wrapped in single-line HTML comment markers
-  keyed by the run nonce:
+- **Transport and exported headers:** By default, the header block starts with
+  `Bundle-Command`, `Bundle-Name: agents_bundle`, `Bundle-Boundary: <nonce>` (a
+  per-run hex token), and `Bundle-Protocol: 1`, followed by any non-empty
+  variables explicitly promoted via `export <key...>` and `Workdir: <path>`.
+  Unexported variables stay internal to bundle execution and never appear in
+  the output preamble.
+- **Canonical 4-kind JSON fragment markers:** Each emitted rule, file section,
+  command section, and prompt block is wrapped in single-line HTML comment
+  markers keyed by the run nonce:
 
   ```text
   <!-- bundle:<nonce>:part {"kind": "cmd", "name": "git status -sb", "chain": [], "rc": 0, "ms": 8} -->
@@ -175,35 +176,33 @@ from the assembled body sections (`===== Rules =====`, `===== $ <cmd> =====`,
   <!-- bundle:<nonce>:end -->
   ```
 
-  Marker payloads use neutral fields: `kind` (`rule`, `cmd`, `include`,
-  `prompt`), `id` (for `rule`) or `name` (for `cmd` and `include`), `chain`
-  (`[]` for root directives and CLI inputs, or ordered inclusion path of
-  bundle/ruleset specifiers), and `rc` / `ms` (for `cmd`).
+  Marker payloads use the 4 canonical `kind` values (`rule`, `file`, `cmd`,
+  `prompt`), `id` (for `rule`) or `name` (for `file` and `cmd`), `chain` (`[]`
+  for root directives and CLI inputs, or ordered inclusion path of bundle
+  specifiers), and `rc` / `ms` (for `cmd`).
 - **Plain output (`--plain`):** Pass `--plain` or set `AGENTS_BUNDLE_PLAIN=1`
-  to omit transport `Bundle-*` headers (`Bundle-Command`, `Bundle-Boundary`,
-  `Bundle-Expose`) and JSON fragment markers when plain Markdown/text output is
-  requested.
-- **Protocol version:** non-plain headers carry `Bundle-Protocol: 1`
-  (`context-bundle-protocol` v1).
-- **Piped bundles:** when `stdin` declares `Bundle-Boundary: <nonce>`,
-  the upstream bundle is unpacked instead of being treated as prompt
-  text. Upstream preamble headers become variables (CLI `k=v` over
-  `AGENTS_BUNDLE_VARS` over piped), `Bundle-Command` is chained as
-  `<upstream> | <this command>`, and `Bundle-Expose` / `Bundle-Hide` are
-  merged. `rule` fragments are merged and deduplicated by `id`;
-  `include` and `file` fragments are merged with the includes of
-  `.agents_bundle` and the CLI, where a whole-file include absorbs any
-  slice of the same file and overlapping slices become one slice;
-  `task`, `context`, and `prompt` fragments are re-wrapped with the new
-  boundary inside the Prompt section with their metadata preserved.
-- **Chain provenance:** fragments from `.agents_bundle` (and nested
-  bundles) carry `chain` starting with `.agents_bundle`; piped upstream
-  fragments keep their own chain, and CLI file and `-p` arguments use
+  to omit transport `Bundle-*` headers and JSON fragment markers when plain
+  Markdown/text output is requested.
+- **Piped bundles (`context-bundle-protocol` v1):** when `stdin` declares
+  `Bundle-Boundary: <nonce>`, the upstream bundle is unpacked instead of being
+  treated as prompt text. When `Bundle-Name: <producer>` is present, upstream
+  preamble headers (except `Workdir`) are namespaced as `<producer>.<key_lower>`
+  (rejecting duplicate producer names in the same pipeline), and
+  `Bundle-Command` is chained as `<upstream> | <this command>`. `rule`
+  fragments are merged and deduplicated by `id`; `file` (and legacy `include`)
+  fragments are merged with bundle and CLI files at first occurrence (where a
+  whole-file span absorbs any slice of the same file and overlapping slices
+  become one slice); `prompt` (and legacy `task` / `context`) fragments are
+  re-wrapped with the new boundary inside the Prompt section with their
+  metadata preserved.
+- **Chain provenance:** fragments from `.ctx.bundle` or `.agents_bundle` (and
+  nested bundles) carry `chain` starting with the root spec filename; piped
+  upstream fragments keep their own chain, and CLI file and `-p` arguments use
   `[]`.
 - **Embedded rule:** a short built-in rule (`id` `agents_bundle`, chain
-  `["agents_bundle"]`) describing `--tree` and session assembly is
-  always added to the Rules section. `--init` creates a starter
-  `.agents_bundle` that uses `include AGENTS.md`.
+  `["agents_bundle"]`) describing `--tree` and session assembly is always added
+  to the Rules section. `--init` creates a starter `.ctx.bundle` that uses
+  `file AGENTS.md`.
 
 ## Package Cache
 

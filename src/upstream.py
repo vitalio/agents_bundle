@@ -4,20 +4,31 @@ import json
 import re
 
 from src.core import prog_name
-from src.header import PROMPT_HEADER, RULES_HEADER
+from src.header import PROMPT_HEADER, RULES_HEADER, VAR_NAME_PATTERN
 
 
 PROMPT_KINDS = ("task", "context", "prompt")
+_KIND_NORMALIZATION = {
+    "rule": "rule",
+    "cmd": "cmd",
+    "file": "file",
+    "include": "file",
+    "prompt": "prompt",
+    "task": "prompt",
+    "context": "prompt",
+}
 _FRAGMENT_GROUPS = {
     "rule": "rules",
     "cmd": "cmds",
-    "include": "includes",
-    "file": "includes",
+    "file": "files",
+    "include": "files",
+    "prompt": "prompts",
     "task": "prompts",
     "context": "prompts",
-    "prompt": "prompts",
 }
-_HEADER_RE = re.compile(r"([A-Za-z][A-Za-z0-9_-]*):(?:[ \t]+(.*)|[ \t]*)")
+_HEADER_RE = re.compile(r"([A-Za-z][A-Za-z0-9_.-]*):(?:[ \t]+(.*)|[ \t]*)")
+_PRODUCER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
+_VAR_RE = re.compile(VAR_NAME_PATTERN)
 
 
 class PipedInput:
@@ -29,8 +40,8 @@ class PipedInput:
         self.workdir: str | None = None
         self.boundary: str | None = None
         self.command: str | None = None
-        self.expose: list[str] = []
-        self.hide: list[str] = []
+        self.bundle_name: str | None = None
+        self.producers: list[str] = []
         self.fragments: list[tuple[dict[str, object], str]] = []
 
     @property
@@ -38,8 +49,12 @@ class PipedInput:
         return bool(self.prompt) or any(meta.get("kind") in PROMPT_KINDS for meta, _ in self.fragments)
 
 
-def _split_header_list(value: str) -> list[str]:
-    return [tok for tok in re.split(r"[\s,]+", value.strip()) if tok]
+def _normalize_fragment_meta(meta: dict[str, object]) -> dict[str, object]:
+    raw_kind = str(meta.get("kind") or "")
+    norm_kind = _KIND_NORMALIZATION.get(raw_kind)
+    if norm_kind is not None and norm_kind != raw_kind:
+        return {**meta, "kind": norm_kind}
+    return meta
 
 
 def _parse_part_line(line: str, prefix: str) -> dict[str, object] | None:
@@ -49,7 +64,7 @@ def _parse_part_line(line: str, prefix: str) -> dict[str, object] | None:
         meta = json.loads(line[len(prefix) : -len(" -->")])
     except ValueError:
         return None
-    return meta if isinstance(meta, dict) else None
+    return _normalize_fragment_meta(meta) if isinstance(meta, dict) else None
 
 
 def extract_fragments(text: str, nonce: str) -> tuple[list[tuple[dict[str, object], str]], str]:
@@ -82,30 +97,32 @@ def extract_fragments(text: str, nonce: str) -> tuple[list[tuple[dict[str, objec
 def group_fragments(
     fragments: list[tuple[dict[str, object], str]],
 ) -> tuple[dict[str, list[tuple[dict[str, object], str]]], list[str]]:
-    """Group fragments into rules, cmds, includes, and prompts; also return unknown kinds."""
+    """Group fragments into rules, cmds, files, and prompts; also return unknown kinds."""
     groups: dict[str, list[tuple[dict[str, object], str]]] = {
         "rules": [],
         "cmds": [],
-        "includes": [],
+        "files": [],
         "prompts": [],
     }
     unknown: list[str] = []
     for meta, content in fragments:
-        group = _FRAGMENT_GROUPS.get(str(meta.get("kind")))
+        norm_meta = _normalize_fragment_meta(meta)
+        group = _FRAGMENT_GROUPS.get(str(norm_meta.get("kind")))
         if group is None:
             unknown.append(str(meta.get("kind")))
         else:
-            groups[group].append((meta, content))
+            groups[group].append((norm_meta, content))
     return groups, unknown
 
 
 def parse_stdin_pipe(stdin_text: str) -> PipedInput:
+    prog = prog_name()
     result = PipedInput()
     raw = stdin_text.strip()
     if not raw:
         return result
     lines = raw.splitlines()
-    preamble: dict[str, str] = {}
+    preamble_items: list[tuple[str, str]] = []
     idx = 0
     while idx < len(lines):
         ln = lines[idx]
@@ -114,11 +131,13 @@ def parse_stdin_pipe(stdin_text: str) -> PipedInput:
         hm = _HEADER_RE.fullmatch(ln)
         if not hm:
             break
-        preamble[hm.group(1)] = hm.group(2).strip() if hm.group(2) is not None else ""
+        preamble_items.append((hm.group(1), hm.group(2).strip() if hm.group(2) is not None else ""))
         idx += 1
 
-    if preamble and (idx == len(lines) or not lines[idx].strip()):
-        for k, v in preamble.items():
+    if preamble_items and (idx == len(lines) or not lines[idx].strip()):
+        seen_producers: set[str] = set()
+        raw_vars: list[tuple[str, str]] = []
+        for k, v in preamble_items:
             kl = k.lower()
             if kl == "workdir":
                 result.workdir = v
@@ -126,16 +145,50 @@ def parse_stdin_pipe(stdin_text: str) -> PipedInput:
                 result.boundary = v or None
             elif kl == "bundle-command":
                 result.command = v or None
-            elif kl == "bundle-expose":
-                result.expose = _split_header_list(v)
-            elif kl == "bundle-hide":
-                result.hide = _split_header_list(v)
+            elif kl == "bundle-name":
+                tokens = [tok for tok in re.split(r"[\s,|]+", v.strip()) if tok]
+                if not tokens:
+                    raise SystemExit(f"{prog}: empty Bundle-Name header on stdin")
+                for tok in tokens:
+                    if not _PRODUCER_RE.fullmatch(tok):
+                        raise SystemExit(f"{prog}: invalid Bundle-Name producer {tok!r} on stdin")
+                    p_norm = tok.lower().replace("-", "_")
+                    if p_norm in seen_producers:
+                        raise SystemExit(f"{prog}: duplicate Bundle-Name producer {p_norm!r} in pipeline")
+                    seen_producers.add(p_norm)
+                    result.producers.append(p_norm)
+                    result.bundle_name = p_norm
             elif kl.startswith("bundle-"):
                 continue
             elif v:
-                var_name = kl.replace("-", "_")
-                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", var_name):
-                    result.vars[var_name] = v
+                raw_vars.append((kl, v))
+
+        if result.command:
+            cmd_producers: list[str] = []
+            for seg in result.command.split("|"):
+                seg_tokens = seg.strip().split()
+                if seg_tokens:
+                    exe = seg_tokens[0].rsplit("/", 1)[-1].lower().replace("-", "_")
+                    cmd_producers.append(exe)
+            if len(cmd_producers) > 1 and len(cmd_producers) != len(set(cmd_producers)):
+                for p in cmd_producers:
+                    if cmd_producers.count(p) > 1 and p in seen_producers:
+                        raise SystemExit(f"{prog}: duplicate Bundle-Name producer {p!r} in pipeline")
+
+        for kl, v in raw_vars:
+            if "." in kl:
+                parts = kl.split(".")
+                ns = parts[0].replace("-", "_")
+                rest = ".".join(p.replace("-", "_") for p in parts[1:])
+                if result.bundle_name and ns == result.bundle_name:
+                    raise SystemExit(f"{prog}: duplicate Bundle-Name producer {ns!r} in pipeline")
+                var_name = f"{ns}.{rest}"
+            else:
+                key_norm = kl.replace("-", "_")
+                var_name = f"{result.bundle_name}.{key_norm}" if result.bundle_name else key_norm
+            if _VAR_RE.fullmatch(var_name):
+                result.vars[var_name] = v
+
         raw = "\n".join(lines[idx:]).strip()
         lines = raw.splitlines()
 
@@ -143,7 +196,8 @@ def parse_stdin_pipe(stdin_text: str) -> PipedInput:
         result.fragments, result.prompt = extract_fragments(raw, result.boundary)
         return result
     if len(lines) == 1 and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", lines[0].strip()):
-        result.vars.setdefault("task", lines[0].strip())
+        task_key = f"{result.bundle_name}.task" if result.bundle_name else "task"
+        result.vars.setdefault(task_key, lines[0].strip())
         return result
     result.prompt = raw
     return result

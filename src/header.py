@@ -22,7 +22,9 @@ from pathlib import Path
 VERSION = "__VERSION__"
 REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/agents_bundle/main/agents_bundle"
-SPEC_FILE_NAME = ".agents_bundle"
+SPEC_FILE_NAME = ".ctx.bundle"
+LEGACY_SPEC_FILE_NAME = ".agents_bundle"
+PRODUCER_NAME = "agents_bundle"
 DEFAULT_RULES_PKG = "vitalio/agents-rules"
 EMBEDDED_RULE_AGENTS_BUNDLE = ""
 EMBEDDED_RULE_NAME = "agents_bundle"
@@ -30,6 +32,7 @@ LEGACY_RULE_ID = "vitalio/agents_bundle:agents_bundle"
 PROTOCOL_VERSION = "1"
 RULES_HEADER = "===== Rules ====="
 PROMPT_HEADER = "===== Prompt ====="
+VAR_NAME_PATTERN = r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*"
 HELP_MAX_WIDTH = 100
 HELP_PROSE_WIDTH = 80
 HELP_INDENT = 2
@@ -40,30 +43,26 @@ HELP_SECTIONS = (
         (
             (
                 "{prog} [k=v ...] [-p TEXT] [FILE ...]",
-                "Build context bundle from .agents_bundle to stdout (stdin: Key: Value preamble, "
-                "task ID, or prompt; sets piped=1 on prompt; empty piped stdin exits 2)",
-            ),
-            (
-                "{prog} ruleset <pkg>:<name> [-excl] [k=v]",
-                "Render a ruleset from agents/ or rulesets/ (<owner>/<repo>[@ref]:<name|path>, "
-                "./path, or URL) to stdout",
-            ),
-            (
-                "{prog} rule <pkg>:<name> [k=v]",
-                "Render a single rule from agents/ or rules/ (<owner>/<repo>[@ref]:<name|path>, "
-                "./path, or URL) to stdout",
+                "Build context bundle from .ctx.bundle (or .agents_bundle) to stdout (stdin: "
+                "Key: Value preamble, task ID, or prompt; sets piped=1 on prompt; empty piped "
+                "stdin exits 2)",
             ),
             (
                 "{prog} bundle <pkg>[:<name>] [k=v]",
-                "Render a bundle from agents/ or bundles/ without .agents_bundle (reads no stdin; "
+                "Render a bundle from agents/ or bundles/ without .ctx.bundle (reads no stdin; "
                 "honors -C, -p, --plain, -v, --refresh, allow=<cmd,...>)",
             ),
             (
+                "{prog} rule <pkg>:<name...> [k=v]",
+                "Render one or more rules from agents/ or rules/ (<owner>/<repo>[@ref]:<name|path>, "
+                "./path, or URL) to stdout",
+            ),
+            (
                 "{prog} --list | -l [pkg]",
-                "List rulesets, rules, bundles, and built-in variables (default: {default_pkg})",
+                "List bundles, rules, and built-in variables (default: {default_pkg})",
             ),
             ("{prog} --update-cache", "Refresh cached git packages and URL files in {cache_dir}"),
-            ("{prog} --init [--force]", "Create a starter .agents_bundle in the current directory"),
+            ("{prog} --init [--force]", "Create a starter .ctx.bundle in the current directory"),
             ("{prog} --tree [DIR] [opts]", "Print token-budgeted repository file tree to stdout"),
             ("{prog} --update [--force]", "Self-update {prog} from GitHub (vitalio/agents_bundle)"),
             ("{prog} --check-update", "Check if a newer version is available"),
@@ -89,7 +88,7 @@ HELP_SECTIONS = (
             ("--max-tokens N", "Approximate token budget for --tree (default: 1600)"),
             (
                 "--force",
-                "Overwrite existing .agents_bundle (--init) or force reinstall (--update)",
+                "Overwrite existing .ctx.bundle (--init) or force reinstall (--update)",
             ),
         ),
     ),
@@ -98,15 +97,15 @@ HELP_SECTIONS = (
         (
             (
                 "Headers",
-                "Emits Bundle-Command, Bundle-Boundary: <nonce>, Bundle-Protocol: 1, "
-                "Bundle-Expose: Role, Task, Title (extensible via 'expose' or "
-                "AGENTS_BUNDLE_EXPOSE), variable headers, and Workdir: <path>",
+                "Emits Bundle-Command, Bundle-Name: agents_bundle, Bundle-Boundary: <nonce>, "
+                "Bundle-Protocol: 1, exported Key: Value variable headers (via 'export'), and "
+                "Workdir: <path>",
             ),
             (
                 "Fragment markers",
-                "Wraps rules, commands, included files, and prompts in "
+                "Wraps rules, files, commands, and prompts in "
                 "<!-- bundle:<nonce>:part <json> --> and <!-- bundle:<nonce>:end --> "
-                "(fields: kind, id/name, chain, rc, ms)",
+                "(kinds: rule, file, cmd, prompt; fields: kind, id/name, chain, rc, ms)",
             ),
             (
                 "Plain mode",
@@ -115,9 +114,10 @@ HELP_SECTIONS = (
             ),
             (
                 "Piped bundles",
-                "Piped stdin with Bundle-Boundary is unpacked: upstream rules, includes, and "
-                "task/context/prompt fragments are merged, deduplicated, and re-wrapped; "
-                "Bundle-Command is chained with ' | '; Bundle-Expose and Bundle-Hide are merged",
+                "Piped stdin with Bundle-Boundary is unpacked: Bundle-Name: <producer> "
+                "namespaces upstream headers as <producer>.<key_lower> (rejecting duplicate "
+                "producers); upstream rule, file, cmd, and prompt fragments are merged and "
+                "re-wrapped; Bundle-Command is chained with ' | '",
             ),
         ),
     ),
@@ -125,7 +125,6 @@ HELP_SECTIONS = (
         "Environment:",
         (
             ("AGENTS_BUNDLE_VARS", "Default key=val pairs (overridden by CLI key=val)"),
-            ("AGENTS_BUNDLE_EXPOSE", "Extra header keys to add to Bundle-Expose"),
             (
                 "AGENTS_BUNDLE_PLAIN",
                 "Set to 1 to omit transport Bundle-* headers and fragment markers",

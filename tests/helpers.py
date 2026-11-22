@@ -41,7 +41,6 @@ def _seed_offline_rules_pkg(pkg_dir: Path) -> None:
             "ruleset core\n"
             "[if os=linux] rule os/linux\n"
             "[if os=macos] rule os/macos\n"
-            "[if os=windows] rule os/windows\n"
             "[if vcs=git] rule vcs/git\n"
             "[if vcs=cvs] rule vcs/cvs\n"
             "[if role!=] rule role/{role:}\n"
@@ -51,7 +50,6 @@ def _seed_offline_rules_pkg(pkg_dir: Path) -> None:
         "rules/core/lang.md": "# Description: Language policy\n- Language policy: Write chat prose in {chat_lang:the language the user writes in}; keep code and docs in {lang:English}.\n",
         "rules/os/linux.md": "# Description: Linux shell rules\n- Linux & POSIX shell rules: Enable `set -euo pipefail` in mutating scripts.\n",
         "rules/os/macos.md": "# Description: macOS rules\n- macOS & BSD userland rules: Account for BSD userland differences.\n",
-        "rules/os/windows.md": "# Description: Windows rules\n- Windows & PowerShell rules: Enable `$ErrorActionPreference = 'Stop'`.\n",
         "rules/vcs/git.md": "# Description: Git workflow\n- Git workflow & safety: Push to `origin {main_branch:main}`.\n",
         "rules/vcs/cvs.md": "# Description: CVS workflow\n- CVS workflow & safety: Inspect status via `cvs -nq update` and `cvs diff -u`.\n",
         "rules/role/design.md": "# Description: Universal Designer role\n- Role (Designer): Explore problem space and architecture.\n",
@@ -61,7 +59,7 @@ def _seed_offline_rules_pkg(pkg_dir: Path) -> None:
         "rules/stack/python-cli.md": "# Description: Python CLI rules\n- Python CLI engineering invariants: Python {py_min:3.9}+ compatibility.\n",
         "rules/release/single-file-build.md": "# Description: Single-file build\n- Single-file build from modular `src/`: Edit source modules under `src/`.\n",
         "rules/agents_bundle.md": "# Description: Bundler rule\n- Context bundler & rules engine (`agents_bundle`): Use `--tree` and `--list`.\n",
-        "bundles/agents_bundle.bundle": "# Description: On-demand agents_bundle instructions\nrule vitalio/agents_bundle:agents_bundle\n[if role=design] $ agents_bundle --list\n",
+        "bundles/agents_bundle.bundle": "# Description: On-demand agents_bundle instructions\nrule vitalio/agents_bundle:agents_bundle\nif role!=\n    export role\nif role=design\n    cmd agents_bundle --list\n",
         "rules/todo_md.md": "# Description: Task tracker rule\n- Task management (`todo_md`): Manage `TODO.md`.\n",
         "bundles/todo_md.bundle": "# Description: On-demand todo_md bundle\nrule vitalio/todo_md:todo_md\n",
     }
@@ -88,7 +86,7 @@ class AgentsBundleTestCase(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="ab_test_"))
         self._saved_env = {
             k: os.environ.pop(k, None)
-            for k in ("AGENTS_BUNDLE_VARS", "AGENTS_BUNDLE_EXPOSE", "AGENTS_BUNDLE_PLAIN")
+            for k in ("AGENTS_BUNDLE_VARS", "AGENTS_BUNDLE_PLAIN")
         }
         pkg_dir = self.tmp / "offline_rules_pkg"
         _seed_offline_rules_pkg(pkg_dir)

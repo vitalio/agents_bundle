@@ -16,7 +16,7 @@ from src.header import (
 
 def prog_name() -> str:
     raw = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "agents_bundle"
-    for suf in (".py", ".cmd", ".bat", ".exe"):
+    for suf in (".py",):
         if raw.lower().endswith(suf) and len(raw) > len(suf):
             raw = raw[:-len(suf)]
             break
