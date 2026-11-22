@@ -142,6 +142,51 @@ class TestBundle(AgentsBundleTestCase):
         self.assertIn("in German", r_foc.stdout)
         self.assertIn("===== Prompt =====\nMode: EXECUTION (A2)\n\nFocus on edge cases", r_foc.stdout)
 
+        # Verify local relative paths (./..., ../...) across nested bundles and local package dirs
+        rel_ws = self.tmp / "rel_workspace" / "proj"
+        shared_dir = self.tmp / "rel_workspace" / "shared"
+        nested_dir = rel_ws / "bundles" / "nested"
+        local_pkg = self.tmp / "rel_workspace" / "local_pkg" / "agents"
+        nested_dir.mkdir(parents=True)
+        shared_dir.mkdir(parents=True)
+        local_pkg.mkdir(parents=True)
+
+        (shared_dir / "shared_rule.md").write_text(
+            "# Description: Shared rule\n- Shared parent relative rule body.\n",
+            encoding="utf-8",
+        )
+        (shared_dir / "shared.bundle").write_text(
+            "rule ./shared_rule.md\n",
+            encoding="utf-8",
+        )
+        (nested_dir / "local_rule.md").write_text(
+            "# Description: Nested local rule\n- Nested sibling relative rule body.\n",
+            encoding="utf-8",
+        )
+        (nested_dir / "child.bundle").write_text(
+            "rule ./local_rule.md\n"
+            "bundle ../../../shared/shared.bundle\n",
+            encoding="utf-8",
+        )
+        (local_pkg / "default.bundle").write_text(
+            "rule pkg_rule\n",
+            encoding="utf-8",
+        )
+        (local_pkg / "pkg_rule.md").write_text(
+            "# Description: Local pkg rule\n- Local package directory bundle rule body.\n",
+            encoding="utf-8",
+        )
+        (rel_ws / ".agents_bundle").write_text(
+            "bundle ./bundles/nested/child.bundle\n"
+            "bundle ../local_pkg\n",
+            encoding="utf-8",
+        )
+        r_rel = self._run([str(SCRIPT)], cwd=str(rel_ws), capture_output=True, text=True, check=False)
+        self._assert_ok(r_rel)
+        self.assertIn("Nested sibling relative rule body.", r_rel.stdout)
+        self.assertIn("Shared parent relative rule body.", r_rel.stdout)
+        self.assertIn("Local package directory bundle rule body.", r_rel.stdout)
+
     def test_agents_bundle_vars_env_and_cli_override(self):
         (self.tmp / ".agents_bundle").write_text(
             "ruleset vitalio/agents-rules:core lang=English\n"

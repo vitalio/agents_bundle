@@ -15,9 +15,16 @@ rules are loaded via `.agents_bundle`.
 - `src/tree.py` — `agents_bundle --tree` token-budgeted repository file tree
   with `-x/--exclude`, `AGENTS.md` pinning, deep directory collapsing, and file
   list truncation.
-- `src/rules_engine.py` — resolves flat rulesets, rules, and reusable bundles
-  from `<owner>/<repo>[@<ref>][:<name>]`, local paths, or direct URLs
-  (`http://`, `https://`, `file://`), and evaluates `[if ...]` conditions
+- `src/rules_engine.py` — resolves rules (`.md`), reusable bundles
+  (`.bundle`), and rulesets (`.ruleset`) from canonical `agents/` (including
+  `<repo>.bundle` / `default.bundle` for `<owner>/<repo>` and
+  `agents/<domain>/<domain>.bundle` or `agents/<domain>/default.bundle` for
+  `<owner>/<repo>:<domain>`, with fallback to legacy `rules/`, `rulesets/`,
+  `bundles/`, and `src/`), explicit package-relative paths
+  (`<owner>/<repo>[@<ref>]:path/to/file`), local relative paths (`./...`,
+  `../...`), or direct URLs (`http://`, `https://`, `file://`); fetches
+  explicit `@<ref>` refs into the package cache even when
+  `AGENTS_BUNDLE_LOCAL_PKG_DIR` is set; and evaluates `[if ...]` conditions
   against `os`, `vcs`, and CLI `key=val` overrides.
 - `src/includes.py` — include item expansion (globs, `path:start-end`) and
   range-aware span deduplication shared by upstream, `.agents_bundle`, and CLI

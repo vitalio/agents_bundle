@@ -23,9 +23,11 @@ from src.header import (
 from src.core import embedded_rule_text, prog_name
 from src.tree import _tree_from_args
 from src.rules_engine import (
+    _is_local_path_spec,
     _parse_directive_tokens,
     _parse_md_text,
     _render_rule_vars,
+    _resolve_bundle_context,
     builtin_vars,
     collect_directive_items,
     env_vars,
@@ -136,6 +138,33 @@ def _eval_dynamic_expr(expr: str, work_dir: Path | None = None) -> str:
     return s
 
 
+def _qualify_nested_target(
+    target: str,
+    work_dir: Path | None,
+    bundle_dir: Path | None,
+    default_pkg: str | None,
+    pkg_dir: Path | None,
+    prog: str,
+) -> str:
+    if _is_local_path_spec(target) and not Path(target).expanduser().is_absolute():
+        if default_pkg is not None and pkg_dir is not None and bundle_dir is not None:
+            resolved = (bundle_dir / target).resolve()
+            try:
+                rel = resolved.relative_to(pkg_dir.resolve())
+            except ValueError:
+                raise SystemExit(f"{prog}: package path escapes package root: {target}")
+            return f"{default_pkg}:{rel.as_posix()}"
+        if bundle_dir is not None and work_dir is not None and bundle_dir.resolve() != work_dir.resolve():
+            return (bundle_dir / target).resolve().as_posix()
+    elif (
+        ":" not in target
+        and not target.startswith(("http://", "https://", "file://"))
+        and default_pkg is not None
+    ):
+        return f"{default_pkg}:{target}"
+    return target
+
+
 def parse_spec(
     text: str,
     work_dir: Path | None = None,
@@ -145,11 +174,15 @@ def parse_spec(
     piped: bool = False,
     chain: list[str] | None = None,
     active_bundles: list[tuple[str, str]] | None = None,
+    default_pkg: str | None = None,
+    pkg_dir: Path | None = None,
+    bundle_dir: Path | None = None,
 ) -> list[tuple[str, str, str | None, list[str]]]:
     prog = prog_name()
     active_vars: dict[str, str] = dict(cli_vars) if cli_vars is not None else {}
     bvars = {**builtin_vars(work_dir, piped=piped), **active_vars}
     cur_chain = list(chain) if chain else []
+    cur_bdir = bundle_dir if bundle_dir is not None else work_dir
     entries: list[tuple[str, str, str | None, list[str]]] = []
     for cond_expr, raw_line in strip_if_blocks_and_lines(text, prog):
         if cond_expr and not eval_if_condition(cond_expr, bvars, prog):
@@ -187,13 +220,33 @@ def parse_spec(
         elif line in ("$", "!"):
             continue
         elif line.startswith("ruleset ") or line.startswith("rule "):
+            parts = shlex.split(line)
+            target, _excls, _vmap = _parse_directive_tokens(parts[1:], prog)
+            new_target = _qualify_nested_target(target, work_dir, cur_bdir, default_pkg, pkg_dir, prog)
+            if new_target != target:
+                parts[1] = new_target
+                line = shlex.join(parts)
             entries.append(("directive", line, cond_expr, list(cur_chain)))
         elif line.startswith("bundle "):
             parts = shlex.split(line)
             target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
             if excls:
                 raise SystemExit(f"{prog}: bundle directive does not support excludes: {line!r}")
-            canonical_bundle, inc_text = resolve_bundle_source(target, work_dir=work_dir, refresh=refresh)
+            lookup_target = target
+            if _is_local_path_spec(target) and not Path(target).expanduser().is_absolute():
+                if default_pkg is not None and pkg_dir is not None and cur_bdir is not None:
+                    resolved = (cur_bdir / target).resolve()
+                    try:
+                        rel = resolved.relative_to(pkg_dir.resolve())
+                    except ValueError:
+                        raise SystemExit(f"{prog}: package path escapes package root: {target}")
+                    lookup_target = f"{default_pkg}:{rel.as_posix()}"
+            canonical_bundle, inc_text, child_pkg, child_pkg_dir, child_bdir = _resolve_bundle_context(
+                lookup_target,
+                work_dir=cur_bdir,
+                refresh=refresh,
+                default_pkg=default_pkg or DEFAULT_RULES_PKG,
+            )
             cur_active = list(active_bundles) if active_bundles else []
             if any(cid == canonical_bundle for cid, _ in cur_active):
                 cycle_path = " -> ".join([*(lbl for _, lbl in cur_active), target])
@@ -210,6 +263,9 @@ def parse_spec(
                 piped=piped,
                 chain=child_chain,
                 active_bundles=[*cur_active, (canonical_bundle, target)],
+                default_pkg=child_pkg,
+                pkg_dir=child_pkg_dir,
+                bundle_dir=child_bdir,
             ):
                 comb_cond = " ".join(c for c in (cond_expr, sub_cond) if c) or None
                 entries.append((sub_kind, sub_val, comb_cond, sub_chain))

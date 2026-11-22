@@ -121,11 +121,17 @@ always included whole. A slice is emitted as a
 `.agents_bundle` and `.bundle` files take one directive per line; blank
 lines and `#` comments are ignored:
 
-- `ruleset <pkg>:<name> [-exclude ...] [k=v ...]` and
-  `rule <pkg>:<name> [k=v ...]` add rule files from a package, a local
-  path, or a URL.
-- `bundle <owner>/<repo>[:<name>] [k=v ...]` includes another bundle;
-  circular references fail fast.
+- `ruleset <pkg>[@<ref>]:<name|path> [-exclude ...] [k=v ...]` and
+  `rule <pkg>[@<ref>]:<name|path> [k=v ...]` add rule files from a package's
+  `agents/` directory (with fallback to legacy `rules/`, `rulesets/`, and
+  `src/`), an explicit package-relative path, a local relative path (`./...`,
+  `../...`), or a URL.
+- `bundle <owner>/<repo>[@<ref>][:<name|path>] [k=v ...]` (or a local path
+  `./...`, `../...`) includes another bundle from `agents/` (`<repo>.bundle` or
+  `default.bundle` for `<owner>/<repo>`, `<domain>.bundle`,
+  `<domain>/<domain>.bundle`, or `<domain>/default.bundle` for `:<domain>`,
+  with fallback to legacy `bundles/` and `src/bundles/`, or an explicit
+  package-relative path); circular references fail fast.
 - `var <name>=$(<cmd>)` or `var <name>=<value>` sets a variable that CLI
   `k=v` and `AGENTS_BUNDLE_VARS` override.
 - `expose <key...>` adds header names to `Bundle-Expose`.
@@ -200,8 +206,10 @@ location). `--refresh` re-fetches each remote package or URL at most once
 per run. `--update-cache` fetches and hard-resets every cached git package
 to its remote ref and re-downloads every cached URL file, printing one
 status line per item (exit code 1 when any item fails). Set
-`AGENTS_BUNDLE_LOCAL_PKG_DIR` to use a local package checkout instead of the
-cache; there is no implicit lookup in the home directory.
+`AGENTS_BUNDLE_LOCAL_PKG_DIR` to use a local package checkout for unpinned
+package references instead of the cache (explicit `@<ref>` package specs always
+fetch the requested ref into `<cache_dir>/packages/<owner>/<repo>@<ref>`);
+there is no implicit lookup in the home directory.
 
 ## License
 

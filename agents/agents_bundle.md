@@ -9,4 +9,4 @@
     (`<cmd> | {cmd:agents_bundle} | run_block`) to merge its rules, files, and prompt.
   - When editing `.agents_bundle` or `.bundle` files, run `{cmd:agents_bundle} -h`
     for the directive and protocol reference and `{cmd:agents_bundle} --list [pkg]`
-    for the available rules, rulesets, and bundles.
+    for the available rules, rulesets, and bundles under `agents/`.

@@ -318,6 +318,256 @@ class TestRulesEngine(AgentsBundleTestCase):
         self._assert_ok(r_diamond)
         self.assertIn("Python 3.9+ compatibility", r_diamond.stdout)
 
+    def test_agents_package_dir_domain_bundles_and_relative_paths(self):
+        pkg_root = Path(os.environ["AGENTS_BUNDLE_LOCAL_PKG_DIR"])
+        mod_pkg = pkg_root / "vitalio" / "modern_pkg"
+        (mod_pkg / "agents" / "core").mkdir(parents=True)
+        (mod_pkg / "agents" / "coding").mkdir(parents=True)
+        (mod_pkg / "agents" / "stack" / "python").mkdir(parents=True)
+        (mod_pkg / "custom" / "sub").mkdir(parents=True)
+
+        (mod_pkg / "agents" / "AGENTS.md").write_text("# Ignored repo AGENTS.md\n", encoding="utf-8")
+        (mod_pkg / "agents" / "README.md").write_text("# Ignored repo README.md\n", encoding="utf-8")
+        (mod_pkg / "agents" / "core" / "axiom.md").write_text(
+            "# Description: Core axiom\n- Canonical agents/ core axiom body.\n",
+            encoding="utf-8",
+        )
+        (mod_pkg / "agents" / "coding" / "arch.md").write_text(
+            "# Description: Coding arch\n- Coding architecture rule body.\n",
+            encoding="utf-8",
+        )
+        (mod_pkg / "agents" / "coding" / "coding.bundle").write_text(
+            "# Description: Coding domain bundle\n"
+            "rule coding/arch\n"
+            "rule ./local_coding.md\n",
+            encoding="utf-8",
+        )
+        (mod_pkg / "agents" / "coding" / "local_coding.md").write_text(
+            "# Description: Local coding rule\n- Relative rule inside coding domain.\n",
+            encoding="utf-8",
+        )
+        (mod_pkg / "agents" / "stack" / "python" / "python.bundle").write_text(
+            "# Description: Python stack bundle\n"
+            "rule stack/python/typing\n",
+            encoding="utf-8",
+        )
+        (mod_pkg / "agents" / "stack" / "python" / "typing.md").write_text(
+            "# Description: Python typing\n- Postponed annotations rule.\n",
+            encoding="utf-8",
+        )
+        (mod_pkg / "agents" / "default.bundle").write_text(
+            "# Description: Default modern bundle\n"
+            "rule core/axiom\n",
+            encoding="utf-8",
+        )
+        (mod_pkg / "custom" / "sub" / "extra.md").write_text(
+            "# Description: Custom relative rule\n- Explicit package-relative rule body.\n",
+            encoding="utf-8",
+        )
+        (mod_pkg / "custom" / "sub" / "extra.bundle").write_text(
+            "# Description: Custom relative bundle\n"
+            "rule ./extra.md\n",
+            encoding="utf-8",
+        )
+
+        # 1. --list discovers rules and bundles under agents/ and ignores AGENTS.md / README.md
+        r_list = self._run(
+            [str(SCRIPT), "--list", "vitalio/modern_pkg"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self._assert_ok(r_list)
+        self.assertIn("vitalio/modern_pkg:core/axiom", r_list.stdout)
+        self.assertIn("vitalio/modern_pkg:coding/coding", r_list.stdout)
+        self.assertIn("vitalio/modern_pkg:default", r_list.stdout)
+        self.assertNotIn(":agents", r_list.stdout)
+        self.assertNotIn(":readme", r_list.stdout)
+
+        # 2. owner/repo resolves agents/default.bundle when agents/<repo>.bundle is absent
+        r_def = self._run(
+            [str(SCRIPT), "bundle", "vitalio/modern_pkg", "--plain"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self._assert_ok(r_def)
+        self.assertIn("Canonical agents/ core axiom body.", r_def.stdout)
+
+        # 3. owner/repo prefers agents/<repo>.bundle over agents/default.bundle when present
+        (mod_pkg / "agents" / "modern_pkg.bundle").write_text(
+            "# Description: Repo-named bundle\n"
+            "rule core/axiom\n"
+            "rule stack/python/typing\n",
+            encoding="utf-8",
+        )
+        r_repo = self._run(
+            [str(SCRIPT), "bundle", "vitalio/modern_pkg", "--plain"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self._assert_ok(r_repo)
+        self.assertIn("Canonical agents/ core axiom body.", r_repo.stdout)
+        self.assertIn("Postponed annotations rule.", r_repo.stdout)
+
+        # 4. owner/repo:domain -> agents/domain/domain.bundle and nested stack/python -> agents/stack/python/python.bundle
+        r_dom = self._run(
+            [str(SCRIPT), "bundle", "vitalio/modern_pkg:coding", "--plain"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self._assert_ok(r_dom)
+        self.assertIn("Coding architecture rule body.", r_dom.stdout)
+        self.assertIn("Relative rule inside coding domain.", r_dom.stdout)
+
+        r_nested = self._run(
+            [str(SCRIPT), "bundle", "vitalio/modern_pkg:stack/python", "--plain"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self._assert_ok(r_nested)
+        self.assertIn("Postponed annotations rule.", r_nested.stdout)
+
+        # 5. Explicit relative file paths inside a package (owner/repo:path/to/file)
+        r_rel_rule = self._run(
+            [str(SCRIPT), "rule", "vitalio/modern_pkg:custom/sub/extra.md"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self._assert_ok(r_rel_rule)
+        self.assertIn("Explicit package-relative rule body.", r_rel_rule.stdout)
+
+        r_rel_bundle = self._run(
+            [str(SCRIPT), "bundle", "vitalio/modern_pkg:custom/sub/extra.bundle", "--plain"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self._assert_ok(r_rel_bundle)
+        self.assertIn("Explicit package-relative rule body.", r_rel_bundle.stdout)
+
+        # Path traversal escaping package root fails fast
+        r_escape = self._run(
+            [str(SCRIPT), "rule", "vitalio/modern_pkg:../../outside.md"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(r_escape.returncode, 0)
+        self.assertIn("escapes package root", r_escape.stderr)
+
+    def test_explicit_ref_fetches_remote_ref_instead_of_unpinned_local_override(self):
+        pkg_root = Path(os.environ["AGENTS_BUNDLE_LOCAL_PKG_DIR"])
+        local_unpinned = pkg_root / "vitalio" / "ref_pkg" / "agents"
+        local_unpinned.mkdir(parents=True)
+        (local_unpinned / "info.md").write_text(
+            "# Description: Local unpinned\n- UNPINNED_LOCAL_WORKING_TREE\n",
+            encoding="utf-8",
+        )
+        (local_unpinned / "ref_pkg.bundle").write_text(
+            "rule info\n",
+            encoding="utf-8",
+        )
+
+        # Create an offline git origin for vitalio/ref_pkg.git with tag v1.0 and a later main commit
+        remotes_dir = self.tmp / "remotes" / "vitalio"
+        remote_repo = remotes_dir / "ref_pkg.git"
+        (remote_repo / "agents").mkdir(parents=True)
+        self._git(remote_repo, "init", "-q")
+        self._git(remote_repo, "symbolic-ref", "HEAD", "refs/heads/main")
+        (remote_repo / "agents" / "info.md").write_text(
+            "# Description: Pinned v1.0\n- PINNED_TAG_V1_0_BODY\n",
+            encoding="utf-8",
+        )
+        (remote_repo / "agents" / "ref_pkg.bundle").write_text(
+            "rule info\n",
+            encoding="utf-8",
+        )
+        (remote_repo / "custom" ).mkdir()
+        (remote_repo / "custom" / "pinned.md").write_text(
+            "# Description: Custom pinned\n- CUSTOM_PINNED_REL_PATH\n",
+            encoding="utf-8",
+        )
+        self._git(remote_repo, "add", ".")
+        self._git(remote_repo, "commit", "-q", "-m", "release v1.0")
+        self._git(remote_repo, "tag", "v1.0")
+
+        (remote_repo / "agents" / "info.md").write_text(
+            "# Description: Main head\n- REMOTE_MAIN_HEAD_BODY\n",
+            encoding="utf-8",
+        )
+        self._git(remote_repo, "add", ".")
+        self._git(remote_repo, "commit", "-q", "-m", "advance main")
+
+        env = {
+            **os.environ,
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": f"url.{remotes_dir.parent.as_uri()}/.insteadOf",
+            "GIT_CONFIG_VALUE_0": "https://github.com/",
+        }
+
+        # Unpinned vitalio/ref_pkg uses AGENTS_BUNDLE_LOCAL_PKG_DIR
+        r_unpinned = self._run(
+            [str(SCRIPT), "rule", "vitalio/ref_pkg:info"],
+            cwd=str(self.tmp),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self._assert_ok(r_unpinned)
+        self.assertIn("UNPINNED_LOCAL_WORKING_TREE", r_unpinned.stdout)
+
+        # Explicit @v1.0 fetches the requested ref into cache instead of returning unpinned local tree
+        r_pinned = self._run(
+            [str(SCRIPT), "rule", "vitalio/ref_pkg@v1.0:info"],
+            cwd=str(self.tmp),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self._assert_ok(r_pinned)
+        self.assertIn("PINNED_TAG_V1_0_BODY", r_pinned.stdout)
+        self.assertNotIn("UNPINNED_LOCAL_WORKING_TREE", r_pinned.stdout)
+        self.assertTrue((self.tmp / "cache" / "packages" / "vitalio" / "ref_pkg@v1.0").is_dir())
+
+        # Explicit @v1.0 with explicit relative file path inside package
+        r_pinned_rel = self._run(
+            [str(SCRIPT), "rule", "vitalio/ref_pkg@v1.0:custom/pinned.md"],
+            cwd=str(self.tmp),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self._assert_ok(r_pinned_rel)
+        self.assertIn("CUSTOM_PINNED_REL_PATH", r_pinned_rel.stdout)
+
+        # Explicit @v1.0 on bundle shorthand vitalio/ref_pkg@v1.0
+        r_pinned_bundle = self._run(
+            [str(SCRIPT), "bundle", "vitalio/ref_pkg@v1.0", "--plain"],
+            cwd=str(self.tmp),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self._assert_ok(r_pinned_bundle)
+        self.assertIn("PINNED_TAG_V1_0_BODY", r_pinned_bundle.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -43,12 +43,20 @@ HELP_SECTIONS = (
                 "Build context bundle from .agents_bundle to stdout (stdin: Key: Value preamble, "
                 "task ID, or prompt; sets piped=1 on prompt; empty piped stdin exits 2)",
             ),
-            ("{prog} ruleset <pkg>:<name> [-excl] [k=v]", "Render a ruleset to stdout"),
-            ("{prog} rule <pkg>:<name> [k=v]", "Render a single rule to stdout"),
+            (
+                "{prog} ruleset <pkg>:<name> [-excl] [k=v]",
+                "Render a ruleset from agents/ or rulesets/ (<owner>/<repo>[@ref]:<name|path>, "
+                "./path, or URL) to stdout",
+            ),
+            (
+                "{prog} rule <pkg>:<name> [k=v]",
+                "Render a single rule from agents/ or rules/ (<owner>/<repo>[@ref]:<name|path>, "
+                "./path, or URL) to stdout",
+            ),
             (
                 "{prog} bundle <pkg>[:<name>] [k=v]",
-                "Render a bundle to stdout without .agents_bundle (reads no stdin; honors -C, -p, "
-                "--plain, -v, --refresh)",
+                "Render a bundle from agents/ or bundles/ without .agents_bundle (reads no stdin; "
+                "honors -C, -p, --plain, -v, --refresh)",
             ),
             (
                 "{prog} --list | -l [pkg]",
