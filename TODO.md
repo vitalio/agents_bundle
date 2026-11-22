@@ -27,3 +27,5 @@
 - Merge `ruleset` into `bundle` across `src/rules_engine.py`, `src/bundle.py`, `src/cli.py`, and `src/header.py` so `bundle` serves as the single composition primitive alongside atomic `rule` files (`.md`), coordinating with `F6`, `F7`, and `F10`.
 - Support logical domain-based layouts inside `agents/` (resolving `.md` rules and `.bundle` presets by relative path without requiring top-level `rules/` vs `rulesets/` splits), defining deprecation or migration behavior for existing `ruleset` references and legacy directories.
 - Keep `README.md`, `agents/agents_bundle.md`, and `tests/test_rules_engine.py` and `tests/test_bundle.py` in sync.
+
+- Replace bracketed `[if <cond>] <directive>` and `[if <cond>] ... [/if]` syntax in `.bundle` and `.agents_bundle` files with bracket-free lowercase `if <cond> <directive>` and `if <cond>` ... `endif` blocks (keeping `.md` rule files pure static text without conditional directives and retaining backward compatibility with legacy `[if ...]` syntax during migration).
