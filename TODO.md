@@ -1,4 +1,4 @@
-# 🎯 [NEXT] F10: Enforce command allowlist policy in .agents_bundle for external bundles
+# 🔵 [WIP] F10: Enforce command allowlist policy in .agents_bundle for external bundles
 
 - Depends on: F13, F7
 - Support an explicit allowlist directive in root `.agents_bundle` (e.g. `allow <cmd1> <cmd2> ...` or per-bundle `bundle <pkg> allow=...`) defining which executables external bundles are permitted to run via `$` commands and `var x=$(...)` subshells in `parse_spec()` and `build_bundle()` (`src/bundle.py:167-566`).
@@ -9,10 +9,11 @@
 # 🎯 [NEXT] F15: Unify ruleset into .bundle, implement Bundle-Name producer namespaces, Python-indented if/let/export/file/cmd language, and drop Windows support
 
 - Depends on: F6, F7, F10
-- Implement the unified `.bundle` language, producer namespacing, and POSIX-only cleanup per `todo_flow` `docs/adr/0003-task-targeted-bundle-architecture-and-atomic-rule-taxonomy.md`:
+- Implement the unified `.bundle` language, producer namespacing, canonical 4-kind fragment model, and POSIX-only cleanup per `todo_flow` `docs/adr/0003-task-targeted-bundle-architecture-and-atomic-rule-taxonomy.md`:
   - Unify `ruleset` into `bundle` across `src/rules_engine.py`, `src/bundle.py`, `src/cli.py`, and `src/header.py` as the single additive composition primitive (removing `-exclude` support while keeping `ruleset` and `*.ruleset` as legacy aliases during migration).
   - Support `.ctx.bundle` as the canonical root spec filename in `find_spec_file()` and `--init` with seamless fallback to `.agents_bundle`.
   - Emit `Bundle-Name: agents_bundle` in non-plain output headers. When unpacking an upstream `context-bundle-protocol` stream in `src/upstream.py`, read `Bundle-Name: <producer>` (rejecting duplicate producer names in the same pipeline) and automatically namespace all non-transport preamble headers (except `Workdir`) as `<producer>.<key_lower>` (e.g. `todo_md.task`, `todo_md.prefix`, `todo_md.status`, `todo_md.title`, `todo_md.files`, `todo_md.role`). Support dot-separated variable names (`[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*`) in `if`, `let`, `export`, and `{name:default}`.
+  - Standardize `context-bundle-protocol` fragment kinds to the 4 canonical `.bundle` content directives (`rule`, `file`, `cmd`, `prompt`): emit `"kind": "file"` (instead of `"kind": "include"`) in `src/includes.py` `render_span()`, and normalize legacy upstream `"include"` -> `"file"` and `"task"` / `"context"` -> `"prompt"` in `src/upstream.py`.
   - Implement the 9-keyword `.bundle` vocabulary with top-down declaration-order assembly (`file` and `cmd` emitted in exact declaration order rather than grouping all `cmd` before all `file`):
     - `bundle <target> [k=v ...]`
     - `rule <target...> [k=v ...]`
@@ -24,7 +25,8 @@
     - `if <cond>`, `else if <cond>` (synonym `elif <cond>`), `else` with mandatory 4-space Python-style indentation blocks without colons or `endif` (retaining legacy `[if ...]` / `[/if]` compatibility)
     - `allow <bin...>` (`F10`)
   - Drop Windows support: remove `install.ps1`, `os.name == 'nt'` / PowerShell branches in `src/rules_engine.py` and `src/bundle.py`, and `windows-latest` from `.github/workflows/ci.yml`.
-- Target files: `src/header.py`, `src/rules_engine.py`, `src/upstream.py`, `src/bundle.py`, `src/cli.py`, `agents/agents_bundle.md`, `AGENTS.md`, `README.md`, `tests/test_rules_engine.py`, `tests/test_upstream.py`, `tests/test_bundle.py`.
+- Target files: `src/header.py`, `src/includes.py`, `src/rules_engine.py`, `src/upstream.py`, `src/bundle.py`, `src/cli.py`, `agents/agents_bundle.md`, `README.md`, `tests/test_rules_engine.py`, `tests/test_upstream.py`, `tests/test_bundle.py`.
+__RB_STEP__:2
 
 # ⚪ [NEW] F27: Rename project to ctx-bundle and CLI utility to ctx
 
