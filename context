@@ -19,7 +19,7 @@ import textwrap
 import time
 from pathlib import Path
 
-VERSION = "0.20.3"
+VERSION = "0.20.4"
 REPO_MARKER = "context-bundle-repo: vitalio/context-bundle"
 LEGACY_REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/context-bundle/main/context"

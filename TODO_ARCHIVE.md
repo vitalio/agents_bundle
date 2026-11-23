@@ -1,3 +1,8 @@
+# ✅ [DONE] F37: Sync README.md starter .context.bundle example with current agents-rules taxonomy and tighten Quick Start — *2026-11-24, Synced starter .context.bundle example with current agents-rules taxonomy and moved slice/bundle behavior details out of Quick Start into reference sections*
+
+- Update the starter `.context.bundle` example in `README.md` to use current `vitalio/agents-rules` bundle/rule identifiers (`bundle vitalio/agents-rules:adapters/todo-md`, `bundle vitalio/agents-rules:stack/python py_min=3.9`, `bundle vitalio/agents-rules:stack/cli`, `rule vitalio/agents-rules:release/semver`) instead of removed `adapters/todo_md` and `stack/python-cli`.
+- Move detailed slice merge and `context bundle` behavioral edge cases out of `Quick Start` into the reference sections below so `Quick Start` stays concise and scenario-focused per `agents/stack/cli/docs.md`.
+
 # ✅ [DONE] F34: Restructure README.md with progressive disclosure, scenario-based Quick Start, and CLI Reference tables — *2026-11-23, Restructured README.md with progressive disclosure, scenario-based Quick Start, and CLI Reference tables; aligned context -h description column across all sections.*
 
 - Depends on: F36

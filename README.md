@@ -74,14 +74,6 @@ context -p "Review parser" 'src/*.py' src/bundle.py:395-445 > bundle.txt
 context -C /path/to/project role=review > bundle.txt
 ```
 
-Extra file arguments and `file` directive items accept relative glob patterns
-(`*`, `?`, `[`, and recursive `**`; matches are sorted and `.git` and
-`__pycache__` are skipped) and 1-based inclusive line-range slices
-`path:START-END` or `path:LINE`. A string that names an existing file is always
-included whole. A slice is emitted as a
-`===== $ sed -n 'START,ENDp' <path> =====` section with the fragment name
-`<path>:START-END`, so multiple slices of one large file can be included.
-
 Render standalone bundles or rules and inspect available package catalogs:
 
 ```bash
@@ -90,12 +82,6 @@ context bundle vitalio/agents-rules:default os=macos --plain
 context rule vitalio/agents-rules:release/single-file-build
 context --update-cache
 ```
-
-`context bundle <pkg>[:<name>] [k=v]` renders a single bundle without requiring
-a `.context.bundle` file: the bundle's rules, file sections, command sections,
-and prompts are emitted in the regular bundle format. It accepts `k=v`
-variables and the bundle options (`-C`/`--dir`, `-p`/`--prompt`, `--plain`,
-`-v`/`--verbose`, `--refresh`, `allow=<cmd,...>`) but does not read `stdin`.
 
 Print a token-budgeted repository file tree:
 
@@ -111,7 +97,7 @@ context --tree -x bumps -x resolutions --max-lines 160 --max-tokens 1600
 | Command | Description |
 | :--- | :--- |
 | `context [k=v ...] [-p TEXT] [FILE ...]` | Build context bundle from `.context.bundle` (or `.agents_bundle`) to `stdout` (`stdin`: `Key: Value` preamble, task ID, or prompt; sets `piped=1` on prompt; empty piped `stdin` exits `2`) |
-| `context bundle <pkg>[:<name>] [k=v]` | Render a bundle from `agents/` without `.context.bundle` (reads no `stdin`; honors `-C`, `-p`, `--plain`, `-v`, `--refresh`, `allow=<cmd,...>`) |
+| `context bundle <pkg>[:<name>] [k=v]` | Render a bundle's rules, files, commands, and prompts from `agents/` in the regular bundle format without `.context.bundle` (reads no `stdin`; honors `-C`, `-p`, `--plain`, `-v`, `--refresh`, `allow=<cmd,...>`) |
 | `context rule <pkg>:<name...> [k=v]` | Render one or more rules from `agents/` (`<owner>/<repo>[@ref]:<name\|path>`, `./path`, or URL) to `stdout` |
 | `context --list \| -l [pkg]` | List bundles, rules, and built-in variables (default: `vitalio/agents-rules`) |
 | `context --update-cache` | Refresh cached git packages and URL files in `~/.cache/context-bundle` |
@@ -154,10 +140,11 @@ context --tree -x bumps -x resolutions --max-lines 160 --max-tokens 1600
 Starter `.context.bundle` example:
 
 ```text
-bundle vitalio/agents-rules:adapters/todo_md
+bundle vitalio/agents-rules:adapters/todo-md
 bundle vitalio/agents-rules:core
-rule vitalio/agents-rules:release/semver vitalio/agents-rules:stack/cli
-rule vitalio/agents-rules:stack/python-cli py_min=3.9
+bundle vitalio/agents-rules:stack/python py_min=3.9
+bundle vitalio/agents-rules:stack/cli
+rule vitalio/agents-rules:release/semver
 
 file AGENTS.md
 if role=work
@@ -185,10 +172,16 @@ order:
 - `rule <target...> [k=v ...]` includes one or more atomic `.md` rule files
   from a package's `agents/` directory, an explicit package-relative path, a
   local relative path (`./...`, `../...`), or a URL.
-- `file <path|glob|slice...>` includes space-separated repository files, globs,
-  `path:START-END` slices, or `$(<cmd>)` output (external bundles are
-  restricted to files within the repository root). Empty `file` after variable
-  expansion (such as `file {todo_md.files:}` when unset) is a no-op.
+- `file <path|glob|slice...>` includes space-separated repository files, globs
+  (`*`, `?`, `[`, and recursive `**`; matches are sorted and `.git` and
+  `__pycache__` are skipped), 1-based inclusive line-range slices
+  `path:START-END` or `path:LINE`, or `$(<cmd>)` output (external bundles are
+  restricted to files within the repository root). An argument naming an
+  existing file is always included whole; a slice is emitted as a
+  `===== $ sed -n 'START,ENDp' <path> =====` section with fragment name
+  `<path>:START-END`, and overlapping or whole-file spans are merged at first
+  occurrence. Empty `file` after variable expansion (such as
+  `file {todo_md.files:}` when unset) is a no-op.
 - `cmd <shell command>` runs a command in `Workdir` and includes its output.
 - `prompt <text>` appends text to the Prompt section.
 - `let <name>=<value>` or `let <name>=$(<cmd>)` sets a lexically scoped
