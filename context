@@ -19,7 +19,7 @@ import textwrap
 import time
 from pathlib import Path
 
-VERSION = "0.20.0"
+VERSION = "0.20.1"
 REPO_MARKER = "context-bundle-repo: vitalio/context-bundle"
 LEGACY_REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/context-bundle/main/context"
@@ -27,7 +27,7 @@ SPEC_FILE_NAME = ".context.bundle"
 LEGACY_SPEC_FILE_NAME = ".agents_bundle"
 PRODUCER_NAME = "vitalio/context-bundle"
 DEFAULT_RULES_PKG = "vitalio/agents-rules"
-EMBEDDED_RULE_CONTEXT = '# Description: Context bundler file tree and session assembly\n- Context bundler & rules engine (`{cmd:context}`):\n  - Repository file tree: `{cmd:context} --tree [DIR] [-x DIR] [--max-lines N] [--max-tokens N]`\n    (use instead of `find`/`ls` for directory structure; pins `AGENTS.md`).\n  - Session assembly and handoff:\n    `{cmd:context} [key=val ...] [-p "<prompt>"] [file ...] | run_block`\n    (`role=design|plan|work|review|law`, `task=<ID>`; extra `file` arguments\n    accept globs and `path:start-end` slices). Pipe an upstream bundle into it\n    (`<cmd> | {cmd:context} | run_block`) to namespace its headers under\n    `<producer>.*` (`Bundle-Name`) and merge its rules, files, and prompt.\n  - When editing `.context.bundle` (or `.agents_bundle`) and `.bundle` files, run\n    `{cmd:context} -h` for the 9-keyword directive and protocol reference\n    and `{cmd:context} --list [pkg]` for the available bundles and rules\n    under `agents/`.\n'
+EMBEDDED_RULE_CONTEXT = '# Description: Context bundler file tree, session assembly, and catalog inspection\n- Context bundler & rules engine (`{cmd:context}`):\n  - Repository file tree: `{cmd:context} --tree [DIR] [-x DIR] [--max-lines N] [--max-tokens N]`\n    (use instead of `find`/`ls` for directory structure; pins `AGENTS.md`).\n  - Session assembly and handoff:\n    `[<upstream_cmd> | ]{cmd:context} [key=val ...] [-p "<prompt>"] [file ...] | run_block`\n    (extra `file` arguments accept globs and `path:start-end` slices).\n  - Bundle authoring & catalog inspection: run `{cmd:context} --list [pkg]` to\n    inspect available bundles, rules, and `let` parameters under `agents/`, and\n    `{cmd:context} -h` for the `.bundle` directive reference.\n'
 EMBEDDED_RULE_NAME = "context"
 EMBEDDED_RULE_ID = "vitalio/context-bundle:context"
 LEGACY_RULE_ID = "vitalio/agents_bundle:agents_bundle"

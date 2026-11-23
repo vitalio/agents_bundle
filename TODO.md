@@ -8,3 +8,9 @@
   - '## .context.bundle Format & 9-Keyword Directive Reference': starter example and the 9-keyword directive specification (bundle, rule, file, cmd, prompt, let, export, if/else if/else, allow).
   - '## Bundle Output Protocol & Piped Input': Key: Value preamble and Bundle-* headers, canonical 4-kind JSON fragment markers (rule, file, cmd, prompt), --plain mode, piped stdin / Bundle-Name producer namespace normalization (<owner>.<repo>.<key> and <repo>.<key>), chain provenance, and embedded rule.
   - '## Package Cache' and '## License'.
+
+- Align the description column in `context -h` (`src/core.py:usage_text()`) at a single shared column across all tabular sections (`Usage:`, `Options:`, `Bundle Output Protocol:`, `Environment:`) per `vitalio/agents-rules:stack/cli/help`.
+
+# ⚪ [NEW] F35: Add --compile flag to compile baseline AGENTS.md from .context.bundle
+
+- Implement `context --compile` so `context --compile > AGENTS.md` renders a static baseline `AGENTS.md` from the project's `.context.bundle` (and local `agents/*.md` rules) without role-specific or session-specific runtime headers.
