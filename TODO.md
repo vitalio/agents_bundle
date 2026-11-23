@@ -1,4 +1,4 @@
-# ⚪ [NEW] F27: Rename project to context-bundle and CLI utility to ctx
+# 🎯 [NEXT] F27: Rename project to context-bundle and CLI utility to ctx
 
 - Depends on: F15, F33
 - Rename project/repository references from `agents_bundle` to `context-bundle` and CLI entrypoint from `agents_bundle` to `ctx` (with `.context.bundle` as root bundle config and agreed deprecation aliases/symlinks and env-var updates from `todo_flow:D8` and ADR 0003).
