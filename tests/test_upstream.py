@@ -9,7 +9,7 @@ from tests.helpers import AgentsBundleTestCase, SCRIPT
 class TestUpstream(AgentsBundleTestCase):
     def _run_upstream(self) -> str:
         (self.tmp / "big.txt").write_text("".join(f"line{i}\n" for i in range(1, 11)), encoding="utf-8")
-        (self.tmp / ".ctx.bundle").write_text(
+        (self.tmp / ".context.bundle").write_text(
             "bundle vitalio/agents-rules:core\n"
             "export task\n"
             "cmd echo up_cmd\n",
@@ -24,7 +24,7 @@ class TestUpstream(AgentsBundleTestCase):
         self.assertIn("Task: F1\n", up.stdout)
         self.assertNotIn("Role:", up.stdout)
         self.assertNotIn("Bundle-Expose:", up.stdout)
-        (self.tmp / ".ctx.bundle").write_text(
+        (self.tmp / ".context.bundle").write_text(
             "bundle vitalio/agents-rules:core\n"
             "if agents_bundle.task!=\n"
             "    let task={agents_bundle.task:}\n"
@@ -57,7 +57,7 @@ class TestUpstream(AgentsBundleTestCase):
         )
         self.assertEqual(
             rules["vitalio/agents-rules:core/start"]["chain"],
-            [".ctx.bundle", "vitalio/agents-rules:core"],
+            [".context.bundle", "vitalio/agents-rules:core"],
         )
         self.assertEqual(rules["agents_bundle"]["chain"], ["agents_bundle"])
         files = [(m, b) for m, b in frags if m["kind"] == "file"]
@@ -65,7 +65,7 @@ class TestUpstream(AgentsBundleTestCase):
         self.assertEqual(files[0][1], "===== $ sed -n '2,6p' big.txt =====\nline2\nline3\nline4\nline5\nline6")
         cmds = [m for m, _ in frags if m["kind"] == "cmd"]
         self.assertEqual([m["name"] for m in cmds], ["echo up_cmd", "echo down_cmd"])
-        self.assertEqual(cmds[0]["chain"], [".ctx.bundle"])
+        self.assertEqual(cmds[0]["chain"], [".context.bundle"])
         prompts = [(m, b) for m, b in frags if m["kind"] == "prompt"]
         self.assertEqual(len(prompts), 1)
         self.assertEqual(prompts[0][0]["chain"], [])
@@ -107,7 +107,7 @@ class TestUpstream(AgentsBundleTestCase):
             f"<!-- bundle:abc123:part {json.dumps(weird)} -->\nignored\n<!-- bundle:abc123:end -->\n"
             f"<!-- bundle:abc123:part {json.dumps(legacy_inc)} -->\nignored\n<!-- bundle:abc123:end -->\n"
         )
-        (self.tmp / ".ctx.bundle").write_text(
+        (self.tmp / ".context.bundle").write_text(
             "if todo_md.status=WIP,NEXT\n"
             "    let role=work\n"
             "export role\n"
@@ -147,7 +147,7 @@ class TestUpstream(AgentsBundleTestCase):
             [
                 {"kind": "prompt", "id": "F9", "name": "TODO.md:F9", "chain": ["todo_md"]},
                 {"kind": "prompt", "name": "notes", "chain": ["todo_md"]},
-                {"kind": "prompt", "chain": [".ctx.bundle"]},
+                {"kind": "prompt", "chain": [".context.bundle"]},
             ],
         )
         self.assertEqual(prompts[0][1], "===== Prompt =====\n# F9 title")
@@ -155,7 +155,7 @@ class TestUpstream(AgentsBundleTestCase):
         self.assertEqual(prompts[2][1], "Local note for F:F9")
 
     def test_duplicate_bundle_name_producer_rejected(self):
-        (self.tmp / ".ctx.bundle").write_text("prompt hi\n", encoding="utf-8")
+        (self.tmp / ".context.bundle").write_text("prompt hi\n", encoding="utf-8")
         for label, bad_stdin in [
             (
                 "duplicate_bundle_name_header",
@@ -184,7 +184,7 @@ class TestUpstream(AgentsBundleTestCase):
             head + "\n"
             f"<!-- bundle:abc123:part {json.dumps(meta)} -->\n{body}\n<!-- bundle:abc123:end -->\n"
         )
-        (self.tmp / ".ctx.bundle").write_text("prompt Local note\n", encoding="utf-8")
+        (self.tmp / ".context.bundle").write_text("prompt Local note\n", encoding="utf-8")
         r = self._run([str(SCRIPT), *argv], cwd=str(self.tmp), input=upstream)
         self._assert_ok(r)
         _n, frags = self._extract_fragments(r.stdout)

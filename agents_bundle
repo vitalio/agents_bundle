@@ -19,14 +19,14 @@ import textwrap
 import time
 from pathlib import Path
 
-VERSION = "0.19.1"
+VERSION = "0.19.2"
 REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/agents_bundle/main/agents_bundle"
-SPEC_FILE_NAME = ".ctx.bundle"
+SPEC_FILE_NAME = ".context.bundle"
 LEGACY_SPEC_FILE_NAME = ".agents_bundle"
 PRODUCER_NAME = "agents_bundle"
 DEFAULT_RULES_PKG = "vitalio/agents-rules"
-EMBEDDED_RULE_AGENTS_BUNDLE = '# Description: Context bundler file tree and session assembly\n- Context bundler & rules engine (`{cmd:agents_bundle}`):\n  - Repository file tree: `{cmd:agents_bundle} --tree [DIR] [-x DIR] [--max-lines N] [--max-tokens N]`\n    (use instead of `find`/`ls` for directory structure; pins `AGENTS.md`).\n  - Session assembly and handoff:\n    `{cmd:agents_bundle} [key=val ...] [-p "<prompt>"] [file ...] | run_block`\n    (`role=design|plan|work|review|law`, `task=<ID>`; extra `file` arguments\n    accept globs and `path:start-end` slices). Pipe an upstream bundle into it\n    (`<cmd> | {cmd:agents_bundle} | run_block`) to namespace its headers under\n    `<producer>.*` (`Bundle-Name`) and merge its rules, files, and prompt.\n  - When editing `.ctx.bundle` (or `.agents_bundle`) and `.bundle` files, run\n    `{cmd:agents_bundle} -h` for the 9-keyword directive and protocol reference\n    and `{cmd:agents_bundle} --list [pkg]` for the available bundles and rules\n    under `agents/`.\n'
+EMBEDDED_RULE_AGENTS_BUNDLE = '# Description: Context bundler file tree and session assembly\n- Context bundler & rules engine (`{cmd:agents_bundle}`):\n  - Repository file tree: `{cmd:agents_bundle} --tree [DIR] [-x DIR] [--max-lines N] [--max-tokens N]`\n    (use instead of `find`/`ls` for directory structure; pins `AGENTS.md`).\n  - Session assembly and handoff:\n    `{cmd:agents_bundle} [key=val ...] [-p "<prompt>"] [file ...] | run_block`\n    (`role=design|plan|work|review|law`, `task=<ID>`; extra `file` arguments\n    accept globs and `path:start-end` slices). Pipe an upstream bundle into it\n    (`<cmd> | {cmd:agents_bundle} | run_block`) to namespace its headers under\n    `<producer>.*` (`Bundle-Name`) and merge its rules, files, and prompt.\n  - When editing `.context.bundle` (or `.agents_bundle`) and `.bundle` files, run\n    `{cmd:agents_bundle} -h` for the 9-keyword directive and protocol reference\n    and `{cmd:agents_bundle} --list [pkg]` for the available bundles and rules\n    under `agents/`.\n'
 EMBEDDED_RULE_NAME = "agents_bundle"
 LEGACY_RULE_ID = "vitalio/agents_bundle:agents_bundle"
 PROTOCOL_VERSION = "1"
@@ -43,13 +43,13 @@ HELP_SECTIONS = (
         (
             (
                 "{prog} [k=v ...] [-p TEXT] [FILE ...]",
-                "Build context bundle from .ctx.bundle (or .agents_bundle) to stdout (stdin: "
+                "Build context bundle from .context.bundle (or .agents_bundle) to stdout (stdin: "
                 "Key: Value preamble, task ID, or prompt; sets piped=1 on prompt; empty piped "
                 "stdin exits 2)",
             ),
             (
                 "{prog} bundle <pkg>[:<name>] [k=v]",
-                "Render a bundle from agents/ without .ctx.bundle (reads no stdin; "
+                "Render a bundle from agents/ without .context.bundle (reads no stdin; "
                 "honors -C, -p, --plain, -v, --refresh, allow=<cmd,...>)",
             ),
             (
@@ -62,7 +62,7 @@ HELP_SECTIONS = (
                 "List bundles, rules, and built-in variables (default: {default_pkg})",
             ),
             ("{prog} --update-cache", "Refresh cached git packages and URL files in {cache_dir}"),
-            ("{prog} --init [--force]", "Create a starter .ctx.bundle in the current directory"),
+            ("{prog} --init [--force]", "Create a starter .context.bundle in the current directory"),
             ("{prog} --tree [DIR] [opts]", "Print token-budgeted repository file tree to stdout"),
             ("{prog} --update [--force]", "Self-update {prog} from GitHub (vitalio/agents_bundle)"),
             ("{prog} --check-update", "Check if a newer version is available"),
@@ -88,7 +88,7 @@ HELP_SECTIONS = (
             ("--max-tokens N", "Approximate token budget for --tree (default: 1600)"),
             (
                 "--force",
-                "Overwrite existing .ctx.bundle (--init) or force reinstall (--update)",
+                "Overwrite existing .context.bundle (--init) or force reinstall (--update)",
             ),
         ),
     ),

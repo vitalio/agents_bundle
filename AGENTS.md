@@ -1,13 +1,13 @@
 # `agents_bundle` — Project-Specific Agent Rules
 
 Universal workflow, language, Git, SemVer, Python CLI, and single-file build
-rules are loaded via `.ctx.bundle` (or `.agents_bundle`).
+rules are loaded via `.context.bundle` (or `.agents_bundle`).
 
 ## Architecture & Module Boundaries
 
 - `src/header.py` — table-driven help data (`HELP_SECTIONS` and the `HELP_*`
   width constants), the standard library imports shared by the assembled
-  executable, and version/protocol constants (`SPEC_FILE_NAME = ".ctx.bundle"`,
+  executable, and version/protocol constants (`SPEC_FILE_NAME = ".context.bundle"`,
   `LEGACY_SPEC_FILE_NAME = ".agents_bundle"`, `PRODUCER_NAME = "agents_bundle"`,
   `VAR_NAME_PATTERN`).
 - `src/core.py` — `prog_name()`, `cache_dir_path()`, and `usage_text()`
@@ -29,13 +29,13 @@ rules are loaded via `.ctx.bundle` (or `.agents_bundle`).
   against `os` (`linux`, `macos`), `vcs`, and dot-separated variables.
 - `src/includes.py` — `file` item expansion (globs, `path:start-end`),
   repository-root boundary enforcement (`root_dir`) for external bundle files,
-  and range-aware span deduplication shared by upstream, `.ctx.bundle` /
+  and range-aware span deduplication shared by upstream, `.context.bundle` /
   `.agents_bundle`, and CLI files; emits canonical `"kind": "file"` metadata.
 - `src/upstream.py` — parses piped stdin (preamble headers, `Bundle-Name:
   <producer>` producer namespacing `<producer>.<key_lower>` with duplicate
   producer rejection, and upstream fragments by `Bundle-Boundary` for the 4
   canonical `"rule"`, `"file"`, `"cmd"`, `"prompt"` kinds) into `PipedInput`.
-- `src/bundle.py` — locates `.ctx.bundle` (with fallback to `.agents_bundle`),
+- `src/bundle.py` — locates `.context.bundle` (with fallback to `.agents_bundle`),
   parses the 9-keyword `.bundle` language (`bundle`, `rule`, `file`, `cmd`,
   `prompt`, `let`, `export`, `if`/`else if`/`elif`/`else`, `allow`), enforces
   lexical scoping on `let` and session/header promotion on `export`, enforces
@@ -93,6 +93,6 @@ rules are loaded via `.ctx.bundle` (or `.agents_bundle`).
   `{name:default}` substitution apply; `if` conditions belong to `.bundle`
   specs, never to rule bodies.
 - Chain provenance: `build_bundle()` passes `chain=[spec_file.name]` to
-  `parse_spec()` only when `.ctx.bundle` or `.agents_bundle` is read; `bundle`
+  `parse_spec()` only when `.context.bundle` or `.agents_bundle` is read; `bundle`
   subcommand, piped, CLI, and embedded fragments stay outside it. Keep the
   `.bundle` directive reference in `README.md`.

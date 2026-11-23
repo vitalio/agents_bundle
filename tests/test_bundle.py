@@ -342,7 +342,7 @@ class TestBundle(AgentsBundleTestCase):
         sub = self.tmp / "pkg"
         sub.mkdir()
         (sub / "mod.py").write_text("X = 1\n", encoding="utf-8")
-        (self.tmp / ".ctx.bundle").write_text(
+        (self.tmp / ".context.bundle").write_text(
             "bundle vitalio/agents-rules:core\n"
             "file pkg/mod.py\n"
             "cmd git status -sb\n",
@@ -401,7 +401,7 @@ class TestBundle(AgentsBundleTestCase):
         self._assert_ok(ri)
         init_lines = [
             ln.strip()
-            for ln in (init_dir / ".ctx.bundle").read_text(encoding="utf-8").splitlines()
+            for ln in (init_dir / ".context.bundle").read_text(encoding="utf-8").splitlines()
             if ln.strip() and not ln.strip().startswith("#")
         ]
         self.assertIn("file AGENTS.md", init_lines)
@@ -624,7 +624,7 @@ class TestBundle(AgentsBundleTestCase):
             "prompt Sibling sees project={project_id:none} local={local_only:none}\n",
             encoding="utf-8",
         )
-        (self.tmp / ".ctx.bundle").write_text(
+        (self.tmp / ".context.bundle").write_text(
             "bundle vitalio/agents-rules:core\n"
             "export chat_lang title\n"
             "export {opt_hdr:}\n"
@@ -672,7 +672,7 @@ class TestBundle(AgentsBundleTestCase):
         self.assertNotEqual(m1.group(1), m2.group(1))
 
         # Invalid export variable name fails explicitly
-        (self.tmp / ".ctx.bundle").write_text("export bad=key\n", encoding="utf-8")
+        (self.tmp / ".context.bundle").write_text("export bad=key\n", encoding="utf-8")
         r_bad_spec = self._run(
             [str(SCRIPT)],
             cwd=str(self.tmp),
@@ -681,7 +681,7 @@ class TestBundle(AgentsBundleTestCase):
             check=False,
         )
         self.assertNotEqual(r_bad_spec.returncode, 0, msg=f"stdout:\n{r_bad_spec.stdout}\nstderr:\n{r_bad_spec.stderr}")
-        self.assertIn(".ctx.bundle", r_bad_spec.stderr)
+        self.assertIn(".context.bundle", r_bad_spec.stderr)
 
     def test_source_provenance_and_command_telemetry(self):
         mod = self._load_bundle_module()
@@ -1325,7 +1325,7 @@ class TestBundle(AgentsBundleTestCase):
             "export role\n",
             encoding="utf-8",
         )
-        (self.tmp / ".ctx.bundle").write_text(
+        (self.tmp / ".context.bundle").write_text(
             f"bundle {adapter.as_posix()}\n"
             "rule vitalio/agents-rules:core/start vitalio/agents-rules:core/ssot\n"
             "file first.txt {empty_files:}\n"
@@ -1373,7 +1373,7 @@ class TestBundle(AgentsBundleTestCase):
             ("legacy_expose_kw", "expose a\n", "invalid line"),
         ]:
             with self.subTest(syntax_error=label):
-                (self.tmp / ".ctx.bundle").write_text(bad_spec, encoding="utf-8")
+                (self.tmp / ".context.bundle").write_text(bad_spec, encoding="utf-8")
                 r_bad = self._run([str(SCRIPT)], cwd=str(self.tmp))
                 self.assertNotEqual(r_bad.returncode, 0, msg=r_bad.stdout)
                 self.assertIn(err_sub, r_bad.stderr)

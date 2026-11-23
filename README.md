@@ -3,7 +3,7 @@
 Unix-style context bundler, rule/bundle engine, and token-budgeted repository
 file tree for AI coding agents on POSIX (`linux` and `macos`).
 
-`agents_bundle` executes `.ctx.bundle` (with fallback to `.agents_bundle`) in
+`agents_bundle` executes `.context.bundle` (with fallback to `.agents_bundle`) in
 the target working directory (`-C`/`--dir`, a piped `Workdir:` preamble on
 `stdin`, or the current directory), runs the 9-keyword `.bundle` language
 (`bundle`, `rule`, `file`, `cmd`, `prompt`, `let`, `export`,
@@ -50,7 +50,7 @@ agents_bundle --check-update
 agents_bundle --update
 ```
 
-## `.ctx.bundle` Format
+## `.context.bundle` Format
 
 ```text
 bundle vitalio/agents-rules:adapters/todo_md
@@ -96,7 +96,7 @@ agents_bundle --tree -x bumps -x resolutions --max-lines 160
 ```
 
 `agents_bundle bundle <pkg>[:<name>] [k=v]` renders a single bundle without
-requiring a `.ctx.bundle` file: the bundle's rules, file sections, command
+requiring a `.context.bundle` file: the bundle's rules, file sections, command
 sections, and prompts are emitted in the regular bundle format. It accepts
 `k=v` variables and the bundle options (`-C`/`--dir`, `-p`/`--prompt`,
 `--plain`, `-v`/`--verbose`, `--refresh`) but does not read `stdin`.
@@ -111,7 +111,7 @@ one large file can be included.
 
 ## 9-Keyword `.bundle` Directive Reference
 
-`.ctx.bundle` (legacy `.agents_bundle`) and package `.bundle` files share the
+`.context.bundle` (legacy `.agents_bundle`) and package `.bundle` files share the
 same 9-keyword directive language; blank lines and `#` comments are ignored,
 and `file` and `cmd` fragments assemble in exact top-down declaration order:
 
@@ -142,7 +142,7 @@ and `file` and `cmd` fragments assemble in exact top-down declaration order:
   Python-style indented blocks without trailing colons or `endif`. Variable
   names in `if`, `let`, `export`, and `{name:default}` support dot-separated
   producer namespaces (`<producer>.<key>`).
-- `allow <bin...>` (root `.ctx.bundle` / `.agents_bundle` only) permits
+- `allow <bin...>` (root `.context.bundle` / `.agents_bundle` only) permits
   external bundles to run the listed executables in `cmd`, `let <k>=$(<cmd>)`,
   and `file $(<cmd>)`. All commands from external bundles are inspected
   statically before any shell command runs; unlisted executables fail fast
@@ -189,13 +189,13 @@ from the assembled body sections (`===== Rules =====`, `===== $ cat <file>
   absorbs any slice of the same file and overlapping slices become one slice);
   `prompt` fragments are re-wrapped with the new boundary inside the Prompt
   section with their metadata preserved.
-- **Chain provenance:** fragments from `.ctx.bundle` or `.agents_bundle` (and
+- **Chain provenance:** fragments from `.context.bundle` or `.agents_bundle` (and
   nested bundles) carry `chain` starting with the root spec filename; piped
   upstream fragments keep their own chain, and CLI file and `-p` arguments use
   `[]`.
 - **Embedded rule:** a short built-in rule (`id` `agents_bundle`, chain
   `["agents_bundle"]`) describing `--tree` and session assembly is always added
-  to the Rules section. `--init` creates a starter `.ctx.bundle` that uses
+  to the Rules section. `--init` creates a starter `.context.bundle` that uses
   `file AGENTS.md`.
 
 ## Package Cache

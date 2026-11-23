@@ -8,7 +8,7 @@
     accept globs and `path:start-end` slices). Pipe an upstream bundle into it
     (`<cmd> | {cmd:agents_bundle} | run_block`) to namespace its headers under
     `<producer>.*` (`Bundle-Name`) and merge its rules, files, and prompt.
-  - When editing `.ctx.bundle` (or `.agents_bundle`) and `.bundle` files, run
+  - When editing `.context.bundle` (or `.agents_bundle`) and `.bundle` files, run
     `{cmd:agents_bundle} -h` for the 9-keyword directive and protocol reference
     and `{cmd:agents_bundle} --list [pkg]` for the available bundles and rules
     under `agents/`.
