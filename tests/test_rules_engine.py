@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rules engine, package cache, and circular dependency tests for agents_bundle."""
+"""Rules engine, package cache, and circular dependency tests for context-bundle."""
 import http.server
 import os
 import threading
@@ -141,7 +141,7 @@ class TestRulesEngine(AgentsBundleTestCase):
         rule_dir = home / "agents-rules" / "rules" / "core"
         rule_dir.mkdir(parents=True)
         (rule_dir / "ssot.md").write_text("# Description: S\n- Home fallback body.\n", encoding="utf-8")
-        env = {k: v for k, v in os.environ.items() if k != "AGENTS_BUNDLE_LOCAL_PKG_DIR"}
+        env = {k: v for k, v in os.environ.items() if k != "CONTEXT_BUNDLE_LOCAL_PKG_DIR"}
         env.update(
             {
                 "HOME": str(home),
@@ -164,7 +164,7 @@ class TestRulesEngine(AgentsBundleTestCase):
         self.assertIn("failed to fetch package", r.stderr)
 
     def test_circular_bundle_references_fail_fast(self):
-        pkg_dir = Path(os.environ["AGENTS_BUNDLE_LOCAL_PKG_DIR"])
+        pkg_dir = Path(os.environ["CONTEXT_BUNDLE_LOCAL_PKG_DIR"])
         (pkg_dir / "agents" / "self_loop.bundle").write_text(
             "# Description: Self-referential bundle\n"
             "bundle self_loop\n",
@@ -341,7 +341,7 @@ class TestRulesEngine(AgentsBundleTestCase):
         self.assertIn("Python 3.9+ compatibility", r_diamond.stdout)
 
     def test_agents_package_dir_domain_bundles_and_relative_paths(self):
-        pkg_root = Path(os.environ["AGENTS_BUNDLE_LOCAL_PKG_DIR"])
+        pkg_root = Path(os.environ["CONTEXT_BUNDLE_LOCAL_PKG_DIR"])
         mod_pkg = pkg_root / "vitalio" / "modern_pkg"
         (mod_pkg / "agents" / "core").mkdir(parents=True)
         (mod_pkg / "agents" / "coding").mkdir(parents=True)
@@ -491,7 +491,7 @@ class TestRulesEngine(AgentsBundleTestCase):
         self.assertIn("escapes package root", r_escape.stderr)
 
     def test_explicit_ref_fetches_remote_ref_instead_of_unpinned_local_override(self):
-        pkg_root = Path(os.environ["AGENTS_BUNDLE_LOCAL_PKG_DIR"])
+        pkg_root = Path(os.environ["CONTEXT_BUNDLE_LOCAL_PKG_DIR"])
         local_unpinned = pkg_root / "vitalio" / "ref_pkg" / "agents"
         local_unpinned.mkdir(parents=True)
         (local_unpinned / "info.md").write_text(
@@ -540,7 +540,7 @@ class TestRulesEngine(AgentsBundleTestCase):
             "GIT_CONFIG_VALUE_0": "https://github.com/",
         }
 
-        # Unpinned vitalio/ref_pkg uses AGENTS_BUNDLE_LOCAL_PKG_DIR
+        # Unpinned vitalio/ref_pkg uses CONTEXT_BUNDLE_LOCAL_PKG_DIR
         r_unpinned = self._run(
             [str(SCRIPT), "rule", "vitalio/ref_pkg:info"],
             cwd=str(self.tmp),

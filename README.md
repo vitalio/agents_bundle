@@ -1,53 +1,55 @@
-# agents_bundle
+# context-bundle (`context`)
 
 Unix-style context bundler, rule/bundle engine, and token-budgeted repository
 file tree for AI coding agents on POSIX (`linux` and `macos`).
 
-`agents_bundle` executes `.context.bundle` (with fallback to `.agents_bundle`) in
+`context` executes `.context.bundle` (with fallback to `.agents_bundle`) in
 the target working directory (`-C`/`--dir`, a piped `Workdir:` preamble on
 `stdin`, or the current directory), runs the 9-keyword `.bundle` language
 (`bundle`, `rule`, `file`, `cmd`, `prompt`, `let`, `export`,
 `if`/`else if`/`elif`/`else`, and `allow`), includes any extra CLI files and
-`-p/--prompt` text, emits `Bundle-Command`, `Bundle-Name: agents_bundle`,
+`-p/--prompt` text, emits `Bundle-Command`, `Bundle-Name: vitalio/context-bundle`,
 `Bundle-Boundary`, `Bundle-Protocol: 1`, exported `Key: Value` variable
 headers, and `Workdir: <path>` in the bundle header (or plain Markdown/text via
-`--plain` / `AGENTS_BUNDLE_PLAIN=1`), and writes the assembled bundle strictly
+`--plain` / `CONTEXT_BUNDLE_PLAIN=1`), and writes the assembled bundle strictly
 to `stdout` (sending warnings or errors to `stderr`) so it composes cleanly via
 Unix pipes.
 
 When `stdin` is piped, leading `Key: Value` preamble headers (terminated by a
 blank line or EOF) are parsed automatically: `Workdir:` selects the working
-directory unless overridden by `-C`/`--dir`, and when `Bundle-Name: <producer>`
-is present, non-transport headers are automatically namespaced as
-`<producer>.<key_lower>` (for example `todo_md.task`, `todo_md.prefix`,
-`todo_md.status`, `todo_md.title`, `todo_md.files`, `todo_md.role`) while
-rejecting duplicate producer names in the same pipeline. A single-token body
-sets `task=<ID>` (or `<producer>.task=<ID>`), any remaining body text is
-prepended to the prompt, and built-in `piped=1` is exposed when stdin prompt
-text is present so bundles can guard duplicate output with `if piped!=1`. When
-`stdin` is an actual pipe (FIFO) that delivers empty input, `agents_bundle`
-writes an error to `stderr` and exits `2` before running any directives;
-non-FIFO non-TTY `stdin` such as `/dev/null` is still accepted.
+directory unless overridden by `-C`/`--dir`, and when `Bundle-Name: <owner>/<repo>`
+(or `<producer>`) is present, `/` is normalized to `.` and `-` to `_` so
+non-transport headers populate both `<owner>.<repo>.<key_lower>` (for example
+`vitalio.todo_md.task`) and the unambiguous short alias `<repo>.<key_lower>`
+(`todo_md.task`, `todo_md.prefix`, `todo_md.status`, `todo_md.title`,
+`todo_md.files`, `todo_md.role`) while rejecting duplicate producer names in
+the same pipeline. A single-token body sets `task=<ID>` (or `<producer>.task=<ID>`),
+any remaining body text is prepended to the prompt, and built-in `piped=1` is
+exposed when stdin prompt text is present so bundles can guard duplicate output
+with `if piped!=1`. When `stdin` is an actual pipe (FIFO) that delivers empty
+input, `context` writes an error to `stderr` and exits `2` before running any
+directives; non-FIFO non-TTY `stdin` such as `/dev/null` is still accepted.
 
 ## Quick Installation
 
 Linux / macOS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/vitalio/agents_bundle/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/vitalio/context-bundle/main/install.sh | sh
 ```
 
 Custom command name or install directory:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/vitalio/agents_bundle/main/install.sh | sh -s -- --name ab --dir ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/vitalio/context-bundle/main/install.sh | sh -s -- --name ctx --dir ~/.local/bin
 ```
 
-Check for updates or self-update in place:
+Check for updates, self-update in place, or uninstall:
 
 ```bash
-agents_bundle --check-update
-agents_bundle --update
+context --check-update
+context --update
+context --uninstall
 ```
 
 ## `.context.bundle` Format
@@ -62,7 +64,7 @@ file AGENTS.md
 if role=work
     file {todo_md.files:}
 
-cmd agents_bundle --tree -x archive_dir
+cmd context --tree -x archive_dir
 cmd git status -sb
 if mode=summary
     cmd git shortlog -sn
@@ -72,30 +74,30 @@ if mode=summary
 ## CLI Usage
 
 ```bash
-agents_bundle --init
-agents_bundle > bundle.txt
-agents_bundle role=design > bundle.txt
-agents_bundle role=plan > bundle.txt
-agents_bundle role=work > bundle.txt
-agents_bundle role=work task=F1 > bundle.txt
-todo_md F1 | agents_bundle role=work > bundle.txt
-agents_bundle -C /path/to/project role=work > bundle.txt
-agents_bundle role=review > bundle.txt
-AGENTS_BUNDLE_VARS="chat_lang=Spanish" agents_bundle > bundle.txt
-agents_bundle -p "Fix issue #12" src/main.py > bundle.txt
-agents_bundle -p "Review" 'src/*.py' src/bundle.py:395-445 > bundle.txt
-agents_bundle --plain role=work > plain_bundle.txt
-AGENTS_BUNDLE_PLAIN=1 agents_bundle > plain_bundle.txt
-agents_bundle bundle vitalio/agents-rules:default os=macos --plain
-agents_bundle rule vitalio/agents-rules:release/single-file-build
-agents_bundle bundle vitalio/todo_md role=design --plain
-agents_bundle --refresh > bundle.txt
-agents_bundle --update-cache
-agents_bundle --list
-agents_bundle --tree -x bumps -x resolutions --max-lines 160
+context --init
+context > bundle.txt
+context role=design > bundle.txt
+context role=plan > bundle.txt
+context role=work > bundle.txt
+context role=work task=F1 > bundle.txt
+todo_md F1 | context role=work > bundle.txt
+context -C /path/to/project role=work > bundle.txt
+context role=review > bundle.txt
+CONTEXT_BUNDLE_VARS="chat_lang=Spanish" context > bundle.txt
+context -p "Fix issue #12" src/main.py > bundle.txt
+context -p "Review" 'src/*.py' src/bundle.py:395-445 > bundle.txt
+context --plain role=work > plain_bundle.txt
+CONTEXT_BUNDLE_PLAIN=1 context > plain_bundle.txt
+context bundle vitalio/agents-rules:default os=macos --plain
+context rule vitalio/agents-rules:release/single-file-build
+context bundle vitalio/todo_md role=design --plain
+context --refresh > bundle.txt
+context --update-cache
+context --list
+context --tree -x bumps -x resolutions --max-lines 160
 ```
 
-`agents_bundle bundle <pkg>[:<name>] [k=v]` renders a single bundle without
+`context bundle <pkg>[:<name>] [k=v]` renders a single bundle without
 requiring a `.context.bundle` file: the bundle's rules, file sections, command
 sections, and prompts are emitted in the regular bundle format. It accepts
 `k=v` variables and the bundle options (`-C`/`--dir`, `-p`/`--prompt`,
@@ -141,7 +143,7 @@ and `file` and `cmd` fragments assemble in exact top-down declaration order:
 - `if <cond>`, `else if <cond>` (synonym `elif <cond>`), `else` guard 4-space
   Python-style indented blocks without trailing colons or `endif`. Variable
   names in `if`, `let`, `export`, and `{name:default}` support dot-separated
-  producer namespaces (`<producer>.<key>`).
+  producer namespaces (`<owner>.<repo>.<key>` and `<repo>.<key>`).
 - `allow <bin...>` (root `.context.bundle` / `.agents_bundle` only) permits
   external bundles to run the listed executables in `cmd`, `let <k>=$(<cmd>)`,
   and `file $(<cmd>)`. All commands from external bundles are inspected
@@ -150,13 +152,13 @@ and `file` and `cmd` fragments assemble in exact top-down declaration order:
 
 ## Bundle Output Protocol
 
-`agents_bundle` outputs a `Key: Value` header block separated by a blank line
+`context` outputs a `Key: Value` header block separated by a blank line
 from the assembled body sections (`===== Rules =====`, `===== $ cat <file>
 =====` / `===== $ <cmd> =====` in declaration order, and `===== Prompt =====`):
 
 - **Transport and exported headers:** By default, the header block starts with
-  `Bundle-Command`, `Bundle-Name: agents_bundle`, `Bundle-Boundary: <nonce>` (a
-  per-run hex token), and `Bundle-Protocol: 1`, followed by any non-empty
+  `Bundle-Command`, `Bundle-Name: vitalio/context-bundle`, `Bundle-Boundary: <nonce>`
+  (a per-run hex token), and `Bundle-Protocol: 1`, followed by any non-empty
   variables explicitly promoted via `export <key...>` and `Workdir: <path>`.
   Unexported variables stay internal to bundle execution and never appear in
   the output preamble.
@@ -175,17 +177,18 @@ from the assembled body sections (`===== Rules =====`, `===== $ cat <file>
   `prompt`), `id` (for `rule`) or `name` (for `file` and `cmd`), `chain` (`[]`
   for root directives and CLI inputs, or ordered inclusion path of bundle
   specifiers), and `rc` / `ms` (for `cmd`).
-- **Plain output (`--plain`):** Pass `--plain` or set `AGENTS_BUNDLE_PLAIN=1`
+- **Plain output (`--plain`):** Pass `--plain` or set `CONTEXT_BUNDLE_PLAIN=1`
   to omit transport `Bundle-*` headers and JSON fragment markers when plain
   Markdown/text output is requested.
 - **Piped bundles (`context-bundle-protocol` v1):** when `stdin` declares
   `Bundle-Boundary: <nonce>`, the upstream bundle is unpacked instead of being
-  treated as prompt text. When `Bundle-Name: <producer>` is present, upstream
-  preamble headers (except `Workdir`) are namespaced as `<producer>.<key_lower>`
-  (rejecting duplicate producer names in the same pipeline), and
-  `Bundle-Command` is chained as `<upstream> | <this command>`. `rule`
-  fragments are merged and deduplicated by `id`; `file` fragments are merged
-  with bundle and CLI files at first occurrence (where a whole-file span
+  treated as prompt text. When `Bundle-Name: <producer>` is present, `/` is
+  normalized to `.` and `-` to `_` so upstream preamble headers (except
+  `Workdir`) populate `<owner>.<repo>.<key_lower>` and unambiguous
+  `<repo>.<key_lower>` (rejecting duplicate producer names in the same
+  pipeline), and `Bundle-Command` is chained as `<upstream> | <this command>`.
+  `rule` fragments are merged and deduplicated by `id`; `file` fragments are
+  merged with bundle and CLI files at first occurrence (where a whole-file span
   absorbs any slice of the same file and overlapping slices become one slice);
   `prompt` fragments are re-wrapped with the new boundary inside the Prompt
   section with their metadata preserved.
@@ -193,20 +196,21 @@ from the assembled body sections (`===== Rules =====`, `===== $ cat <file>
   nested bundles) carry `chain` starting with the root spec filename; piped
   upstream fragments keep their own chain, and CLI file and `-p` arguments use
   `[]`.
-- **Embedded rule:** a short built-in rule (`id` `agents_bundle`, chain
-  `["agents_bundle"]`) describing `--tree` and session assembly is always added
-  to the Rules section. `--init` creates a starter `.context.bundle` that uses
-  `file AGENTS.md`.
+- **Embedded rule:** a short built-in rule (`id` `vitalio/context-bundle:context`,
+  chain `["vitalio/context-bundle"]`) describing `--tree` and session assembly is
+  always added to the Rules section. `--init` creates a starter `.context.bundle`
+  that uses `file AGENTS.md`.
 
 ## Package Cache
 
 Remote packages are cloned into `<cache_dir>/packages` and URL files are
-saved in `<cache_dir>/urls` (`AGENTS_BUNDLE_CACHE_DIR` overrides the
-location). `--refresh` re-fetches each remote package or URL at most once
-per run. `--update-cache` fetches and hard-resets every cached git package
-to its remote ref and re-downloads every cached URL file, printing one
+saved in `<cache_dir>/urls` (`CONTEXT_BUNDLE_CACHE_DIR` overrides the
+location; `~/.cache/agents_bundle` is automatically migrated to
+`~/.cache/context-bundle`). `--refresh` re-fetches each remote package or URL
+at most once per run. `--update-cache` fetches and hard-resets every cached git
+package to its remote ref and re-downloads every cached URL file, printing one
 status line per item (exit code 1 when any item fails). Set
-`AGENTS_BUNDLE_LOCAL_PKG_DIR` to use a local package checkout for unpinned
+`CONTEXT_BUNDLE_LOCAL_PKG_DIR` to use a local package checkout for unpinned
 package references instead of the cache (explicit `@<ref>` package specs always
 fetch the requested ref into `<cache_dir>/packages/<owner>/<repo>@<ref>`);
 there is no implicit lookup in the home directory.

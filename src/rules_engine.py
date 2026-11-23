@@ -50,22 +50,22 @@ def builtin_vars(work_dir: Path | None = None, piped: bool = False) -> dict[str,
 
 
 def env_vars(prog: str | None = None) -> dict[str, str]:
-    raw = os.environ.get("AGENTS_BUNDLE_VARS", "").strip()
+    raw = os.environ.get("CONTEXT_BUNDLE_VARS", "").strip()
     if not raw:
         return {}
     p = prog or prog_name()
     try:
         tokens = shlex.split(raw)
     except ValueError as exc:
-        raise SystemExit(f"{p}: invalid AGENTS_BUNDLE_VARS={raw!r}: {exc}")
+        raise SystemExit(f"{p}: invalid CONTEXT_BUNDLE_VARS={raw!r}: {exc}")
     out: dict[str, str] = {}
     for tok in tokens:
         if "=" not in tok:
-            raise SystemExit(f"{p}: invalid entry {tok!r} in AGENTS_BUNDLE_VARS (expected key=val)")
+            raise SystemExit(f"{p}: invalid entry {tok!r} in CONTEXT_BUNDLE_VARS (expected key=val)")
         k, v = tok.split("=", 1)
         k_clean = k.strip()
         if not VAR_NAME_RE.fullmatch(k_clean):
-            raise SystemExit(f"{p}: invalid variable name {k_clean!r} in AGENTS_BUNDLE_VARS")
+            raise SystemExit(f"{p}: invalid variable name {k_clean!r} in CONTEXT_BUNDLE_VARS")
         out[k_clean] = v.strip()
     return out
 
@@ -349,7 +349,7 @@ def _split_pkg_ref(pkg_spec: str, prog: str) -> tuple[str, str]:
 def _ensure_remote_package(pkg_spec: str, refresh: bool = False) -> Path:
     prog = prog_name()
     repo_part, ref = _split_pkg_ref(pkg_spec, prog)
-    local_override = os.environ.get("AGENTS_BUNDLE_LOCAL_PKG_DIR")
+    local_override = os.environ.get("CONTEXT_BUNDLE_LOCAL_PKG_DIR")
     if not ref and local_override and Path(local_override).is_dir():
         lo_path = Path(local_override)
         sub_pkg = lo_path / repo_part
@@ -419,7 +419,7 @@ def _get_package_catalog(
 def _download_url_text(url: str) -> str:
     import urllib.request
 
-    req = urllib.request.Request(url, headers={"User-Agent": f"agents_bundle/{VERSION}"})
+    req = urllib.request.Request(url, headers={"User-Agent": f"context-bundle/{VERSION}"})
     with urllib.request.urlopen(req, timeout=15) as resp:
         return resp.read().decode("utf-8")
 
@@ -610,7 +610,7 @@ def _is_external_bundle_source(
         return True
     except ValueError:
         pass
-    local_override = os.environ.get("AGENTS_BUNDLE_LOCAL_PKG_DIR")
+    local_override = os.environ.get("CONTEXT_BUNDLE_LOCAL_PKG_DIR")
     if local_override:
         try:
             fpath.relative_to(Path(local_override).resolve())

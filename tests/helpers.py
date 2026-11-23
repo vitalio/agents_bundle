@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared test helpers and base test case for agents_bundle."""
+"""Shared test helpers and base test case for context-bundle."""
 from __future__ import annotations
 
 import contextlib
@@ -18,7 +18,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "agents_bundle"
+SCRIPT = ROOT / "context"
 BUILD_PY = ROOT / "build.py"
 INSTALL_SH = ROOT / "install.sh"
 
@@ -63,8 +63,8 @@ def _seed_offline_rules_pkg(pkg_dir: Path) -> None:
         "agents/role/audit.md": "# Description: Universal Auditor role\n- Role (Auditor): Audit the requested scope.\n",
         "agents/stack/python-cli.md": "# Description: Python CLI rules\n- Python CLI engineering invariants: Python {py_min:3.9}+ compatibility.\n",
         "agents/release/single-file-build.md": "# Description: Single-file build\n- Single-file build from modular `src/`: Edit source modules under `src/`.\n",
-        "agents/agents_bundle.md": "# Description: Bundler rule\n- Context bundler & rules engine (`agents_bundle`): Use `--tree` and `--list`.\n",
-        "agents/agents_bundle.bundle": "# Description: On-demand agents_bundle instructions\nrule vitalio/agents_bundle:agents_bundle\nif role!=\n    export role\nif role=design\n    cmd agents_bundle --list\n",
+        "agents/context.md": "# Description: Bundler rule\n- Context bundler & rules engine (`context`): Use `--tree` and `--list`.\n",
+        "agents/context.bundle": "# Description: On-demand context instructions\nrule vitalio/context-bundle:context\nif role!=\n    export role\nif role=design\n    cmd context --list\n",
         "agents/todo_md.md": "# Description: Task tracker rule\n- Task management (`todo_md`): Manage `TODO.md`.\n",
         "agents/todo_md.bundle": "# Description: On-demand todo_md bundle\nrule vitalio/todo_md:todo_md\n",
     }
@@ -91,16 +91,16 @@ class AgentsBundleTestCase(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="ab_test_"))
         self._saved_env = {
             k: os.environ.pop(k, None)
-            for k in ("AGENTS_BUNDLE_VARS", "AGENTS_BUNDLE_PLAIN")
+            for k in ("CONTEXT_BUNDLE_VARS", "CONTEXT_BUNDLE_PLAIN")
         }
         pkg_dir = self.tmp / "offline_rules_pkg"
         _seed_offline_rules_pkg(pkg_dir)
-        os.environ["AGENTS_BUNDLE_CACHE_DIR"] = str(self.tmp / "cache")
-        os.environ["AGENTS_BUNDLE_LOCAL_PKG_DIR"] = str(pkg_dir)
+        os.environ["CONTEXT_BUNDLE_CACHE_DIR"] = str(self.tmp / "cache")
+        os.environ["CONTEXT_BUNDLE_LOCAL_PKG_DIR"] = str(pkg_dir)
 
     def tearDown(self):
-        os.environ.pop("AGENTS_BUNDLE_CACHE_DIR", None)
-        os.environ.pop("AGENTS_BUNDLE_LOCAL_PKG_DIR", None)
+        os.environ.pop("CONTEXT_BUNDLE_CACHE_DIR", None)
+        os.environ.pop("CONTEXT_BUNDLE_LOCAL_PKG_DIR", None)
         for k, v in self._saved_env.items():
             if v is not None:
                 os.environ[k] = v

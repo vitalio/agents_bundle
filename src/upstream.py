@@ -14,8 +14,14 @@ _FRAGMENT_GROUPS = {
     "prompt": "prompts",
 }
 _HEADER_RE = re.compile(r"([A-Za-z][A-Za-z0-9_.-]*):(?:[ \t]+(.*)|[ \t]*)")
-_PRODUCER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
+_PRODUCER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*(?:/[A-Za-z_][A-Za-z0-9_-]*)?")
 _VAR_RE = re.compile(VAR_NAME_PATTERN)
+
+
+def _normalize_producer(tok: str) -> tuple[str, str]:
+    p_norm = tok.lower().replace("-", "_").replace("/", ".")
+    p_short = p_norm.rsplit(".", 1)[-1]
+    return p_norm, p_short
 
 
 class PipedInput:
@@ -112,9 +118,13 @@ def parse_stdin_pipe(stdin_text: str) -> PipedInput:
         preamble_items.append((hm.group(1), hm.group(2).strip() if hm.group(2) is not None else ""))
         idx += 1
 
+    ambiguous_shorts: set[str] = set()
     if preamble_items and (idx == len(lines) or not lines[idx].strip()):
         seen_producers: set[str] = set()
-        raw_vars: list[tuple[str, str]] = []
+        short_to_producers: dict[str, set[str]] = {}
+        current_producer: str | None = None
+        raw_vars: list[tuple[str | None, str, str]] = []
+
         for k, v in preamble_items:
             kl = k.lower()
             if kl == "workdir":
@@ -130,16 +140,18 @@ def parse_stdin_pipe(stdin_text: str) -> PipedInput:
                 for tok in tokens:
                     if not _PRODUCER_RE.fullmatch(tok):
                         raise SystemExit(f"{prog}: invalid Bundle-Name producer {tok!r} on stdin")
-                    p_norm = tok.lower().replace("-", "_")
+                    p_norm, p_short = _normalize_producer(tok)
                     if p_norm in seen_producers:
                         raise SystemExit(f"{prog}: duplicate Bundle-Name producer {p_norm!r} in pipeline")
                     seen_producers.add(p_norm)
+                    short_to_producers.setdefault(p_short, set()).add(p_norm)
                     result.producers.append(p_norm)
                     result.bundle_name = p_norm
+                    current_producer = p_norm
             elif kl.startswith("bundle-"):
                 continue
             elif v:
-                raw_vars.append((kl, v))
+                raw_vars.append((current_producer, kl, v))
 
         if result.command:
             cmd_producers: list[str] = []
@@ -150,22 +162,70 @@ def parse_stdin_pipe(stdin_text: str) -> PipedInput:
                     cmd_producers.append(exe)
             if len(cmd_producers) > 1 and len(cmd_producers) != len(set(cmd_producers)):
                 for p in cmd_producers:
-                    if cmd_producers.count(p) > 1 and p in seen_producers:
-                        raise SystemExit(f"{prog}: duplicate Bundle-Name producer {p!r} in pipeline")
+                    if cmd_producers.count(p) > 1:
+                        if p in seen_producers:
+                            raise SystemExit(f"{prog}: duplicate Bundle-Name producer {p!r} in pipeline")
+                        owners = short_to_producers.get(p, set())
+                        if len(owners) == 1:
+                            only_prod = next(iter(owners))
+                            raise SystemExit(f"{prog}: duplicate Bundle-Name producer {only_prod!r} in pipeline")
 
-        for kl, v in raw_vars:
+        # Also inspect pre-namespaced headers (<owner>.<repo>.<key> or <repo>.<key>)
+        for assoc_prod, kl, _v in raw_vars:
             if "." in kl:
-                parts = kl.split(".")
-                ns = parts[0].replace("-", "_")
-                rest = ".".join(p.replace("-", "_") for p in parts[1:])
-                if result.bundle_name and ns == result.bundle_name:
-                    raise SystemExit(f"{prog}: duplicate Bundle-Name producer {ns!r} in pipeline")
-                var_name = f"{ns}.{rest}"
+                parts = [p.replace("-", "_") for p in kl.split(".")]
+                if len(parts) >= 3:
+                    ns_full = f"{parts[0]}.{parts[1]}"
+                    ns_short = parts[1]
+                    if ns_full in seen_producers:
+                        raise SystemExit(f"{prog}: duplicate Bundle-Name producer {ns_full!r} in pipeline")
+                    short_to_producers.setdefault(ns_short, set()).add(ns_full)
+                else:
+                    ns_short = parts[0]
+                    if ns_short in seen_producers:
+                        raise SystemExit(f"{prog}: duplicate Bundle-Name producer {ns_short!r} in pipeline")
+                    if assoc_prod and assoc_prod.rsplit(".", 1)[-1] == ns_short and ns_short in short_to_producers:
+                        if len(short_to_producers[ns_short]) == 1 and assoc_prod in short_to_producers[ns_short]:
+                            raise SystemExit(f"{prog}: duplicate Bundle-Name producer {assoc_prod!r} in pipeline")
+
+        ambiguous_shorts = {s for s, owners in short_to_producers.items() if len(owners) > 1}
+
+        for assoc_prod, kl, v in raw_vars:
+            prod = assoc_prod or result.bundle_name
+            if "." in kl:
+                parts = [p.replace("-", "_") for p in kl.split(".")]
+                if len(parts) >= 3:
+                    ns_full = f"{parts[0]}.{parts[1]}"
+                    ns_short = parts[1]
+                    rest = ".".join(parts[2:])
+                    full_var = f"{ns_full}.{rest}"
+                    if _VAR_RE.fullmatch(full_var):
+                        result.vars[full_var] = v
+                    if ns_short not in ambiguous_shorts:
+                        short_var = f"{ns_short}.{rest}"
+                        if _VAR_RE.fullmatch(short_var):
+                            result.vars[short_var] = v
+                else:
+                    ns = parts[0]
+                    rest = ".".join(parts[1:])
+                    if ns not in ambiguous_shorts:
+                        var_name = f"{ns}.{rest}"
+                        if _VAR_RE.fullmatch(var_name):
+                            result.vars[var_name] = v
             else:
                 key_norm = kl.replace("-", "_")
-                var_name = f"{result.bundle_name}.{key_norm}" if result.bundle_name else key_norm
-            if _VAR_RE.fullmatch(var_name):
-                result.vars[var_name] = v
+                if prod:
+                    full_var = f"{prod}.{key_norm}"
+                    if _VAR_RE.fullmatch(full_var):
+                        result.vars[full_var] = v
+                    p_short = prod.rsplit(".", 1)[-1]
+                    if p_short != prod and p_short not in ambiguous_shorts:
+                        short_var = f"{p_short}.{key_norm}"
+                        if _VAR_RE.fullmatch(short_var):
+                            result.vars[short_var] = v
+                else:
+                    if _VAR_RE.fullmatch(key_norm):
+                        result.vars[key_norm] = v
 
         raw = "\n".join(lines[idx:]).strip()
         lines = raw.splitlines()
@@ -174,8 +234,14 @@ def parse_stdin_pipe(stdin_text: str) -> PipedInput:
         result.fragments, result.prompt = extract_fragments(raw, result.boundary)
         return result
     if len(lines) == 1 and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", lines[0].strip()):
-        task_key = f"{result.bundle_name}.task" if result.bundle_name else "task"
-        result.vars.setdefault(task_key, lines[0].strip())
+        token = lines[0].strip()
+        if result.bundle_name:
+            result.vars.setdefault(f"{result.bundle_name}.task", token)
+            p_short = result.bundle_name.rsplit(".", 1)[-1]
+            if p_short != result.bundle_name and p_short not in ambiguous_shorts:
+                result.vars.setdefault(f"{p_short}.task", token)
+        else:
+            result.vars.setdefault("task", token)
         return result
     result.prompt = raw
     return result

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repository file tree (--tree) tests for agents_bundle."""
+"""Repository file tree (--tree) tests for context-bundle."""
 import os
 import unittest
 
@@ -55,7 +55,7 @@ class TestTree(AgentsBundleTestCase):
             "# Description: Default\nrule core/ssot\nif role!=\n    rule role/{role:}\n",
             encoding="utf-8",
         )
-        env = {**os.environ, "AGENTS_BUNDLE_LOCAL_PKG_DIR": str(self.tmp / "pkg_repo")}
+        env = {**os.environ, "CONTEXT_BUNDLE_LOCAL_PKG_DIR": str(self.tmp / "pkg_repo")}
         r_role = self._run(
             [str(SCRIPT), "bundle", "vitalio/agents-rules:default", "role=audit", "--plain"],
             capture_output=True,

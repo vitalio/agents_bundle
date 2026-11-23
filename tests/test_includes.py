@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Range-aware include span merging and upstream fragment rebuilding tests for agents_bundle."""
+"""Range-aware include span merging and upstream fragment rebuilding tests for context-bundle."""
 import unittest
 
 from tests.helpers import AgentsBundleTestCase

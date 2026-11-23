@@ -1,11 +1,12 @@
 import os
+import shutil
 import sys
 import textwrap
 from pathlib import Path
 
 from src.header import (
     DEFAULT_RULES_PKG,
-    EMBEDDED_RULE_AGENTS_BUNDLE,
+    EMBEDDED_RULE_CONTEXT,
     HELP_GAP,
     HELP_INDENT,
     HELP_MAX_WIDTH,
@@ -13,23 +14,51 @@ from src.header import (
     HELP_SECTIONS,
 )
 
+_OBSOLETE_VITALIO_PKGS = ("agents_bundle", "run_block", "todo_md")
+
 
 def prog_name() -> str:
-    raw = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "agents_bundle"
+    raw = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "context"
     for suf in (".py",):
         if raw.lower().endswith(suf) and len(raw) > len(suf):
             raw = raw[:-len(suf)]
             break
-    return raw or "agents_bundle"
+    return raw or "context"
+
+
+def _migrate_and_prune_cache(base: Path) -> Path:
+    target = base / "context-bundle"
+    legacy = base / "agents_bundle"
+    if not target.exists() and legacy.is_dir():
+        try:
+            os.replace(legacy, target)
+        except OSError:
+            pass
+    if target.is_dir():
+        vitalio_dir = target / "packages" / "vitalio"
+        if vitalio_dir.is_dir():
+            for name in _OBSOLETE_VITALIO_PKGS:
+                obs = vitalio_dir / name
+                if obs.exists():
+                    shutil.rmtree(obs, ignore_errors=True)
+    return target
 
 
 def cache_dir_path() -> Path:
-    env_c = os.environ.get("AGENTS_BUNDLE_CACHE_DIR")
+    env_c = os.environ.get("CONTEXT_BUNDLE_CACHE_DIR")
     if env_c:
-        return Path(env_c).expanduser()
+        target = Path(env_c).expanduser()
+        if target.is_dir():
+            vitalio_dir = target / "packages" / "vitalio"
+            if vitalio_dir.is_dir():
+                for name in _OBSOLETE_VITALIO_PKGS:
+                    obs = vitalio_dir / name
+                    if obs.exists():
+                        shutil.rmtree(obs, ignore_errors=True)
+        return target
     xdg = os.environ.get("XDG_CACHE_HOME")
     base = Path(xdg).expanduser() if xdg else (Path.home() / ".cache")
-    return base / "agents_bundle"
+    return _migrate_and_prune_cache(base)
 
 
 def render_help_section(title: str, rows) -> str:
@@ -53,9 +82,9 @@ def usage_text() -> str:
 
 
 def embedded_rule_text() -> str:
-    if EMBEDDED_RULE_AGENTS_BUNDLE:
-        return EMBEDDED_RULE_AGENTS_BUNDLE
-    src_rule = Path(__file__).resolve().parent.parent / "agents" / "agents_bundle.md"
+    if EMBEDDED_RULE_CONTEXT:
+        return EMBEDDED_RULE_CONTEXT
+    src_rule = Path(__file__).resolve().parent.parent / "agents" / "context.md"
     if not src_rule.is_file():
         raise SystemExit(f"{prog_name()}: embedded rule not found: {src_rule}")
     return src_rule.read_text(encoding="utf-8")

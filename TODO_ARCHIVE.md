@@ -1,3 +1,14 @@
+# ✅ [DONE] F27: Rename project to context-bundle and CLI utility to context — *2026-11-23, Renamed repository to vitalio/context-bundle and CLI utility to context with qualified Bundle-Name producer namespaces, CONTEXT_BUNDLE_* environment variables, automatic cache/binary migration, and --uninstall*
+
+- Depends on: F15, F33
+- Rename project/repository references from `agents_bundle` to `context-bundle` (`vitalio/context-bundle`) and CLI entrypoint to `context` per `todo_flow:D8` (`docs/adr/0004-ecosystem-rename-and-cutover.md`):
+  - Emit `Bundle-Name: vitalio/context-bundle`, embedded rule `agents/context.md` (`{cmd:context}`, `id: "vitalio/context-bundle:context"`, `chain: ["vitalio/context-bundle"]`), and repo marker `# context-bundle-repo: vitalio/context-bundle`.
+  - Support qualified `Bundle-Name: <owner>/<repo>` on `stdin` in `src/upstream.py`: normalize `/` -> `.` and `-` -> `_` so producer headers populate both `<owner>.<repo>.<key>` (`vitalio.todo_md.task`) and the unambiguous short alias `<repo>.<key>` (`todo_md.task`), omitting the short alias only if two producers in the same pipeline share `<repo>` under different owners.
+  - Switch environment variables to `CONTEXT_BUNDLE_*` (`CONTEXT_BUNDLE_VARS`, `CONTEXT_BUNDLE_PLAIN`, `CONTEXT_BUNDLE_CACHE_DIR`, `CONTEXT_BUNDLE_LOCAL_PKG_DIR`, `CONTEXT_BUNDLE_SHELL`, `CONTEXT_BUNDLE_UPDATE_URL`, and installer `CONTEXT_BUNDLE_NAME`, `CONTEXT_BUNDLE_INSTALL_DIR`).
+  - Migrate package cache in `cache_dir_path()` and `install.sh`: atomically rename `~/.cache/agents_bundle` -> `~/.cache/context-bundle` and prune obsolete `packages/vitalio/{agents_bundle,run_block,todo_md}` clones.
+  - Replace any existing `agents_bundle` binary in `$INSTALL_DIR` during `install.sh` / `--update`, add `--uninstall` to `context` and `install.sh`, rename the GitHub repository `vitalio/agents_bundle` -> `vitalio/context-bundle` and update local `git remote` URL, update `cmd agents_bundle --tree` -> `cmd context --tree` across workspace `.context.bundle` files so subsequent sessions do not invoke removed `agents_bundle`, and run `python3 build.py && ./install.sh --yes`.
+- Acceptance criteria: GitHub repo is `vitalio/context-bundle`, `build.py` outputs `context`, `install.sh` installs `context` and removes legacy `agents_bundle`, `--uninstall` removes `context` and `~/.cache/context-bundle`, and `python3 -m unittest discover -s tests` passes.
+
 # ✅ [DONE] F33: Remove transitional .bundle directives, legacy package layouts, and legacy fragment kind aliases — *2026-11-23, Removed transitional .bundle directive aliases, legacy package directories, and legacy upstream fragment kind aliases*
 
 - Depends on: F15

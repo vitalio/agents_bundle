@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# agents_bundle-repo: vitalio/agents_bundle
+# context-bundle-repo: vitalio/context-bundle
 """Context bundler and rules engine."""
 from __future__ import annotations
 
@@ -20,14 +20,16 @@ import time
 from pathlib import Path
 
 VERSION = "__VERSION__"
-REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
-DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/agents_bundle/main/agents_bundle"
+REPO_MARKER = "context-bundle-repo: vitalio/context-bundle"
+LEGACY_REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
+DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/context-bundle/main/context"
 SPEC_FILE_NAME = ".context.bundle"
 LEGACY_SPEC_FILE_NAME = ".agents_bundle"
-PRODUCER_NAME = "agents_bundle"
+PRODUCER_NAME = "vitalio/context-bundle"
 DEFAULT_RULES_PKG = "vitalio/agents-rules"
-EMBEDDED_RULE_AGENTS_BUNDLE = ""
-EMBEDDED_RULE_NAME = "agents_bundle"
+EMBEDDED_RULE_CONTEXT = ""
+EMBEDDED_RULE_NAME = "context"
+EMBEDDED_RULE_ID = "vitalio/context-bundle:context"
 LEGACY_RULE_ID = "vitalio/agents_bundle:agents_bundle"
 PROTOCOL_VERSION = "1"
 RULES_HEADER = "===== Rules ====="
@@ -64,8 +66,9 @@ HELP_SECTIONS = (
             ("{prog} --update-cache", "Refresh cached git packages and URL files in {cache_dir}"),
             ("{prog} --init [--force]", "Create a starter .context.bundle in the current directory"),
             ("{prog} --tree [DIR] [opts]", "Print token-budgeted repository file tree to stdout"),
-            ("{prog} --update [--force]", "Self-update {prog} from GitHub (vitalio/agents_bundle)"),
+            ("{prog} --update [--force]", "Self-update {prog} from GitHub (vitalio/context-bundle)"),
             ("{prog} --check-update", "Check if a newer version is available"),
+            ("{prog} --uninstall", "Remove installed {prog} binary and package cache ({cache_dir})"),
             ("{prog} -V | --version", "Print version and exit 0"),
             ("{prog} -h | --help", "Print this usage and exit 0"),
         ),
@@ -97,9 +100,9 @@ HELP_SECTIONS = (
         (
             (
                 "Headers",
-                "Emits Bundle-Command, Bundle-Name: agents_bundle, Bundle-Boundary: <nonce>, "
-                "Bundle-Protocol: 1, exported Key: Value variable headers (via 'export'), and "
-                "Workdir: <path>",
+                "Emits Bundle-Command, Bundle-Name: vitalio/context-bundle, "
+                "Bundle-Boundary: <nonce>, Bundle-Protocol: 1, exported Key: Value variable "
+                "headers (via 'export'), and Workdir: <path>",
             ),
             (
                 "Fragment markers",
@@ -109,31 +112,33 @@ HELP_SECTIONS = (
             ),
             (
                 "Plain mode",
-                "--plain or AGENTS_BUNDLE_PLAIN=1 omits transport Bundle-* headers and "
+                "--plain or CONTEXT_BUNDLE_PLAIN=1 omits transport Bundle-* headers and "
                 "fragment markers",
             ),
             (
                 "Piped bundles",
                 "Piped stdin with Bundle-Boundary is unpacked: Bundle-Name: <producer> "
-                "namespaces upstream headers as <producer>.<key_lower> (rejecting duplicate "
-                "producers); upstream rule, file, cmd, and prompt fragments are merged and "
-                "re-wrapped; Bundle-Command is chained with ' | '",
+                "namespaces upstream headers as <owner>.<repo>.<key> and unambiguous "
+                "<repo>.<key> (rejecting duplicate producers); upstream rule, file, cmd, and "
+                "prompt fragments are merged and re-wrapped; Bundle-Command is chained with ' | '",
             ),
         ),
     ),
     (
         "Environment:",
         (
-            ("AGENTS_BUNDLE_VARS", "Default key=val pairs (overridden by CLI key=val)"),
+            ("CONTEXT_BUNDLE_VARS", "Default key=val pairs (overridden by CLI key=val)"),
             (
-                "AGENTS_BUNDLE_PLAIN",
+                "CONTEXT_BUNDLE_PLAIN",
                 "Set to 1 to omit transport Bundle-* headers and fragment markers",
             ),
             (
-                "AGENTS_BUNDLE_LOCAL_PKG_DIR",
+                "CONTEXT_BUNDLE_LOCAL_PKG_DIR",
                 "Use a local package checkout instead of the cache",
             ),
-            ("AGENTS_BUNDLE_CACHE_DIR", "Override the cache directory"),
+            ("CONTEXT_BUNDLE_CACHE_DIR", "Override the cache directory"),
+            ("CONTEXT_BUNDLE_SHELL", "Override the shell executable used for cmd directives"),
+            ("CONTEXT_BUNDLE_UPDATE_URL", "Override the remote script URL for --update"),
         ),
     ),
 )

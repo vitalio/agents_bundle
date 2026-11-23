@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# agents_bundle-repo: vitalio/agents_bundle
+# context-bundle-repo: vitalio/context-bundle
 """Context bundler and rules engine."""
 from __future__ import annotations
 
@@ -19,15 +19,17 @@ import textwrap
 import time
 from pathlib import Path
 
-VERSION = "0.19.2"
-REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
-DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/agents_bundle/main/agents_bundle"
+VERSION = "0.20.0"
+REPO_MARKER = "context-bundle-repo: vitalio/context-bundle"
+LEGACY_REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
+DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/context-bundle/main/context"
 SPEC_FILE_NAME = ".context.bundle"
 LEGACY_SPEC_FILE_NAME = ".agents_bundle"
-PRODUCER_NAME = "agents_bundle"
+PRODUCER_NAME = "vitalio/context-bundle"
 DEFAULT_RULES_PKG = "vitalio/agents-rules"
-EMBEDDED_RULE_AGENTS_BUNDLE = '# Description: Context bundler file tree and session assembly\n- Context bundler & rules engine (`{cmd:agents_bundle}`):\n  - Repository file tree: `{cmd:agents_bundle} --tree [DIR] [-x DIR] [--max-lines N] [--max-tokens N]`\n    (use instead of `find`/`ls` for directory structure; pins `AGENTS.md`).\n  - Session assembly and handoff:\n    `{cmd:agents_bundle} [key=val ...] [-p "<prompt>"] [file ...] | run_block`\n    (`role=design|plan|work|review|law`, `task=<ID>`; extra `file` arguments\n    accept globs and `path:start-end` slices). Pipe an upstream bundle into it\n    (`<cmd> | {cmd:agents_bundle} | run_block`) to namespace its headers under\n    `<producer>.*` (`Bundle-Name`) and merge its rules, files, and prompt.\n  - When editing `.context.bundle` (or `.agents_bundle`) and `.bundle` files, run\n    `{cmd:agents_bundle} -h` for the 9-keyword directive and protocol reference\n    and `{cmd:agents_bundle} --list [pkg]` for the available bundles and rules\n    under `agents/`.\n'
-EMBEDDED_RULE_NAME = "agents_bundle"
+EMBEDDED_RULE_CONTEXT = '# Description: Context bundler file tree and session assembly\n- Context bundler & rules engine (`{cmd:context}`):\n  - Repository file tree: `{cmd:context} --tree [DIR] [-x DIR] [--max-lines N] [--max-tokens N]`\n    (use instead of `find`/`ls` for directory structure; pins `AGENTS.md`).\n  - Session assembly and handoff:\n    `{cmd:context} [key=val ...] [-p "<prompt>"] [file ...] | run_block`\n    (`role=design|plan|work|review|law`, `task=<ID>`; extra `file` arguments\n    accept globs and `path:start-end` slices). Pipe an upstream bundle into it\n    (`<cmd> | {cmd:context} | run_block`) to namespace its headers under\n    `<producer>.*` (`Bundle-Name`) and merge its rules, files, and prompt.\n  - When editing `.context.bundle` (or `.agents_bundle`) and `.bundle` files, run\n    `{cmd:context} -h` for the 9-keyword directive and protocol reference\n    and `{cmd:context} --list [pkg]` for the available bundles and rules\n    under `agents/`.\n'
+EMBEDDED_RULE_NAME = "context"
+EMBEDDED_RULE_ID = "vitalio/context-bundle:context"
 LEGACY_RULE_ID = "vitalio/agents_bundle:agents_bundle"
 PROTOCOL_VERSION = "1"
 RULES_HEADER = "===== Rules ====="
@@ -64,8 +66,9 @@ HELP_SECTIONS = (
             ("{prog} --update-cache", "Refresh cached git packages and URL files in {cache_dir}"),
             ("{prog} --init [--force]", "Create a starter .context.bundle in the current directory"),
             ("{prog} --tree [DIR] [opts]", "Print token-budgeted repository file tree to stdout"),
-            ("{prog} --update [--force]", "Self-update {prog} from GitHub (vitalio/agents_bundle)"),
+            ("{prog} --update [--force]", "Self-update {prog} from GitHub (vitalio/context-bundle)"),
             ("{prog} --check-update", "Check if a newer version is available"),
+            ("{prog} --uninstall", "Remove installed {prog} binary and package cache ({cache_dir})"),
             ("{prog} -V | --version", "Print version and exit 0"),
             ("{prog} -h | --help", "Print this usage and exit 0"),
         ),
@@ -97,9 +100,9 @@ HELP_SECTIONS = (
         (
             (
                 "Headers",
-                "Emits Bundle-Command, Bundle-Name: agents_bundle, Bundle-Boundary: <nonce>, "
-                "Bundle-Protocol: 1, exported Key: Value variable headers (via 'export'), and "
-                "Workdir: <path>",
+                "Emits Bundle-Command, Bundle-Name: vitalio/context-bundle, "
+                "Bundle-Boundary: <nonce>, Bundle-Protocol: 1, exported Key: Value variable "
+                "headers (via 'export'), and Workdir: <path>",
             ),
             (
                 "Fragment markers",
@@ -109,52 +112,83 @@ HELP_SECTIONS = (
             ),
             (
                 "Plain mode",
-                "--plain or AGENTS_BUNDLE_PLAIN=1 omits transport Bundle-* headers and "
+                "--plain or CONTEXT_BUNDLE_PLAIN=1 omits transport Bundle-* headers and "
                 "fragment markers",
             ),
             (
                 "Piped bundles",
                 "Piped stdin with Bundle-Boundary is unpacked: Bundle-Name: <producer> "
-                "namespaces upstream headers as <producer>.<key_lower> (rejecting duplicate "
-                "producers); upstream rule, file, cmd, and prompt fragments are merged and "
-                "re-wrapped; Bundle-Command is chained with ' | '",
+                "namespaces upstream headers as <owner>.<repo>.<key> and unambiguous "
+                "<repo>.<key> (rejecting duplicate producers); upstream rule, file, cmd, and "
+                "prompt fragments are merged and re-wrapped; Bundle-Command is chained with ' | '",
             ),
         ),
     ),
     (
         "Environment:",
         (
-            ("AGENTS_BUNDLE_VARS", "Default key=val pairs (overridden by CLI key=val)"),
+            ("CONTEXT_BUNDLE_VARS", "Default key=val pairs (overridden by CLI key=val)"),
             (
-                "AGENTS_BUNDLE_PLAIN",
+                "CONTEXT_BUNDLE_PLAIN",
                 "Set to 1 to omit transport Bundle-* headers and fragment markers",
             ),
             (
-                "AGENTS_BUNDLE_LOCAL_PKG_DIR",
+                "CONTEXT_BUNDLE_LOCAL_PKG_DIR",
                 "Use a local package checkout instead of the cache",
             ),
-            ("AGENTS_BUNDLE_CACHE_DIR", "Override the cache directory"),
+            ("CONTEXT_BUNDLE_CACHE_DIR", "Override the cache directory"),
+            ("CONTEXT_BUNDLE_SHELL", "Override the shell executable used for cmd directives"),
+            ("CONTEXT_BUNDLE_UPDATE_URL", "Override the remote script URL for --update"),
         ),
     ),
 )
 
 
+_OBSOLETE_VITALIO_PKGS = ("agents_bundle", "run_block", "todo_md")
+
+
 def prog_name() -> str:
-    raw = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "agents_bundle"
+    raw = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "context"
     for suf in (".py",):
         if raw.lower().endswith(suf) and len(raw) > len(suf):
             raw = raw[:-len(suf)]
             break
-    return raw or "agents_bundle"
+    return raw or "context"
+
+
+def _migrate_and_prune_cache(base: Path) -> Path:
+    target = base / "context-bundle"
+    legacy = base / "agents_bundle"
+    if not target.exists() and legacy.is_dir():
+        try:
+            os.replace(legacy, target)
+        except OSError:
+            pass
+    if target.is_dir():
+        vitalio_dir = target / "packages" / "vitalio"
+        if vitalio_dir.is_dir():
+            for name in _OBSOLETE_VITALIO_PKGS:
+                obs = vitalio_dir / name
+                if obs.exists():
+                    shutil.rmtree(obs, ignore_errors=True)
+    return target
 
 
 def cache_dir_path() -> Path:
-    env_c = os.environ.get("AGENTS_BUNDLE_CACHE_DIR")
+    env_c = os.environ.get("CONTEXT_BUNDLE_CACHE_DIR")
     if env_c:
-        return Path(env_c).expanduser()
+        target = Path(env_c).expanduser()
+        if target.is_dir():
+            vitalio_dir = target / "packages" / "vitalio"
+            if vitalio_dir.is_dir():
+                for name in _OBSOLETE_VITALIO_PKGS:
+                    obs = vitalio_dir / name
+                    if obs.exists():
+                        shutil.rmtree(obs, ignore_errors=True)
+        return target
     xdg = os.environ.get("XDG_CACHE_HOME")
     base = Path(xdg).expanduser() if xdg else (Path.home() / ".cache")
-    return base / "agents_bundle"
+    return _migrate_and_prune_cache(base)
 
 
 def render_help_section(title: str, rows) -> str:
@@ -178,9 +212,9 @@ def usage_text() -> str:
 
 
 def embedded_rule_text() -> str:
-    if EMBEDDED_RULE_AGENTS_BUNDLE:
-        return EMBEDDED_RULE_AGENTS_BUNDLE
-    src_rule = Path(__file__).resolve().parent.parent / "agents" / "agents_bundle.md"
+    if EMBEDDED_RULE_CONTEXT:
+        return EMBEDDED_RULE_CONTEXT
+    src_rule = Path(__file__).resolve().parent.parent / "agents" / "context.md"
     if not src_rule.is_file():
         raise SystemExit(f"{prog_name()}: embedded rule not found: {src_rule}")
     return src_rule.read_text(encoding="utf-8")
@@ -581,22 +615,22 @@ def builtin_vars(work_dir: Path | None = None, piped: bool = False) -> dict[str,
 
 
 def env_vars(prog: str | None = None) -> dict[str, str]:
-    raw = os.environ.get("AGENTS_BUNDLE_VARS", "").strip()
+    raw = os.environ.get("CONTEXT_BUNDLE_VARS", "").strip()
     if not raw:
         return {}
     p = prog or prog_name()
     try:
         tokens = shlex.split(raw)
     except ValueError as exc:
-        raise SystemExit(f"{p}: invalid AGENTS_BUNDLE_VARS={raw!r}: {exc}")
+        raise SystemExit(f"{p}: invalid CONTEXT_BUNDLE_VARS={raw!r}: {exc}")
     out: dict[str, str] = {}
     for tok in tokens:
         if "=" not in tok:
-            raise SystemExit(f"{p}: invalid entry {tok!r} in AGENTS_BUNDLE_VARS (expected key=val)")
+            raise SystemExit(f"{p}: invalid entry {tok!r} in CONTEXT_BUNDLE_VARS (expected key=val)")
         k, v = tok.split("=", 1)
         k_clean = k.strip()
         if not VAR_NAME_RE.fullmatch(k_clean):
-            raise SystemExit(f"{p}: invalid variable name {k_clean!r} in AGENTS_BUNDLE_VARS")
+            raise SystemExit(f"{p}: invalid variable name {k_clean!r} in CONTEXT_BUNDLE_VARS")
         out[k_clean] = v.strip()
     return out
 
@@ -880,7 +914,7 @@ def _split_pkg_ref(pkg_spec: str, prog: str) -> tuple[str, str]:
 def _ensure_remote_package(pkg_spec: str, refresh: bool = False) -> Path:
     prog = prog_name()
     repo_part, ref = _split_pkg_ref(pkg_spec, prog)
-    local_override = os.environ.get("AGENTS_BUNDLE_LOCAL_PKG_DIR")
+    local_override = os.environ.get("CONTEXT_BUNDLE_LOCAL_PKG_DIR")
     if not ref and local_override and Path(local_override).is_dir():
         lo_path = Path(local_override)
         sub_pkg = lo_path / repo_part
@@ -950,7 +984,7 @@ def _get_package_catalog(
 def _download_url_text(url: str) -> str:
     import urllib.request
 
-    req = urllib.request.Request(url, headers={"User-Agent": f"agents_bundle/{VERSION}"})
+    req = urllib.request.Request(url, headers={"User-Agent": f"context-bundle/{VERSION}"})
     with urllib.request.urlopen(req, timeout=15) as resp:
         return resp.read().decode("utf-8")
 
@@ -1141,7 +1175,7 @@ def _is_external_bundle_source(
         return True
     except ValueError:
         pass
-    local_override = os.environ.get("AGENTS_BUNDLE_LOCAL_PKG_DIR")
+    local_override = os.environ.get("CONTEXT_BUNDLE_LOCAL_PKG_DIR")
     if local_override:
         try:
             fpath.relative_to(Path(local_override).resolve())
@@ -1792,8 +1826,14 @@ _FRAGMENT_GROUPS = {
     "prompt": "prompts",
 }
 _HEADER_RE = re.compile(r"([A-Za-z][A-Za-z0-9_.-]*):(?:[ \t]+(.*)|[ \t]*)")
-_PRODUCER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
+_PRODUCER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*(?:/[A-Za-z_][A-Za-z0-9_-]*)?")
 _VAR_RE = re.compile(VAR_NAME_PATTERN)
+
+
+def _normalize_producer(tok: str) -> tuple[str, str]:
+    p_norm = tok.lower().replace("-", "_").replace("/", ".")
+    p_short = p_norm.rsplit(".", 1)[-1]
+    return p_norm, p_short
 
 
 class PipedInput:
@@ -1890,9 +1930,13 @@ def parse_stdin_pipe(stdin_text: str) -> PipedInput:
         preamble_items.append((hm.group(1), hm.group(2).strip() if hm.group(2) is not None else ""))
         idx += 1
 
+    ambiguous_shorts: set[str] = set()
     if preamble_items and (idx == len(lines) or not lines[idx].strip()):
         seen_producers: set[str] = set()
-        raw_vars: list[tuple[str, str]] = []
+        short_to_producers: dict[str, set[str]] = {}
+        current_producer: str | None = None
+        raw_vars: list[tuple[str | None, str, str]] = []
+
         for k, v in preamble_items:
             kl = k.lower()
             if kl == "workdir":
@@ -1908,16 +1952,18 @@ def parse_stdin_pipe(stdin_text: str) -> PipedInput:
                 for tok in tokens:
                     if not _PRODUCER_RE.fullmatch(tok):
                         raise SystemExit(f"{prog}: invalid Bundle-Name producer {tok!r} on stdin")
-                    p_norm = tok.lower().replace("-", "_")
+                    p_norm, p_short = _normalize_producer(tok)
                     if p_norm in seen_producers:
                         raise SystemExit(f"{prog}: duplicate Bundle-Name producer {p_norm!r} in pipeline")
                     seen_producers.add(p_norm)
+                    short_to_producers.setdefault(p_short, set()).add(p_norm)
                     result.producers.append(p_norm)
                     result.bundle_name = p_norm
+                    current_producer = p_norm
             elif kl.startswith("bundle-"):
                 continue
             elif v:
-                raw_vars.append((kl, v))
+                raw_vars.append((current_producer, kl, v))
 
         if result.command:
             cmd_producers: list[str] = []
@@ -1928,22 +1974,70 @@ def parse_stdin_pipe(stdin_text: str) -> PipedInput:
                     cmd_producers.append(exe)
             if len(cmd_producers) > 1 and len(cmd_producers) != len(set(cmd_producers)):
                 for p in cmd_producers:
-                    if cmd_producers.count(p) > 1 and p in seen_producers:
-                        raise SystemExit(f"{prog}: duplicate Bundle-Name producer {p!r} in pipeline")
+                    if cmd_producers.count(p) > 1:
+                        if p in seen_producers:
+                            raise SystemExit(f"{prog}: duplicate Bundle-Name producer {p!r} in pipeline")
+                        owners = short_to_producers.get(p, set())
+                        if len(owners) == 1:
+                            only_prod = next(iter(owners))
+                            raise SystemExit(f"{prog}: duplicate Bundle-Name producer {only_prod!r} in pipeline")
 
-        for kl, v in raw_vars:
+        # Also inspect pre-namespaced headers (<owner>.<repo>.<key> or <repo>.<key>)
+        for assoc_prod, kl, _v in raw_vars:
             if "." in kl:
-                parts = kl.split(".")
-                ns = parts[0].replace("-", "_")
-                rest = ".".join(p.replace("-", "_") for p in parts[1:])
-                if result.bundle_name and ns == result.bundle_name:
-                    raise SystemExit(f"{prog}: duplicate Bundle-Name producer {ns!r} in pipeline")
-                var_name = f"{ns}.{rest}"
+                parts = [p.replace("-", "_") for p in kl.split(".")]
+                if len(parts) >= 3:
+                    ns_full = f"{parts[0]}.{parts[1]}"
+                    ns_short = parts[1]
+                    if ns_full in seen_producers:
+                        raise SystemExit(f"{prog}: duplicate Bundle-Name producer {ns_full!r} in pipeline")
+                    short_to_producers.setdefault(ns_short, set()).add(ns_full)
+                else:
+                    ns_short = parts[0]
+                    if ns_short in seen_producers:
+                        raise SystemExit(f"{prog}: duplicate Bundle-Name producer {ns_short!r} in pipeline")
+                    if assoc_prod and assoc_prod.rsplit(".", 1)[-1] == ns_short and ns_short in short_to_producers:
+                        if len(short_to_producers[ns_short]) == 1 and assoc_prod in short_to_producers[ns_short]:
+                            raise SystemExit(f"{prog}: duplicate Bundle-Name producer {assoc_prod!r} in pipeline")
+
+        ambiguous_shorts = {s for s, owners in short_to_producers.items() if len(owners) > 1}
+
+        for assoc_prod, kl, v in raw_vars:
+            prod = assoc_prod or result.bundle_name
+            if "." in kl:
+                parts = [p.replace("-", "_") for p in kl.split(".")]
+                if len(parts) >= 3:
+                    ns_full = f"{parts[0]}.{parts[1]}"
+                    ns_short = parts[1]
+                    rest = ".".join(parts[2:])
+                    full_var = f"{ns_full}.{rest}"
+                    if _VAR_RE.fullmatch(full_var):
+                        result.vars[full_var] = v
+                    if ns_short not in ambiguous_shorts:
+                        short_var = f"{ns_short}.{rest}"
+                        if _VAR_RE.fullmatch(short_var):
+                            result.vars[short_var] = v
+                else:
+                    ns = parts[0]
+                    rest = ".".join(parts[1:])
+                    if ns not in ambiguous_shorts:
+                        var_name = f"{ns}.{rest}"
+                        if _VAR_RE.fullmatch(var_name):
+                            result.vars[var_name] = v
             else:
                 key_norm = kl.replace("-", "_")
-                var_name = f"{result.bundle_name}.{key_norm}" if result.bundle_name else key_norm
-            if _VAR_RE.fullmatch(var_name):
-                result.vars[var_name] = v
+                if prod:
+                    full_var = f"{prod}.{key_norm}"
+                    if _VAR_RE.fullmatch(full_var):
+                        result.vars[full_var] = v
+                    p_short = prod.rsplit(".", 1)[-1]
+                    if p_short != prod and p_short not in ambiguous_shorts:
+                        short_var = f"{p_short}.{key_norm}"
+                        if _VAR_RE.fullmatch(short_var):
+                            result.vars[short_var] = v
+                else:
+                    if _VAR_RE.fullmatch(key_norm):
+                        result.vars[key_norm] = v
 
         raw = "\n".join(lines[idx:]).strip()
         lines = raw.splitlines()
@@ -1952,8 +2046,14 @@ def parse_stdin_pipe(stdin_text: str) -> PipedInput:
         result.fragments, result.prompt = extract_fragments(raw, result.boundary)
         return result
     if len(lines) == 1 and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", lines[0].strip()):
-        task_key = f"{result.bundle_name}.task" if result.bundle_name else "task"
-        result.vars.setdefault(task_key, lines[0].strip())
+        token = lines[0].strip()
+        if result.bundle_name:
+            result.vars.setdefault(f"{result.bundle_name}.task", token)
+            p_short = result.bundle_name.rsplit(".", 1)[-1]
+            if p_short != result.bundle_name and p_short not in ambiguous_shorts:
+                result.vars.setdefault(f"{p_short}.task", token)
+        else:
+            result.vars.setdefault("task", token)
         return result
     result.prompt = raw
     return result
@@ -2033,7 +2133,7 @@ def _parse_export_keys(raw_args: str, source_label: str, prog: str) -> list[str]
 
 
 def env_plain() -> bool:
-    raw = os.environ.get("AGENTS_BUNDLE_PLAIN", "").strip().lower()
+    raw = os.environ.get("CONTEXT_BUNDLE_PLAIN", "").strip().lower()
     return raw in ("1", "true", "yes", "on")
 
 
@@ -2564,7 +2664,7 @@ def _run_spec_command(cmd_str: str, cwd: Path) -> tuple[int, str, int]:
     t0 = time.monotonic()
     prog = prog_name()
     self_dir = str(Path(__file__).resolve().parent)
-    if re.match(rf"^(?:{re.escape(prog)}|agents_bundle)\s+--tree(?:\s+.*)?$", cmd_str):
+    if re.match(rf"^(?:{re.escape(prog)}|context|agents_bundle)\s+--tree(?:\s+.*)?$", cmd_str):
         try:
             parts = shlex.split(cmd_str)[2:]
             out = _tree_from_args(parts, default_dir=cwd).rstrip()
@@ -2574,7 +2674,7 @@ def _run_spec_command(cmd_str: str, cwd: Path) -> tuple[int, str, int]:
             elapsed_ms = max(0, int(round((time.monotonic() - t0) * 1000)))
             return 1, str(exc), elapsed_ms
 
-    shell_bin = os.environ.get("AGENTS_BUNDLE_SHELL", "").strip() or "bash"
+    shell_bin = os.environ.get("CONTEXT_BUNDLE_SHELL", "").strip() or "bash"
     env = {**os.environ, "PYTHONUTF8": "1"}
     env["PATH"] = f"{self_dir}{os.pathsep}{Path.home() / '.local/bin'}{os.pathsep}{env.get('PATH', '')}"
     try:
@@ -2754,11 +2854,14 @@ def build_bundle(
         for p, start, end in slices:
             middle_items.append(("span", read_span(p, display_path(p, spec_dir), start, end, [])))
 
-    pending_rules = [r for r in pending_rules if r[0] != LEGACY_RULE_ID]
-    embedded = normalize_rule_body(embedded_rule_text(), EMBEDDED_RULE_NAME)
+    pending_rules = [
+        r for r in pending_rules
+        if r[0] not in (LEGACY_RULE_ID, EMBEDDED_RULE_ID, "agents_bundle", EMBEDDED_RULE_NAME)
+    ]
+    embedded = normalize_rule_body(embedded_rule_text(), EMBEDDED_RULE_ID)
     if embedded:
         pending_rules.append(
-            (EMBEDDED_RULE_NAME, f"# [embedded rule {EMBEDDED_RULE_NAME}]", embedded, [EMBEDDED_RULE_NAME])
+            (EMBEDDED_RULE_ID, f"# [embedded rule {EMBEDDED_RULE_ID}]", embedded, [PRODUCER_NAME])
         )
 
     if pending_rules:
@@ -3002,19 +3105,40 @@ def version_tuple(v: str) -> tuple[int, ...]:
     return tuple(int(p) for p in re.split(r"[^0-9]+", v) if p)
 
 
+def _is_our_binary(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        head = path.read_text(encoding="utf-8", errors="ignore")[:2048]
+    except OSError:
+        return False
+    return REPO_MARKER in head or LEGACY_REPO_MARKER in head
+
+
+def _remove_legacy_binary(install_dir: Path, keep_path: Path | None = None) -> None:
+    legacy = install_dir / "agents_bundle"
+    if keep_path is not None and legacy.resolve() == keep_path.resolve():
+        return
+    if _is_our_binary(legacy):
+        try:
+            legacy.unlink()
+        except OSError:
+            pass
+
+
 def fetch_remote_script(url: str | None = None) -> str:
     import urllib.request
 
-    target_url = url or os.environ.get("AGENTS_BUNDLE_UPDATE_URL") or DEFAULT_UPDATE_URL
+    target_url = url or os.environ.get("CONTEXT_BUNDLE_UPDATE_URL") or DEFAULT_UPDATE_URL
     if target_url.startswith(("http://", "https://")) and "?" not in target_url:
         target_url = f"{target_url}?t={int(time.time())}"
     req = urllib.request.Request(
         target_url,
-        headers={"User-Agent": f"agents_bundle/{VERSION}", "Cache-Control": "no-cache"},
+        headers={"User-Agent": f"context-bundle/{VERSION}", "Cache-Control": "no-cache"},
     )
     with urllib.request.urlopen(req, timeout=15) as resp:
         data = resp.read().decode("utf-8")
-    if REPO_MARKER not in data:
+    if REPO_MARKER not in data and LEGACY_REPO_MARKER not in data:
         raise ValueError("downloaded file does not contain expected repository marker")
     ast.parse(data)
     return data
@@ -3037,14 +3161,18 @@ def cmd_check_update(url: str | None = None) -> int:
 
 def cmd_update(force: bool = False, url: str | None = None) -> int:
     prog = prog_name()
-    dest = Path(__file__).resolve()
+    self_file = Path(sys.argv[0]).resolve() if sys.argv and sys.argv[0] else Path(__file__).resolve()
+    if not self_file.is_file():
+        self_file = Path(__file__).resolve()
+    dest = (self_file.parent / "context") if self_file.name == "agents_bundle" else self_file
     try:
         remote_src = fetch_remote_script(url)
     except Exception as exc:
         sys.stderr.write(f"{prog}: update failed: {exc}\n")
         return 1
     remote_ver = parse_version_from_source(remote_src) or "unknown"
-    if not force and version_tuple(remote_ver) <= version_tuple(VERSION):
+    if not force and dest == self_file and version_tuple(remote_ver) <= version_tuple(VERSION):
+        _remove_legacy_binary(dest.parent, keep_path=dest)
         sys.stdout.write(f"{prog} {VERSION} is already up to date.\n")
         return 0
     try:
@@ -3061,7 +3189,66 @@ def cmd_update(force: bool = False, url: str | None = None) -> int:
     except Exception as exc:
         sys.stderr.write(f"{prog}: could not write updated binary to {dest}: {exc}\n")
         return 1
+    _remove_legacy_binary(dest.parent, keep_path=dest)
     sys.stdout.write(f"{prog}: updated {VERSION} -> {remote_ver} ({dest})\n")
+    return 0
+
+
+def cmd_uninstall() -> int:
+    prog = prog_name()
+    removed_bins: list[str] = []
+    candidate_dirs: list[Path] = []
+    env_dir = os.environ.get("CONTEXT_BUNDLE_INSTALL_DIR")
+    if env_dir:
+        candidate_dirs.append(Path(env_dir).expanduser())
+    self_path = Path(sys.argv[0]).resolve() if sys.argv and sys.argv[0] else Path(__file__).resolve()
+    is_repo_checkout = (self_path.parent / "build.py").is_file() and (self_path.parent / "src").is_dir()
+    if not is_repo_checkout and self_path.parent.is_dir():
+        candidate_dirs.append(self_path.parent)
+    elif not env_dir:
+        candidate_dirs.append(Path.home() / ".local" / "bin")
+
+    cmd_name = os.environ.get("CONTEXT_BUNDLE_NAME") or "context"
+    names = []
+    for n in (cmd_name, self_path.name if not is_repo_checkout else "", "context", "agents_bundle"):
+        if n and n not in names:
+            names.append(n)
+
+    seen_targets: set[Path] = set()
+    for d in candidate_dirs:
+        for n in names:
+            target = d / n
+            try:
+                resolved = target.resolve()
+            except OSError:
+                continue
+            if resolved in seen_targets:
+                continue
+            seen_targets.add(resolved)
+            if (resolved.parent / "build.py").is_file() and (resolved.parent / "src").is_dir():
+                continue
+            if target.is_file():
+                if not _is_our_binary(target):
+                    if n == cmd_name and env_dir:
+                        sys.stderr.write(f"{prog}: {target} is not a vitalio/context-bundle script\n")
+                        return 1
+                    continue
+                try:
+                    target.unlink()
+                    removed_bins.append(str(target))
+                except OSError as exc:
+                    sys.stderr.write(f"{prog}: could not remove {target}: {exc}\n")
+                    return 1
+
+    cdir = cache_dir_path()
+    removed_caches: list[str] = []
+    for cache_target in (cdir, cdir.parent / "agents_bundle"):
+        if cache_target.exists():
+            shutil.rmtree(cache_target, ignore_errors=True)
+            removed_caches.append(str(cache_target))
+
+    details = ", ".join([*removed_bins, *removed_caches]) or "nothing to remove"
+    sys.stdout.write(f"{prog}: uninstalled ({details})\n")
     return 0
 
 
@@ -3118,6 +3305,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_check_update()
     if args and args[0] in ("--update", "--self-update"):
         return cmd_update(force="--force" in args[1:])
+    if args and args[0] == "--uninstall":
+        if len(args) > 1:
+            raise SystemExit(f"{prog}: usage: {prog} --uninstall")
+        return cmd_uninstall()
     return cmd_bundle(args)
 
 

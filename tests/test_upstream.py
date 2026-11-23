@@ -19,15 +19,15 @@ class TestUpstream(AgentsBundleTestCase):
             [str(SCRIPT), "role=work", "task=F1", "-p", "up prompt", "big.txt:2-4"], cwd=str(self.tmp)
         )
         self._assert_ok(up)
-        self.assertIn("Bundle-Name: agents_bundle\n", up.stdout)
+        self.assertIn("Bundle-Name: vitalio/context-bundle\n", up.stdout)
         self.assertIn("Bundle-Protocol: 1\n", up.stdout)
         self.assertIn("Task: F1\n", up.stdout)
         self.assertNotIn("Role:", up.stdout)
         self.assertNotIn("Bundle-Expose:", up.stdout)
         (self.tmp / ".context.bundle").write_text(
             "bundle vitalio/agents-rules:core\n"
-            "if agents_bundle.task!=\n"
-            "    let task={agents_bundle.task:}\n"
+            "if context_bundle.task!=\n"
+            "    let task={vitalio.context_bundle.task:}\n"
             "    export task\n"
             "cmd echo down_cmd\n",
             encoding="utf-8",
@@ -39,10 +39,10 @@ class TestUpstream(AgentsBundleTestCase):
         down = self._run([str(SCRIPT), "big.txt:3-6"], cwd=str(self.tmp), input=up_out)
         self._assert_ok(down)
         self.assertIn(
-            "Bundle-Command: agents_bundle role=work task=F1 -p 'up prompt' big.txt:2-4 | agents_bundle big.txt:3-6\n",
+            "Bundle-Command: context role=work task=F1 -p 'up prompt' big.txt:2-4 | context big.txt:3-6\n",
             down.stdout,
         )
-        self.assertIn("Bundle-Name: agents_bundle\n", down.stdout)
+        self.assertIn("Bundle-Name: vitalio/context-bundle\n", down.stdout)
         self.assertIn("Task: F1\n", down.stdout)
         _nonce, frags = self._extract_fragments(down.stdout)
         rules = {m["id"]: m for m, _ in frags if m["kind"] == "rule"}
@@ -52,14 +52,14 @@ class TestUpstream(AgentsBundleTestCase):
                 "vitalio/agents-rules:core/start",
                 "vitalio/agents-rules:core/ssot",
                 "vitalio/agents-rules:core/lang",
-                "agents_bundle",
+                "vitalio/context-bundle:context",
             ],
         )
         self.assertEqual(
             rules["vitalio/agents-rules:core/start"]["chain"],
             [".context.bundle", "vitalio/agents-rules:core"],
         )
-        self.assertEqual(rules["agents_bundle"]["chain"], ["agents_bundle"])
+        self.assertEqual(rules["vitalio/context-bundle:context"]["chain"], ["vitalio/context-bundle"])
         files = [(m, b) for m, b in frags if m["kind"] == "file"]
         self.assertEqual([m["name"] for m, _ in files], ["big.txt:2-6"])
         self.assertEqual(files[0][1], "===== $ sed -n '2,6p' big.txt =====\nline2\nline3\nline4\nline5\nline6")
@@ -81,14 +81,14 @@ class TestUpstream(AgentsBundleTestCase):
     def test_producer_namespacing_and_canonical_4_kind_fragments(self):
         (self.tmp / "a.py").write_text("A = 1\n", encoding="utf-8")
         (self.tmp / "b.py").write_text("B = 2\n", encoding="utf-8")
-        p1_meta = {"kind": "prompt", "id": "F9", "name": "TODO.md:F9", "chain": ["todo_md"]}
-        p2_meta = {"kind": "prompt", "name": "notes", "chain": ["todo_md"]}
-        file_meta = {"kind": "file", "name": "a.py", "chain": ["todo_md"]}
+        p1_meta = {"kind": "prompt", "id": "F9", "name": "TODO.md:F9", "chain": ["vitalio/todo-md"]}
+        p2_meta = {"kind": "prompt", "name": "notes", "chain": ["vitalio/todo-md"]}
+        file_meta = {"kind": "file", "name": "a.py", "chain": ["vitalio/todo-md"]}
         weird = {"kind": "weird", "id": "w"}
         legacy_inc = {"kind": "include", "name": "a.py"}
         upstream = (
-            "Bundle-Command: todo_md F9\n"
-            "Bundle-Name: todo_md\n"
+            "Bundle-Command: todo F9\n"
+            "Bundle-Name: vitalio/todo-md\n"
             "Bundle-Boundary: abc123\n"
             "Task: F9\n"
             "Prefix: F\n"
@@ -111,21 +111,21 @@ class TestUpstream(AgentsBundleTestCase):
             "if todo_md.status=WIP,NEXT\n"
             "    let role=work\n"
             "export role\n"
-            "if todo_md.task!=\n"
+            "if vitalio.todo_md.task!=\n"
             "    let task={todo_md.task:}\n"
             "    export task\n"
             "if todo_md.title!=\n"
-            "    let title={todo_md.title:}\n"
+            "    let title={vitalio.todo_md.title:}\n"
             "    export title\n"
             "if role=work\n"
             "    file {todo_md.files:}\n"
-            "prompt Local note for {todo_md.prefix:}:{task:}\n",
+            "prompt Local note for {vitalio.todo_md.prefix:}:{task:}\n",
             encoding="utf-8",
         )
         r = self._run([str(SCRIPT)], cwd=str(self.tmp), input=upstream)
         self._assert_ok(r)
-        self.assertIn("Bundle-Command: todo_md F9 | agents_bundle\n", r.stdout)
-        self.assertIn("Bundle-Name: agents_bundle\n", r.stdout)
+        self.assertIn("Bundle-Command: todo F9 | context\n", r.stdout)
+        self.assertIn("Bundle-Name: vitalio/context-bundle\n", r.stdout)
         self.assertNotIn("Bundle-Expose:", r.stdout)
         self.assertNotIn("Bundle-Hide:", r.stdout)
         self.assertIn("Role: work\n", r.stdout)
@@ -145,8 +145,8 @@ class TestUpstream(AgentsBundleTestCase):
         self.assertEqual(
             [m for m, _ in prompts],
             [
-                {"kind": "prompt", "id": "F9", "name": "TODO.md:F9", "chain": ["todo_md"]},
-                {"kind": "prompt", "name": "notes", "chain": ["todo_md"]},
+                {"kind": "prompt", "id": "F9", "name": "TODO.md:F9", "chain": ["vitalio/todo-md"]},
+                {"kind": "prompt", "name": "notes", "chain": ["vitalio/todo-md"]},
                 {"kind": "prompt", "chain": [".context.bundle"]},
             ],
         )
@@ -154,29 +154,59 @@ class TestUpstream(AgentsBundleTestCase):
         self.assertEqual(prompts[1][1], "Extra context")
         self.assertEqual(prompts[2][1], "Local note for F:F9")
 
+    def test_ambiguous_short_repo_alias_omitted_across_different_owners(self):
+        (self.tmp / ".context.bundle").write_text(
+            "prompt v={vitalio.todo_md.task:none} a={acme.todo_md.task:none} short={todo_md.task:omitted}\n",
+            encoding="utf-8",
+        )
+        upstream = (
+            "Bundle-Command: vitalio-todo F1 | acme-todo F2\n"
+            "Bundle-Name: vitalio/todo-md\n"
+            "Task: F1\n"
+            "Bundle-Name: acme/todo-md\n"
+            "Task: F2\n"
+            "Bundle-Boundary: abc123\n\n"
+        )
+        r = self._run([str(SCRIPT), "--plain"], cwd=str(self.tmp), input=upstream)
+        self._assert_ok(r)
+        self.assertIn("v=F1 a=F2 short=omitted", r.stdout)
+
     def test_duplicate_bundle_name_producer_rejected(self):
         (self.tmp / ".context.bundle").write_text("prompt hi\n", encoding="utf-8")
-        for label, bad_stdin in [
+        for label, bad_stdin, expected_err in [
             (
                 "duplicate_bundle_name_header",
                 "Bundle-Name: todo_md\nBundle-Name: todo_md\nBundle-Boundary: abc\n\n",
+                "duplicate Bundle-Name producer 'todo_md'",
+            ),
+            (
+                "duplicate_qualified_bundle_name_header",
+                "Bundle-Name: vitalio/todo-md\nBundle-Name: vitalio/todo-md\nBundle-Boundary: abc\n\n",
+                "duplicate Bundle-Name producer 'vitalio.todo_md'",
             ),
             (
                 "already_namespaced_collision",
                 "Bundle-Name: todo_md\ntodo_md.task: F1\nTask: F2\nBundle-Boundary: abc\n\n",
+                "duplicate Bundle-Name producer 'todo_md'",
+            ),
+            (
+                "already_namespaced_qualified_collision",
+                "Bundle-Name: vitalio/todo-md\nvitalio.todo_md.task: F1\nTask: F2\nBundle-Boundary: abc\n\n",
+                "duplicate Bundle-Name producer 'vitalio.todo_md'",
             ),
             (
                 "pipeline_command_collision",
                 "Bundle-Command: todo_md F1 | todo_md F2\nBundle-Name: todo_md\nBundle-Boundary: abc\n\n",
+                "duplicate Bundle-Name producer 'todo_md'",
             ),
         ]:
             with self.subTest(case=label):
                 r = self._run([str(SCRIPT)], cwd=str(self.tmp), input=bad_stdin)
                 self.assertNotEqual(r.returncode, 0, msg=r.stdout)
-                self.assertIn("duplicate Bundle-Name producer 'todo_md'", r.stderr)
+                self.assertIn(expected_err, r.stderr)
 
     def _upstream_rules(self, role_header: str | None, body: str, argv: list[str]) -> dict[str, str]:
-        meta = {"kind": "rule", "id": "todo_md:todo_md", "chain": ["todo_md"]}
+        meta = {"kind": "rule", "id": "vitalio/todo-md:todo", "chain": ["vitalio/todo-md"]}
         head = "Bundle-Boundary: abc123\n"
         if role_header:
             head += f"Role: {role_header}\n"
@@ -191,17 +221,17 @@ class TestUpstream(AgentsBundleTestCase):
         return {m["id"]: b for m, b in frags if m["kind"] == "rule"}
 
     def test_upstream_rule_fragment_strips_description_and_renders_vars(self):
-        body = "# Description: Tool rule\n- Tool: run {cmd:todo_md} as {role:none} role"
+        body = "# Description: Tool rule\n- Tool: run {cmd:todo} as {role:none} role"
         rules = self._upstream_rules("work", body, [])
-        text = rules["todo_md:todo_md"]
-        self.assertIn("- Tool: run todo_md as work role", text)
+        text = rules["vitalio/todo-md:todo"]
+        self.assertIn("- Tool: run todo as work role", text)
         self.assertNotIn("Description", text)
         cli = self._upstream_rules("work", body, ["role=plan", "cmd=tm"])
-        self.assertIn("- Tool: run tm as plan role", cli["todo_md:todo_md"])
+        self.assertIn("- Tool: run tm as plan role", cli["vitalio/todo-md:todo"])
 
     def test_upstream_rule_fragment_with_empty_body_is_skipped(self):
         rules = self._upstream_rules(None, "# Description: Only metadata", [])
-        self.assertNotIn("todo_md:todo_md", rules)
+        self.assertNotIn("vitalio/todo-md:todo", rules)
 
 
 if __name__ == "__main__":

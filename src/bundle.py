@@ -12,6 +12,7 @@ from pathlib import Path
 
 from src.header import (
     DEFAULT_RULES_PKG,
+    EMBEDDED_RULE_ID,
     EMBEDDED_RULE_NAME,
     LEGACY_RULE_ID,
     LEGACY_SPEC_FILE_NAME,
@@ -114,7 +115,7 @@ def _parse_export_keys(raw_args: str, source_label: str, prog: str) -> list[str]
 
 
 def env_plain() -> bool:
-    raw = os.environ.get("AGENTS_BUNDLE_PLAIN", "").strip().lower()
+    raw = os.environ.get("CONTEXT_BUNDLE_PLAIN", "").strip().lower()
     return raw in ("1", "true", "yes", "on")
 
 
@@ -645,7 +646,7 @@ def _run_spec_command(cmd_str: str, cwd: Path) -> tuple[int, str, int]:
     t0 = time.monotonic()
     prog = prog_name()
     self_dir = str(Path(__file__).resolve().parent)
-    if re.match(rf"^(?:{re.escape(prog)}|agents_bundle)\s+--tree(?:\s+.*)?$", cmd_str):
+    if re.match(rf"^(?:{re.escape(prog)}|context|agents_bundle)\s+--tree(?:\s+.*)?$", cmd_str):
         try:
             parts = shlex.split(cmd_str)[2:]
             out = _tree_from_args(parts, default_dir=cwd).rstrip()
@@ -655,7 +656,7 @@ def _run_spec_command(cmd_str: str, cwd: Path) -> tuple[int, str, int]:
             elapsed_ms = max(0, int(round((time.monotonic() - t0) * 1000)))
             return 1, str(exc), elapsed_ms
 
-    shell_bin = os.environ.get("AGENTS_BUNDLE_SHELL", "").strip() or "bash"
+    shell_bin = os.environ.get("CONTEXT_BUNDLE_SHELL", "").strip() or "bash"
     env = {**os.environ, "PYTHONUTF8": "1"}
     env["PATH"] = f"{self_dir}{os.pathsep}{Path.home() / '.local/bin'}{os.pathsep}{env.get('PATH', '')}"
     try:
@@ -835,11 +836,14 @@ def build_bundle(
         for p, start, end in slices:
             middle_items.append(("span", read_span(p, display_path(p, spec_dir), start, end, [])))
 
-    pending_rules = [r for r in pending_rules if r[0] != LEGACY_RULE_ID]
-    embedded = normalize_rule_body(embedded_rule_text(), EMBEDDED_RULE_NAME)
+    pending_rules = [
+        r for r in pending_rules
+        if r[0] not in (LEGACY_RULE_ID, EMBEDDED_RULE_ID, "agents_bundle", EMBEDDED_RULE_NAME)
+    ]
+    embedded = normalize_rule_body(embedded_rule_text(), EMBEDDED_RULE_ID)
     if embedded:
         pending_rules.append(
-            (EMBEDDED_RULE_NAME, f"# [embedded rule {EMBEDDED_RULE_NAME}]", embedded, [EMBEDDED_RULE_NAME])
+            (EMBEDDED_RULE_ID, f"# [embedded rule {EMBEDDED_RULE_ID}]", embedded, [PRODUCER_NAME])
         )
 
     if pending_rules:
