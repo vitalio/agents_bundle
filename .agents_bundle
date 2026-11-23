@@ -1,13 +1,12 @@
-# .agents_bundle — root context bundle (run: agents_bundle | run_block)
+# Description: Root context bundle (run: agents_bundle | run_block)
 
-bundle vitalio/agents-rules:default
+bundle vitalio/agents-rules:core
+bundle vitalio/agents-rules:adapters/todo_md
+bundle vitalio/agents-rules:coding
+bundle vitalio/agents-rules:stack/python py_min=3.9
+bundle vitalio/agents-rules:release single_file_build=1
 rule vitalio/agents-rules:collab/commits
-rule vitalio/agents-rules:release/semver
-rule vitalio/agents-rules:release/single-file-build
 rule vitalio/agents-rules:stack/cli
-rule vitalio/agents-rules:stack/python-cli
-rule vitalio/agents-rules:stack/python-stdlib
-rule vitalio/agents-rules:stack/python-annotations py_min=3.9
 
 file AGENTS.md
 cmd agents_bundle --tree
