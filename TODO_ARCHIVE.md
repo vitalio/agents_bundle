@@ -1,3 +1,12 @@
+# ✅ [DONE] F33: Remove transitional .bundle directives, legacy package layouts, and legacy fragment kind aliases — *2026-11-23, Removed transitional .bundle directive aliases, legacy package directories, and legacy upstream fragment kind aliases*
+
+- Depends on: F15
+- Remove transitional `.bundle` directive aliases (`ruleset`, `include`, `$`, `!`, `var`, `expose`) and legacy `[if ...]` / `[/if]` / `[endif]` conditional syntax (`_preprocess_legacy_if_lines`, `IF_PREFIX_RE`, `[if ...]` in trace labels) from `src/bundle.py`, `src/rules_engine.py`, and `src/cli.py`.
+- Remove legacy package directory resolution (`rules/`, `src/rules/`, `rulesets/`, `src/rulesets/`, `bundles/`, `src/bundles/`) and `*.ruleset` file discovery from `src/rules_engine.py`, keeping only the canonical `agents/` directory with `.bundle` and `.md` files.
+- Remove legacy upstream fragment kind aliases (`include`, `task`, `context`) from `src/upstream.py` (`PROMPT_KINDS`, `_KIND_NORMALIZATION`, `_FRAGMENT_GROUPS`), keeping only the 4 canonical ADR-0003 fragment kinds (`rule`, `file`, `cmd`, `prompt`).
+- Strip historical `- Role:` and `- Target files:` lines from `TODO_ARCHIVE.md`.
+- Acceptance criteria: only the 9 canonical `.bundle` keywords (`bundle`, `rule`, `file`, `cmd`, `prompt`, `let`, `export`, `if`/`else if`/`elif`/`else`, `allow`), canonical `agents/` layout, and 4 fragment kinds (`rule`, `file`, `cmd`, `prompt`) remain; `AGENTS.md`, `README.md`, `--help`, and `tests/test_*.py` are updated; `./build.py` and `python3 -m unittest discover -s tests` pass.
+
 # ❌ [CANCELED] L1: Clarify ~1000-line module size guideline as pragmatic recommendation rather than hard split trigger — *moved to todo_flow*
 
 - Observed problem: the modular cohesion rule wording ('split any module that exceeds about 1000 lines') gets interpreted by planning and worker sessions as a hard line-count cap, prompting artificial relocation of cohesive helpers across modules just to keep `wc -l` below 1000.
@@ -22,8 +31,6 @@
     - `if <cond>`, `else if <cond>` (synonym `elif <cond>`), `else` with mandatory 4-space Python-style indentation blocks without colons or `endif` (retaining legacy `[if ...]` / `[/if]` compatibility)
     - `allow <bin...>` (`F10`)
   - Drop Windows support: remove `install.ps1`, `os.name == 'nt'` / PowerShell branches in `src/rules_engine.py` and `src/bundle.py`, and `windows-latest` from `.github/workflows/ci.yml`.
-- Target files: `src/header.py`, `src/includes.py`, `src/rules_engine.py`, `src/upstream.py`, `src/bundle.py`, `src/cli.py`, `agents/agents_bundle.md`, `README.md`, `tests/test_rules_engine.py`, `tests/test_upstream.py`, `tests/test_bundle.py`.
-__RB_STEP__:2
 
 # ✅ [DONE] F10: Enforce command allowlist policy in .agents_bundle for external bundles — *2026-11-23, Enforce command allowlist and workspace-root include boundary for external bundles*
 
@@ -31,7 +38,6 @@ __RB_STEP__:2
 - Support an explicit allowlist directive in root `.agents_bundle` (e.g. `allow <cmd1> <cmd2> ...` or per-bundle `bundle <pkg> allow=...`) defining which executables external bundles are permitted to run via `$` commands and `var x=$(...)` subshells in `parse_spec()` and `build_bundle()` (`src/bundle.py:167-566`).
 - Statically inspect all parsed commands from included bundles before executing any shell command; fail fast with a clear error naming the blocked command and originating bundle if any command executable is not in the user's allowlist.
 - Restrict `include` paths from external bundles in `_expand_include()` (`src/bundle.py:313-360`) to files inside the repository root (`spec_dir`) so external bundles cannot read arbitrary host paths outside the workspace.
-- Target files: `src/header.py`, `src/bundle.py:167-566`, `src/rules_engine.py:412-566`, `AGENTS.md`, `README.md`, `tests/test_bundle.py:720-1070`.
 
 # ✅ [DONE] F7: Support agents/ package directory, custom relative paths, and @ref local-resolve fix — *2026-11-22*
 
@@ -40,14 +46,12 @@ __RB_STEP__:2
 - Support explicit relative file paths inside a package (`owner/repo[@ref]:path/to/file`) and local relative paths (`./...`, `../...`).
 - Fix `_ensure_remote_package()` in `src/rules_engine.py:242-295` so explicit `@<ref>` on `vitalio/*` packages fetches the requested ref instead of returning the unpinned local working tree.
 - Keep `agents/agents_bundle.md`, `AGENTS.md`, `README.md`, `src/header.py`, and unit tests in `tests/test_rules_engine.py:1-323` and `tests/test_bundle.py:1-260` in sync.
-- Target files: `src/header.py`, `src/rules_engine.py:175-415`, `src/bundle.py:167-268`, `AGENTS.md`, `README.md`, `tests/test_rules_engine.py:1-323`, `tests/test_bundle.py:1-260`.
 
 # ✅ [DONE] F32: Render table-driven -h/--help output wrapped to <= 100 columns per stack/cli — *2026-11-22*
 
 - Replace static `USAGE_TEMPLATE.format(...)` in `src/header.py` and `usage_text()` (`src/core.py`) with structured table-driven help rendering (`HELP_MAX_WIDTH = 100`, `HELP_PROSE_WIDTH = 80`, `HELP_INDENT = 2`, `HELP_GAP = 2`, matching `todo_md` and `vitalio/agents-rules:stack/cli`).
 - Measure the left column width after expanding `{prog}`, `{default_pkg}`, and `{cache_dir}` within each section (`Usage:`, `Options:`, `Bundle Output Protocol:`, `Environment:`) so all descriptions and wrapped continuation lines align to the same column and no line exceeds 100 columns.
 - Rebuild `./agents_bundle` via `python3 build.py` and add unit test assertions in `tests/test_cli.py` verifying that every line of `agents_bundle -h` / `--help` is `<= 100` columns and section description columns are aligned.
-- Target files: `src/header.py`, `src/core.py`, `tests/test_cli.py`.
 
 # ✅ [DONE] B2: Normalize upstream rule fragments through _parse_md_text() and _render_rule_vars() — *2026-11-22*
 
@@ -56,7 +60,6 @@ __RB_STEP__:2
   - Evaluates `[if ...]` conditional blocks/lines and `{cmd:...}` / template variable substitutions against the active session variables (`role`, `task`, etc.).
   - Skips appending the upstream rule if the rendered body is empty after conditional filtering.
 - Add unit tests in `tests/test_upstream.py` verifying that upstream `rule` fragments have `# Description:` stripped, `[if role=...]` blocks filtered against `Role:` preamble headers or CLI `role=...` overrides, and `{cmd:...}` placeholders expanded.
-- Target files: `src/bundle.py:340-415`, `tests/test_upstream.py`.
 
 # ✅ [DONE] F31: Active backlog task references removed src/rules/agents_bundle.md and src/bundles/ — *2026-11-22, Replaced stale src/rules/agents_bundle.md and src/bundles/ references with agents/agents_bundle.md in F27*
 
@@ -72,7 +75,6 @@ Observed: the Target files bullet of the open task that depends on F6, F7, and F
   - When assembling from `.agents_bundle` (`spec_file is not None`), pass `chain=[SPEC_FILE_NAME]` (`[".agents_bundle"]`) into `parse_spec()` so all fragments originating from `.agents_bundle` (and nested `.bundle` files) carry `chain: [".agents_bundle", ...]`, while keeping upstream piped fragments (`chain: ["todo_md"]`), embedded `agents_bundle` rule (`chain: ["agents_bundle"]`), and CLI file/`-p` arguments (`chain: []`) outside `.agents_bundle`'s `chain`.
   - Move and trim `src/rules/agents_bundle.md` to `agents/agents_bundle.md` (~10 lines covering `agents_bundle --tree` and session assembly/handoff, pointing to `agents_bundle -h` / `--list` when editing `.agents_bundle`), embed it into `src/header.py` (`EMBEDDED_RULE_AGENTS_BUNDLE`) via `build.py` (with source-tree fallback to `agents/agents_bundle.md`), auto-inject it into `===== Rules =====` with `chain: ["agents_bundle"]` (deduplicating legacy `vitalio/agents_bundle:agents_bundle`), and delete `src/bundles/agents_bundle.bundle`.
   - Move `Bundle Output Protocol` and `.bundle` directive reference documentation to `README.md` and `AGENTS.md`, and update `default_spec_template()` (`--init`) to remove `bundle vitalio/agents_bundle` and `bundle vitalio/todo_md` and use `include AGENTS.md`.
-- Target files: `src/header.py`, `src/bundle.py:31-268`, `src/bundle.py:313-660`, `src/rules_engine.py:412-636`, `src/rules/agents_bundle.md`, `build.py`, `README.md`, `tests/test_bundle.py:1-260`, `tests/test_rules_engine.py:1-323`.
 
 # ✅ [DONE] F29: Support glob path patterns and path:start-end line-range slices in include directive and CLI file arguments — *2026-11-21*
 
@@ -101,7 +103,6 @@ Observed: the Target files bullet of the open task that depends on F6, F7, and F
 
 # ✅ [DONE] F28: Speed up test suite (in-process runner, lazy urllib) and split monolithic test_agents_bundle.py into modular tests/test_*.py — *2026-11-20, In-process test runner, lazy urllib.request import, and modular tests/test_*.py split*
 
-- Role: work
 - Move `import urllib.request` out of top-level `src/header.py` into `fetch_remote_script()` in `src/cli.py` (and `src/rules_engine.py` URL fetching where needed) so local CLI startups do not pay the `urllib.request` import cost (~40 ms).
 - Create `tests/helpers.py` containing `_seed_offline_rules_pkg()` and a shared base class `AgentsBundleTestCase(unittest.TestCase)` that loads `./agents_bundle` once in `setUpClass()` and provides `_assert_ok()`, `_run_in_process()`, `_run_subprocess()`, `_run()`, `_git()`, `_load_bundle_module()`, and `_extract_fragments()` helpers (isolating `cwd`, `env`, `sys.argv`, and `sys.stdin` with `contextlib.redirect_stdout` / `redirect_stderr` and full `stdout`/`stderr` diagnostic `msg=` on `returncode` assertions).
 - Convert routine `subprocess.run([str(SCRIPT), ...])` calls to `self._run([str(SCRIPT), ...])` (keeping real subprocess smoke checks for `-h`/`--version`, `install.sh`, and `build.py --check`, and using `sys.executable` instead of `"python3"` literals).

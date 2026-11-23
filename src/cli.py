@@ -12,14 +12,12 @@ from src.header import DEFAULT_RULES_PKG, DEFAULT_UPDATE_URL, REPO_MARKER, VERSI
 from src.core import prog_name, usage_text
 from src.tree import cmd_tree
 from src.rules_engine import (
-    _parse_directive_tokens,
     _parse_rule_directive_tokens,
     cmd_list_rules,
     cmd_update_cache,
     collect_directive_items,
     env_vars,
     format_collected_rules,
-    render_directive,
 )
 from src.bundle import cmd_bundle, cmd_init
 
@@ -111,29 +109,23 @@ def main(argv: list[str] | None = None) -> int:
                 f"{prog}: usage: {prog} bundle <pkg>[:<name>] [k=v] [-C DIR] [-p TEXT] [--plain] [-v] [--refresh]"
             )
         return cmd_bundle(args[2:], bundle_target=args[1], raw_argv=args)
-    if args and args[0] in ("ruleset", "rule"):
-        kind = args[0]
+    if args and args[0] == "rule":
         refresh = "--refresh" in args[1:]
         verbose = "-v" in args[1:] or "--verbose" in args[1:]
         rest_tokens = [a for a in args[1:] if a not in ("--refresh", "-v", "--verbose")]
-        if kind == "rule":
-            targets, vmap = _parse_rule_directive_tokens(rest_tokens, prog)
-            merged_vmap = {**env_vars(prog), **vmap}
-            items = []
-            for target in targets:
-                items.extend(
-                    collect_directive_items(
-                        "rule",
-                        target,
-                        cli_vars=merged_vmap,
-                        refresh=refresh,
-                    )
+        targets, vmap = _parse_rule_directive_tokens(rest_tokens, prog)
+        merged_vmap = {**env_vars(prog), **vmap}
+        items = []
+        for target in targets:
+            items.extend(
+                collect_directive_items(
+                    "rule",
+                    target,
+                    cli_vars=merged_vmap,
+                    refresh=refresh,
                 )
-            out = format_collected_rules(items, verbose=verbose)
-        else:
-            target, excls, vmap = _parse_directive_tokens(rest_tokens, prog)
-            merged_vmap = {**env_vars(prog), **vmap}
-            out = render_directive(kind, target, excludes=excls, cli_vars=merged_vmap, refresh=refresh, verbose=verbose)
+            )
+        out = format_collected_rules(items, verbose=verbose)
         if out:
             sys.stdout.write(out + "\n")
         return 0

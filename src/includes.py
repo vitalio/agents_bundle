@@ -136,7 +136,7 @@ def _span_key(resolved: object, disp: str, wdir: Path) -> str:
 
 
 def span_from_fragment(meta: dict[str, object], content: str, wdir: Path) -> IncludeSpan:
-    """Rebuild an include span from an upstream include or file fragment."""
+    """Rebuild an include span from an upstream file fragment."""
     raw_chain = meta.get("chain")
     chain = [str(c) for c in raw_chain] if isinstance(raw_chain, list) else []
     name = str(meta.get("name") or "")

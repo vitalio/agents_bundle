@@ -11,21 +11,22 @@ from tests.helpers import AgentsBundleTestCase, SCRIPT
 
 
 class TestBundle(AgentsBundleTestCase):
-    def test_ruleset_rule_if_conditions_and_dollar_commands(self):
+    def test_bundle_rule_if_conditions_and_cmd_directives(self):
         cur_os = "macos" if sys.platform == "darwin" else "linux"
         other_os = "macos" if cur_os == "linux" else "linux"
         (self.tmp / "AGENTS.md").write_text("# Project Rules\n", encoding="utf-8")
         (self.tmp / "extra.txt").write_text("extra content\n", encoding="utf-8")
         (self.tmp / ".agents_bundle").write_text(
-            "ruleset vitalio/agents-rules:core lang=Spanish\n"
-            f"[if os={cur_os}] rule vitalio/agents-rules:os/linux\n"
-            f"[if os={other_os}] rule vitalio/agents-rules:os/macos\n"
-            f"[if os={cur_os}]\n"
+            "bundle vitalio/agents-rules:core lang=Spanish\n"
+            f"if os={cur_os}\n"
+            "    rule vitalio/agents-rules:os/linux\n"
+            f"if os={other_os}\n"
+            "    rule vitalio/agents-rules:os/macos\n"
+            f"if os={cur_os}\n"
             "    rule vitalio/agents-rules:stack/python-cli py_min=3.12\n"
-            "[/if]\n"
-            "$ cat AGENTS.md\n"
-            "$ agents_bundle --tree --max-lines 10\n"
-            "$ echo cmd_ok\n",
+            "cmd cat AGENTS.md\n"
+            "cmd agents_bundle --tree --max-lines 10\n"
+            "cmd echo cmd_ok\n",
             encoding="utf-8",
         )
         rb = self._run(
@@ -39,14 +40,14 @@ class TestBundle(AgentsBundleTestCase):
         self.assertIn("Bundle-Command: agents_bundle extra.txt -p 'Solve task 1'", rb.stdout)
         self.assertIn("Bundle-Name: agents_bundle\n", rb.stdout)
         self.assertIn("===== Rules =====", rb.stdout)
-        self.assertNotIn("# [ruleset", rb.stdout)
+        self.assertNotIn("# [bundle", rb.stdout)
         self.assertIn("in Spanish", rb.stdout)
         self.assertNotIn("Clean external text & two-step external changes:", rb.stdout)
         self.assertIn("Linux & POSIX shell rules:", rb.stdout)
         self.assertNotIn("macOS & BSD userland rules:", rb.stdout)
         self.assertIn("Python 3.12+ compatibility", rb.stdout)
 
-        # Verify -v / --verbose includes provenance trace comments with [if ...]
+        # Verify -v / --verbose includes provenance trace comments with 'if <cond>'
         rb_v = self._run(
             [str(SCRIPT), "-v"],
             cwd=str(self.tmp),
@@ -55,17 +56,17 @@ class TestBundle(AgentsBundleTestCase):
             check=False,
         )
         self._assert_ok(rb_v)
-        self.assertIn("# [ruleset vitalio/agents-rules:core -> rules/core/start.md]", rb_v.stdout)
-        self.assertIn(f"# [[if os={cur_os}] rule vitalio/agents-rules:os/linux -> rules/os/linux.md]", rb_v.stdout)
-        self.assertIn(f"# [[if os={cur_os}] rule vitalio/agents-rules:stack/python-cli -> rules/stack/python-cli.md] (py_min=3.12)", rb_v.stdout)
+        self.assertIn("# [bundle vitalio/agents-rules:core -> agents/core/start.md]", rb_v.stdout)
+        self.assertIn(f"# [if os={cur_os} rule vitalio/agents-rules:os/linux -> agents/os/linux.md]", rb_v.stdout)
+        self.assertIn(f"# [if os={cur_os} rule vitalio/agents-rules:stack/python-cli -> agents/stack/python-cli.md] (py_min=3.12)", rb_v.stdout)
 
-        # Verify direct URL rule and ruleset loading
+        # Verify direct URL rule and bundle loading
         url_rule = self.tmp / "custom_url_rule.md"
         url_rule.write_text("# Description: Direct URL rule\n- **Direct URL invariant:** Loaded from URL {val:42}.\n", encoding="utf-8")
-        url_ruleset = self.tmp / "custom_url.ruleset"
-        url_ruleset.write_text(f"# Description: Direct URL ruleset\nrule {url_rule.as_uri()} val=99\n", encoding="utf-8")
+        url_bundle = self.tmp / "custom_url.bundle"
+        url_bundle.write_text(f"# Description: Direct URL bundle\nrule {url_rule.as_uri()} val=99\n", encoding="utf-8")
         r_url = self._run(
-            [str(SCRIPT), "ruleset", url_ruleset.as_uri()],
+            [str(SCRIPT), "bundle", url_bundle.as_uri(), "--plain"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -78,26 +79,24 @@ class TestBundle(AgentsBundleTestCase):
         inc_file = self.tmp / "task_flow.bundle"
         inc_file.write_text(
             "# Description: Custom task flow bundle\n"
-            "[if role=plan]\n"
-            "    [if task=] $ echo all_tasks\n"
-            "    [if task!=] $ echo focused_task_{task:}\n"
+            "if role=plan\n"
+            "    if task=\n"
+            "        cmd echo all_tasks\n"
+            "    if task!=\n"
+            "        cmd echo focused_task_{task:}\n"
             "    prompt Mode: PLANNING\n"
-            "[/if]\n"
-            "[if role=execute]\n"
-            "    [if task=]\n"
-            "        $ echo all_tasks\n"
+            "if role=execute\n"
+            "    if task=\n"
+            "        cmd echo all_tasks\n"
             "        prompt Mode: EXECUTION\n"
-            "    [/if]\n"
-            "    [if task!=]\n"
-            "        $ echo focused_task_{task:}\n"
-            "        prompt Mode: EXECUTION ({task:})\n"
-            "    [/if]\n"
-            "[/if]\n",
+            "    if task!=\n"
+            "        cmd echo focused_task_{task:}\n"
+            "        prompt Mode: EXECUTION ({task:})\n",
             encoding="utf-8",
         )
         (self.tmp / ".agents_bundle").write_text(
             "bundle vitalio/agents_bundle\n"
-            "ruleset vitalio/agents-rules:core\n"
+            "bundle vitalio/agents-rules:core\n"
             "bundle vitalio/todo_md\n"
             f"bundle {inc_file.as_posix()}\n"
             "export role task\n",
@@ -193,9 +192,10 @@ class TestBundle(AgentsBundleTestCase):
 
     def test_agents_bundle_vars_env_and_cli_override(self):
         (self.tmp / ".agents_bundle").write_text(
-            "ruleset vitalio/agents-rules:core lang=English\n"
+            "bundle vitalio/agents-rules:core lang=English\n"
             "export lang mode\n"
-            "[if mode=custom] prompt Custom mode active ({chat_lang:default})\n",
+            "if mode=custom\n"
+            "    prompt Custom mode active ({chat_lang:default})\n",
             encoding="utf-8",
         )
         env = {**os.environ, "AGENTS_BUNDLE_VARS": "lang=Spanish mode=custom chat_lang=French"}
@@ -221,7 +221,7 @@ class TestBundle(AgentsBundleTestCase):
         self.assertIn("in German", r_cli.stdout)
         self.assertIn("Custom mode active (Italian)", r_cli.stdout)
 
-        # Subcommand ruleset/rule also respects AGENTS_BUNDLE_VARS and CLI override
+        # Subcommand rule also respects AGENTS_BUNDLE_VARS and CLI override
         r_sub = self._run(
             [str(SCRIPT), "rule", "vitalio/agents-rules:core/lang"],
             cwd=str(self.tmp),
@@ -250,17 +250,16 @@ class TestBundle(AgentsBundleTestCase):
         self.assertNotEqual(r_bad.returncode, 0, msg=f"stdout:\n{r_bad.stdout}\nstderr:\n{r_bad.stderr}")
         self.assertIn("AGENTS_BUNDLE_VARS", r_bad.stderr)
 
-    def test_dynamic_var_include_and_stdin_pipe(self):
+    def test_dynamic_let_file_and_stdin_pipe(self):
         (self.tmp / "src").mkdir()
         (self.tmp / "src/target.py").write_text("VALUE = 42\n", encoding="utf-8")
         (self.tmp / ".agents_bundle").write_text(
-            "ruleset vitalio/agents-rules:core\n"
-            "[if role=execute]\n"
-            "    var task=$(printf 'F7')\n"
+            "bundle vitalio/agents-rules:core\n"
+            "if role=execute\n"
+            "    let task=$(printf 'F7')\n"
             "    export role task\n"
-            "    include $(printf 'src/target.py\\nmissing/file.py\\n')\n"
-            "    prompt Executing {task:}\n"
-            "[/if]\n",
+            "    file $(printf 'src/target.py\\nmissing/file.py\\n')\n"
+            "    prompt Executing {task:}\n",
             encoding="utf-8",
         )
         # Dynamic var resolution and include directive without explicit task=<ID>
@@ -366,18 +365,18 @@ class TestBundle(AgentsBundleTestCase):
         b1 = self.tmp / "first.bundle"
         b1.write_text(
             "rule vitalio/agents-rules:core/start\n"
-            "$ echo cmd_from_b1\n",
+            "cmd echo cmd_from_b1\n",
             encoding="utf-8",
         )
         b2 = self.tmp / "second.bundle"
         b2.write_text(
             "rule vitalio/agents-rules:core/ssot\n"
-            "$ echo cmd_from_b2\n",
+            "cmd echo cmd_from_b2\n",
             encoding="utf-8",
         )
         (self.tmp / ".agents_bundle").write_text(
             f"bundle {b1.as_posix()}\n"
-            "$ echo middle_cmd\n"
+            "cmd echo middle_cmd\n"
             f"bundle {b2.as_posix()}\n"
             "rule vitalio/agents-rules:core/lang\n",
             encoding="utf-8",
@@ -414,11 +413,11 @@ class TestBundle(AgentsBundleTestCase):
         (proj / "AGENTS.md").write_text("# Target Project Rules\n", encoding="utf-8")
         (proj / "note.txt").write_text("hello from target\n", encoding="utf-8")
         (proj / ".agents_bundle").write_text(
-            "ruleset vitalio/agents-rules:core\n"
+            "bundle vitalio/agents-rules:core\n"
             "export project task title role chat_lang\n"
-            "$ cat AGENTS.md\n"
-            "$ agents_bundle --tree\n"
-            "$ pwd\n",
+            "cmd cat AGENTS.md\n"
+            "cmd agents_bundle --tree\n"
+            "cmd pwd\n",
             encoding="utf-8",
         )
 
@@ -505,9 +504,9 @@ class TestBundle(AgentsBundleTestCase):
         override_proj.mkdir()
         (override_proj / "AGENTS.md").write_text("# Override Rules\n", encoding="utf-8")
         (override_proj / ".agents_bundle").write_text(
-            "ruleset vitalio/agents-rules:core\n"
+            "bundle vitalio/agents-rules:core\n"
             "export task\n"
-            "$ cat AGENTS.md\n",
+            "cmd cat AGENTS.md\n",
             encoding="utf-8",
         )
         r_override = self._run(
@@ -539,8 +538,10 @@ class TestBundle(AgentsBundleTestCase):
         piped_guard_proj = self.tmp / "piped_guard_proj"
         piped_guard_proj.mkdir()
         (piped_guard_proj / ".agents_bundle").write_text(
-            "[if piped!=1] $ echo fetch_from_tracker\n"
-            "[if piped=1] $ echo already_piped\n",
+            "if piped!=1\n"
+            "    cmd echo fetch_from_tracker\n"
+            "if piped=1\n"
+            "    cmd echo already_piped\n",
             encoding="utf-8",
         )
         for label, stdin_val, expect_piped in [
@@ -590,7 +591,7 @@ class TestBundle(AgentsBundleTestCase):
     def test_empty_piped_fifo_fails_fast_but_devnull_is_allowed(self):
         proj = self.tmp / "empty_pipe_proj"
         proj.mkdir()
-        (proj / ".agents_bundle").write_text("$ echo marker_should_not_run\n", encoding="utf-8")
+        (proj / ".agents_bundle").write_text("cmd echo marker_should_not_run\n", encoding="utf-8")
         for label, data in [("empty", ""), ("whitespace", "  \n")]:
             with self.subTest(fifo_case=label):
                 r_fifo = self._run_subprocess([str(SCRIPT), "-C", str(proj)], cwd=self.tmp, input=data)
@@ -687,9 +688,9 @@ class TestBundle(AgentsBundleTestCase):
 
         leaf_bundle = self.tmp / "leaf.bundle"
         leaf_bundle.write_text(
-            "ruleset vitalio/agents-rules:default\n"
-            "include leaf_note.txt\n"
-            "$ printf leaf_ok\n"
+            "bundle vitalio/agents-rules:default\n"
+            "file leaf_note.txt\n"
+            "cmd printf leaf_ok\n"
             "prompt Leaf prompt\n",
             encoding="utf-8",
         )
@@ -706,9 +707,9 @@ class TestBundle(AgentsBundleTestCase):
         spec_text = (
             "rule vitalio/agents-rules:release/single-file-build\n"
             f"bundle {top_bundle.as_posix()}\n"
-            "include root_note.txt\n"
-            "$ printf root_ok\n"
-            "$ exit 7\n"
+            "file root_note.txt\n"
+            "cmd printf root_ok\n"
+            "cmd exit 7\n"
             "prompt Root prompt\n"
         )
         (self.tmp / ".agents_bundle").write_text(spec_text, encoding="utf-8")
@@ -727,14 +728,17 @@ class TestBundle(AgentsBundleTestCase):
         top_ref = top_bundle.as_posix()
         leaf_ref = leaf_bundle.as_posix()
         self.assertEqual(by_val[("directive", "rule vitalio/agents-rules:stack/python-cli")], [top_ref])
-        self.assertEqual(by_val[("directive", "ruleset vitalio/agents-rules:default")], [top_ref, leaf_ref])
+        self.assertEqual(
+            by_val[("directive", "rule vitalio/agents-rules:core/start")],
+            [top_ref, leaf_ref, "vitalio/agents-rules:default", "vitalio/agents-rules:core"],
+        )
         self.assertEqual(by_val[("file", "leaf_note.txt")], [top_ref, leaf_ref])
         self.assertEqual(by_val[("cmd", "printf leaf_ok")], [top_ref, leaf_ref])
         self.assertEqual(by_val[("prompt", "Leaf prompt")], [top_ref, leaf_ref])
 
-        # 2. Verify collect_directive_items preserves full multi-hop chain across nested rulesets
+        # 2. Verify collect_directive_items preserves full multi-hop chain across nested bundles
         items = mod.collect_directive_items(
-            "ruleset",
+            "bundle",
             "vitalio/agents-rules:default",
             work_dir=self.tmp,
             chain=[top_ref, leaf_ref],
@@ -841,7 +845,7 @@ class TestBundle(AgentsBundleTestCase):
 
     def test_json_fragment_markers_for_all_kinds(self):
         pkg_dir = Path(os.environ["AGENTS_BUNDLE_LOCAL_PKG_DIR"])
-        (pkg_dir / "rules" / "core" / "multiline.md").write_text(
+        (pkg_dir / "agents" / "core" / "multiline.md").write_text(
             "# Description: Multiline rule\n"
             "- Multiline rule header:\n"
             "  - Bullet one\n"
@@ -851,21 +855,21 @@ class TestBundle(AgentsBundleTestCase):
         (self.tmp / "sub.bundle").write_text(
             "rule vitalio/agents-rules:core/multiline\n"
             "rule vitalio/agents-rules:core/start\n"
-            "include sub_doc.txt\n"
-            "$ printf 'sub_line_1\\nsub_line_2\\n'\n",
+            "file sub_doc.txt\n"
+            "cmd printf 'sub_line_1\\nsub_line_2\\n'\n",
             encoding="utf-8",
         )
         (self.tmp / "sub_doc.txt").write_text("sub doc line 1\nsub doc line 2\n", encoding="utf-8")
         (self.tmp / "root_doc.txt").write_text("root doc body\n", encoding="utf-8")
         (self.tmp / "cli_doc.txt").write_text("cli doc body\n", encoding="utf-8")
         (self.tmp / ".agents_bundle").write_text(
-            "ruleset vitalio/agents-rules:core\n"
+            "bundle vitalio/agents-rules:core\n"
             f"bundle {(self.tmp / 'sub.bundle').as_posix()}\n"
-            "include root_doc.txt\n"
-            "$ printf 'line1\\nline2\\n'\n"
-            "$ echo 'arrow --> test'\n"
-            "$ true\n"
-            "$ exit 3\n"
+            "file root_doc.txt\n"
+            "cmd printf 'line1\\nline2\\n'\n"
+            "cmd echo 'arrow --> test'\n"
+            "cmd true\n"
+            "cmd exit 3\n"
             "prompt Line one\n"
             "prompt Line two\n",
             encoding="utf-8",
@@ -887,7 +891,7 @@ class TestBundle(AgentsBundleTestCase):
             self.assertNotIn("group", meta)
             self.assertNotIn("via", meta)
 
-        # Verify rule deduplication: core/start appears in core ruleset and sub.bundle, emitted once
+        # Verify rule deduplication: core/start appears in core bundle and sub.bundle, emitted once
         rule_frags = [(meta, body) for meta, body in fragments if meta["kind"] == "rule"]
         rule_ids = [meta["id"] for meta, _ in rule_frags]
         self.assertEqual(
@@ -986,11 +990,11 @@ class TestBundle(AgentsBundleTestCase):
         self._assert_ok(rv)
         _, v_frags = self._extract_fragments(rv.stdout)
         v_rules = [body for meta, body in v_frags if meta["kind"] == "rule"]
-        self.assertTrue(any("# [ruleset vitalio/agents-rules:core -> rules/core/start.md]" in b for b in v_rules))
+        self.assertTrue(any("# [bundle vitalio/agents-rules:core -> agents/core/start.md]" in b for b in v_rules))
 
-        # Verify standalone ruleset/rule subcommands do not emit bundle fragment markers
+        # Verify standalone rule subcommand does not emit bundle fragment markers
         rs = self._run(
-            [str(SCRIPT), "ruleset", "vitalio/agents-rules:core"],
+            [str(SCRIPT), "rule", "vitalio/agents-rules:core/start"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -1003,15 +1007,15 @@ class TestBundle(AgentsBundleTestCase):
         (self.tmp / "sub.bundle").write_text(
             "rule vitalio/agents-rules:core/start\n"
             "export role task project_id\n"
-            "$ printf 'sub_cmd_out\\n'\n",
+            "cmd printf 'sub_cmd_out\\n'\n",
             encoding="utf-8",
         )
         (self.tmp / "doc.txt").write_text("included doc line\n", encoding="utf-8")
         (self.tmp / ".agents_bundle").write_text(
-            "ruleset vitalio/agents-rules:core\n"
+            "bundle vitalio/agents-rules:core\n"
             f"bundle {(self.tmp / 'sub.bundle').as_posix()}\n"
-            "include doc.txt\n"
-            "$ printf 'root_cmd_out\\n'\n"
+            "file doc.txt\n"
+            "cmd printf 'root_cmd_out\\n'\n"
             "prompt Plain mode prompt\n",
             encoding="utf-8",
         )
@@ -1078,11 +1082,11 @@ class TestBundle(AgentsBundleTestCase):
         extras = ["big.txt:9-20", "nomatch/*.py", "big.txt:0-2", "big.txt:4-2", "odd:1-2.txt"]
         (self.tmp / "odd:1-2.txt").write_text("whole\n", encoding="utf-8")
         (self.tmp / ".agents_bundle").write_text(
-            "include src/*.py\n"
-            "include big.txt:2-3\n"
-            "include big.txt:5\n"
-            "include big.txt:2-3\n"
-            "include src/**/*.py\n",
+            "file src/*.py\n"
+            "file big.txt:2-3\n"
+            "file big.txt:5\n"
+            "file big.txt:2-3\n"
+            "file src/**/*.py\n",
             encoding="utf-8",
         )
         records: list[dict[str, object]] = []
@@ -1116,37 +1120,37 @@ class TestBundle(AgentsBundleTestCase):
 
     def test_external_bundle_command_allowlist_and_static_inspection(self):
         pkg_dir = Path(os.environ["AGENTS_BUNDLE_LOCAL_PKG_DIR"])
-        ext_bundles = pkg_dir / "bundles"
+        ext_bundles = pkg_dir / "agents"
         marker_file = self.tmp / "should_not_exist.txt"
 
         (ext_bundles / "ext_cmd.bundle").write_text(
             "rule vitalio/agents-rules:core/start\n"
-            "$ printf ext_cmd_ok\n",
+            "cmd printf ext_cmd_ok\n",
             encoding="utf-8",
         )
         (ext_bundles / "ext_pipe.bundle").write_text(
-            "$ printf 'a\\nb\\n' | head -n 1\n",
+            "cmd printf 'a\\nb\\n' | head -n 1\n",
             encoding="utf-8",
         )
         (ext_bundles / "ext_subshell.bundle").write_text(
-            f"var dyn=$(\x22{sys.executable}\x22 -c \x22import pathlib; pathlib.Path({str(marker_file)!r}).write_text('ran'); print('val')\x22)\n"
-            "$ forbidden_after_var\n",
+            f"let dyn=$(\x22{sys.executable}\x22 -c \x22import pathlib; pathlib.Path({str(marker_file)!r}).write_text('ran'); print('val')\x22)\n"
+            "cmd forbidden_after_var\n",
             encoding="utf-8",
         )
         (ext_bundles / "ext_var_only.bundle").write_text(
-            "var dyn=$(printf dyn_val)\n"
+            "let dyn=$(printf dyn_val)\n"
             "prompt Dynamic: {dyn:none}\n",
             encoding="utf-8",
         )
         (ext_bundles / "ext_self_allow.bundle").write_text(
             "allow printf\n"
-            "$ printf hacked\n",
+            "cmd printf hacked\n",
             encoding="utf-8",
         )
 
-        # 1. Blocked $ command in external bundle fails fast before running root commands
+        # 1. Blocked cmd in external bundle fails fast before running root commands
         (self.tmp / ".agents_bundle").write_text(
-            f"$ \x22{sys.executable}\x22 -c \x22import pathlib; pathlib.Path({str(marker_file)!r}).write_text('root')\x22\n"
+            f"cmd \x22{sys.executable}\x22 -c \x22import pathlib; pathlib.Path({str(marker_file)!r}).write_text('root')\x22\n"
             "bundle vitalio/agents-rules:ext_cmd\n",
             encoding="utf-8",
         )
@@ -1215,7 +1219,7 @@ class TestBundle(AgentsBundleTestCase):
         outside_dir.mkdir(exist_ok=True)
         try:
             outside_bundle = outside_dir / "out.bundle"
-            outside_bundle.write_text("$ printf outside_ran\n", encoding="utf-8")
+            outside_bundle.write_text("cmd printf outside_ran\n", encoding="utf-8")
             (self.tmp / ".agents_bundle").write_text(
                 f"bundle {outside_bundle.as_posix()}\n",
                 encoding="utf-8",
@@ -1235,9 +1239,9 @@ class TestBundle(AgentsBundleTestCase):
             import shutil
             shutil.rmtree(outside_dir, ignore_errors=True)
 
-    def test_external_bundle_include_restricted_to_spec_dir(self):
+    def test_external_bundle_file_restricted_to_spec_dir(self):
         pkg_dir = Path(os.environ["AGENTS_BUNDLE_LOCAL_PKG_DIR"])
-        ext_bundles = pkg_dir / "bundles"
+        ext_bundles = pkg_dir / "agents"
         (self.tmp / "inside.txt").write_text("inside workspace\n", encoding="utf-8")
 
         outside_dir = self.tmp.parent / f"{self.tmp.name}_outside_files"
@@ -1248,19 +1252,19 @@ class TestBundle(AgentsBundleTestCase):
             rel_outside = f"../{outside_dir.name}/secret.txt"
 
             (ext_bundles / "inc_inside.bundle").write_text(
-                "include inside.txt\n",
+                "file inside.txt\n",
                 encoding="utf-8",
             )
             (ext_bundles / "inc_abs_out.bundle").write_text(
-                f"include {outside_file.as_posix()}\n",
+                f"file {outside_file.as_posix()}\n",
                 encoding="utf-8",
             )
             (ext_bundles / "inc_rel_out.bundle").write_text(
-                f"include {rel_outside}:1-1\n",
+                f"file {rel_outside}:1-1\n",
                 encoding="utf-8",
             )
             (ext_bundles / "inc_glob_out.bundle").write_text(
-                f"include ../{outside_dir.name}/*.txt\n",
+                f"file ../{outside_dir.name}/*.txt\n",
                 encoding="utf-8",
             )
 
@@ -1290,7 +1294,7 @@ class TestBundle(AgentsBundleTestCase):
             sym = self.tmp / "leak_link.txt"
             sym.symlink_to(outside_file)
             (ext_bundles / "inc_symlink.bundle").write_text(
-                "include leak_link.txt\n",
+                "file leak_link.txt\n",
                 encoding="utf-8",
             )
             (self.tmp / ".agents_bundle").write_text(
@@ -1360,6 +1364,13 @@ class TestBundle(AgentsBundleTestCase):
             ("tab_indent", "if role=work\n\tprompt x\n", "tabs are not allowed"),
             ("orphan_else", "else\n    prompt x\n", "without matching 'if'"),
             ("elif_after_else", "if a=1\n    prompt x\nelse\n    prompt y\nelif a=2\n    prompt z\n", "after 'else'"),
+            ("legacy_bracket_if_block", "[if role=work]\n    prompt x\n[/if]\n", "unexpected indentation"),
+            ("legacy_bracket_if_inline", "[if role=work] prompt x\n", "invalid line"),
+            ("legacy_ruleset_kw", "ruleset vitalio/agents-rules:core\n", "invalid line"),
+            ("legacy_include_kw", "include first.txt\n", "invalid line"),
+            ("legacy_dollar_kw", "$ echo hi\n", "invalid line"),
+            ("legacy_var_kw", "var a=1\n", "invalid line"),
+            ("legacy_expose_kw", "expose a\n", "invalid line"),
         ]:
             with self.subTest(syntax_error=label):
                 (self.tmp / ".ctx.bundle").write_text(bad_spec, encoding="utf-8")

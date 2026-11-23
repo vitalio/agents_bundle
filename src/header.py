@@ -49,12 +49,12 @@ HELP_SECTIONS = (
             ),
             (
                 "{prog} bundle <pkg>[:<name>] [k=v]",
-                "Render a bundle from agents/ or bundles/ without .ctx.bundle (reads no stdin; "
+                "Render a bundle from agents/ without .ctx.bundle (reads no stdin; "
                 "honors -C, -p, --plain, -v, --refresh, allow=<cmd,...>)",
             ),
             (
                 "{prog} rule <pkg>:<name...> [k=v]",
-                "Render one or more rules from agents/ or rules/ (<owner>/<repo>[@ref]:<name|path>, "
+                "Render one or more rules from agents/ (<owner>/<repo>[@ref]:<name|path>, "
                 "./path, or URL) to stdout",
             ),
             (

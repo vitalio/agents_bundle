@@ -7,24 +7,11 @@ from src.core import prog_name
 from src.header import PROMPT_HEADER, RULES_HEADER, VAR_NAME_PATTERN
 
 
-PROMPT_KINDS = ("task", "context", "prompt")
-_KIND_NORMALIZATION = {
-    "rule": "rule",
-    "cmd": "cmd",
-    "file": "file",
-    "include": "file",
-    "prompt": "prompt",
-    "task": "prompt",
-    "context": "prompt",
-}
 _FRAGMENT_GROUPS = {
     "rule": "rules",
     "cmd": "cmds",
     "file": "files",
-    "include": "files",
     "prompt": "prompts",
-    "task": "prompts",
-    "context": "prompts",
 }
 _HEADER_RE = re.compile(r"([A-Za-z][A-Za-z0-9_.-]*):(?:[ \t]+(.*)|[ \t]*)")
 _PRODUCER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
@@ -46,15 +33,7 @@ class PipedInput:
 
     @property
     def has_prompt(self) -> bool:
-        return bool(self.prompt) or any(meta.get("kind") in PROMPT_KINDS for meta, _ in self.fragments)
-
-
-def _normalize_fragment_meta(meta: dict[str, object]) -> dict[str, object]:
-    raw_kind = str(meta.get("kind") or "")
-    norm_kind = _KIND_NORMALIZATION.get(raw_kind)
-    if norm_kind is not None and norm_kind != raw_kind:
-        return {**meta, "kind": norm_kind}
-    return meta
+        return bool(self.prompt) or any(meta.get("kind") == "prompt" for meta, _ in self.fragments)
 
 
 def _parse_part_line(line: str, prefix: str) -> dict[str, object] | None:
@@ -64,7 +43,7 @@ def _parse_part_line(line: str, prefix: str) -> dict[str, object] | None:
         meta = json.loads(line[len(prefix) : -len(" -->")])
     except ValueError:
         return None
-    return _normalize_fragment_meta(meta) if isinstance(meta, dict) else None
+    return meta if isinstance(meta, dict) else None
 
 
 def extract_fragments(text: str, nonce: str) -> tuple[list[tuple[dict[str, object], str]], str]:
@@ -106,12 +85,11 @@ def group_fragments(
     }
     unknown: list[str] = []
     for meta, content in fragments:
-        norm_meta = _normalize_fragment_meta(meta)
-        group = _FRAGMENT_GROUPS.get(str(norm_meta.get("kind")))
+        group = _FRAGMENT_GROUPS.get(str(meta.get("kind")))
         if group is None:
             unknown.append(str(meta.get("kind")))
         else:
-            groups[group].append((norm_meta, content))
+            groups[group].append((meta, content))
     return groups, unknown
 
 

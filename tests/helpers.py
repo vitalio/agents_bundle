@@ -30,38 +30,43 @@ class _TtyStringIO(io.StringIO):
 
 def _seed_offline_rules_pkg(pkg_dir: Path) -> None:
     files = {
-        "rulesets/core.ruleset": (
+        "agents/core/core.bundle": (
             "# Description: Core axioms\n"
             "rule core/start\n"
             "rule core/ssot\n"
             "rule core/lang lang=English\n"
         ),
-        "rulesets/default.ruleset": (
+        "agents/default.bundle": (
             "# Description: Default project rules\n"
-            "ruleset core\n"
-            "[if os=linux] rule os/linux\n"
-            "[if os=macos] rule os/macos\n"
-            "[if vcs=git] rule vcs/git\n"
-            "[if vcs=cvs] rule vcs/cvs\n"
-            "[if role!=] rule role/{role:}\n"
+            "bundle core\n"
+            "if os=linux\n"
+            "    rule os/linux\n"
+            "if os=macos\n"
+            "    rule os/macos\n"
+            "if vcs=git\n"
+            "    rule vcs/git\n"
+            "if vcs=cvs\n"
+            "    rule vcs/cvs\n"
+            "if role!=\n"
+            "    rule role/{role:}\n"
         ),
-        "rules/core/start.md": "# Description: Start priority\n- Start priority, instruction self-audit & dates: Format dates as `{chat_date_fmt:DD/MM/YYYY}`; in files, commits, headers, and logs always use UTC with ISO `YYYY-MM-DD`.\n",
-        "rules/core/ssot.md": "# Description: SSOT\n- Single source of truth & DRY: Define every version in one place.\n",
-        "rules/core/lang.md": "# Description: Language policy\n- Language policy: Write chat prose in {chat_lang:the language the user writes in}; keep code and docs in {lang:English}.\n",
-        "rules/os/linux.md": "# Description: Linux shell rules\n- Linux & POSIX shell rules: Enable `set -euo pipefail` in mutating scripts.\n",
-        "rules/os/macos.md": "# Description: macOS rules\n- macOS & BSD userland rules: Account for BSD userland differences.\n",
-        "rules/vcs/git.md": "# Description: Git workflow\n- Git workflow & safety: Push to `origin {main_branch:main}`.\n",
-        "rules/vcs/cvs.md": "# Description: CVS workflow\n- CVS workflow & safety: Inspect status via `cvs -nq update` and `cvs diff -u`.\n",
-        "rules/role/design.md": "# Description: Universal Designer role\n- Role (Designer): Explore problem space and architecture.\n",
-        "rules/role/plan.md": "# Description: Universal Planner role\n- Role (Planner): Decompose and prioritize tasks.\n",
-        "rules/role/execute.md": "# Description: Universal Executor role\n- Role (Executor): Focus strictly on delivering the target task.\n",
-        "rules/role/audit.md": "# Description: Universal Auditor role\n- Role (Auditor): Audit the requested scope.\n",
-        "rules/stack/python-cli.md": "# Description: Python CLI rules\n- Python CLI engineering invariants: Python {py_min:3.9}+ compatibility.\n",
-        "rules/release/single-file-build.md": "# Description: Single-file build\n- Single-file build from modular `src/`: Edit source modules under `src/`.\n",
-        "rules/agents_bundle.md": "# Description: Bundler rule\n- Context bundler & rules engine (`agents_bundle`): Use `--tree` and `--list`.\n",
-        "bundles/agents_bundle.bundle": "# Description: On-demand agents_bundle instructions\nrule vitalio/agents_bundle:agents_bundle\nif role!=\n    export role\nif role=design\n    cmd agents_bundle --list\n",
-        "rules/todo_md.md": "# Description: Task tracker rule\n- Task management (`todo_md`): Manage `TODO.md`.\n",
-        "bundles/todo_md.bundle": "# Description: On-demand todo_md bundle\nrule vitalio/todo_md:todo_md\n",
+        "agents/core/start.md": "# Description: Start priority\n- Start priority, instruction self-audit & dates: Format dates as `{chat_date_fmt:DD/MM/YYYY}`; in files, commits, headers, and logs always use UTC with ISO `YYYY-MM-DD`.\n",
+        "agents/core/ssot.md": "# Description: SSOT\n- Single source of truth & DRY: Define every version in one place.\n",
+        "agents/core/lang.md": "# Description: Language policy\n- Language policy: Write chat prose in {chat_lang:the language the user writes in}; keep code and docs in {lang:English}.\n",
+        "agents/os/linux.md": "# Description: Linux shell rules\n- Linux & POSIX shell rules: Enable `set -euo pipefail` in mutating scripts.\n",
+        "agents/os/macos.md": "# Description: macOS rules\n- macOS & BSD userland rules: Account for BSD userland differences.\n",
+        "agents/vcs/git.md": "# Description: Git workflow\n- Git workflow & safety: Push to `origin {main_branch:main}`.\n",
+        "agents/vcs/cvs.md": "# Description: CVS workflow\n- CVS workflow & safety: Inspect status via `cvs -nq update` and `cvs diff -u`.\n",
+        "agents/role/design.md": "# Description: Universal Designer role\n- Role (Designer): Explore problem space and architecture.\n",
+        "agents/role/plan.md": "# Description: Universal Planner role\n- Role (Planner): Decompose and prioritize tasks.\n",
+        "agents/role/execute.md": "# Description: Universal Executor role\n- Role (Executor): Focus strictly on delivering the target task.\n",
+        "agents/role/audit.md": "# Description: Universal Auditor role\n- Role (Auditor): Audit the requested scope.\n",
+        "agents/stack/python-cli.md": "# Description: Python CLI rules\n- Python CLI engineering invariants: Python {py_min:3.9}+ compatibility.\n",
+        "agents/release/single-file-build.md": "# Description: Single-file build\n- Single-file build from modular `src/`: Edit source modules under `src/`.\n",
+        "agents/agents_bundle.md": "# Description: Bundler rule\n- Context bundler & rules engine (`agents_bundle`): Use `--tree` and `--list`.\n",
+        "agents/agents_bundle.bundle": "# Description: On-demand agents_bundle instructions\nrule vitalio/agents_bundle:agents_bundle\nif role!=\n    export role\nif role=design\n    cmd agents_bundle --list\n",
+        "agents/todo_md.md": "# Description: Task tracker rule\n- Task management (`todo_md`): Manage `TODO.md`.\n",
+        "agents/todo_md.bundle": "# Description: On-demand todo_md bundle\nrule vitalio/todo_md:todo_md\n",
     }
     for rel, content in files.items():
         p = pkg_dir / rel

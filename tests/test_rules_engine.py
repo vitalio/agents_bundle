@@ -10,19 +10,19 @@ from tests.helpers import AgentsBundleTestCase, SCRIPT
 
 
 class TestRulesEngine(AgentsBundleTestCase):
-    def test_builtin_vars_override_in_ruleset(self):
+    def test_builtin_vars_override_in_bundle(self):
         rp = self._run(
-            [str(SCRIPT), "ruleset", "vitalio/agents-rules:default", "os=macos", "vcs=cvs", "-v"],
+            [str(SCRIPT), "bundle", "vitalio/agents-rules:default", "os=macos", "vcs=cvs", "-v", "--plain"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
             check=False,
         )
         self._assert_ok(rp)
-        self.assertIn("[if os=macos] rule os/macos -> rules/os/macos.md", rp.stdout)
-        self.assertIn("[if vcs=cvs] rule vcs/cvs -> rules/vcs/cvs.md", rp.stdout)
-        self.assertNotIn("rules/os/linux.md", rp.stdout)
-        self.assertNotIn("rules/vcs/git.md", rp.stdout)
+        self.assertIn("if os=macos rule vitalio/agents-rules:os/macos -> agents/os/macos.md", rp.stdout)
+        self.assertIn("if vcs=cvs rule vitalio/agents-rules:vcs/cvs -> agents/vcs/cvs.md", rp.stdout)
+        self.assertNotIn("agents/os/linux.md", rp.stdout)
+        self.assertNotIn("agents/vcs/git.md", rp.stdout)
 
         # Multi-target rule CLI and exclude rejection
         rm = self._run(
@@ -37,7 +37,7 @@ class TestRulesEngine(AgentsBundleTestCase):
         self.assertIn("Single source of truth", rm.stdout)
 
         rex = self._run(
-            [str(SCRIPT), "ruleset", "vitalio/agents-rules:default", "-core/ssot"],
+            [str(SCRIPT), "rule", "vitalio/agents-rules:core/start", "-core/ssot"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -46,12 +46,12 @@ class TestRulesEngine(AgentsBundleTestCase):
         self.assertNotEqual(rex.returncode, 0)
         self.assertIn("excludes are not supported", rex.stderr)
 
-    def test_cli_ruleset_rule_and_list(self):
+    def test_cli_bundle_rule_and_list(self):
         rl = self._run([str(SCRIPT), "--list"], capture_output=True, text=True, check=False)
         self._assert_ok(rl)
         self.assertIn("Built-in variables", rl.stdout)
         self.assertIn("piped", rl.stdout)
-        self.assertIn("[if os=linux] rule os/linux", rl.stdout)
+        self.assertIn("if os=linux rule os/linux", rl.stdout)
         self.assertIn("Bundles in 'vitalio/agents-rules'", rl.stdout)
         self.assertNotIn("os/auto", rl.stdout)
         self.assertNotIn("vcs/auto", rl.stdout)
@@ -163,33 +163,33 @@ class TestRulesEngine(AgentsBundleTestCase):
         self.assertNotIn("Home fallback body", r.stdout)
         self.assertIn("failed to fetch package", r.stderr)
 
-    def test_circular_ruleset_and_bundle_references_fail_fast(self):
+    def test_circular_bundle_references_fail_fast(self):
         pkg_dir = Path(os.environ["AGENTS_BUNDLE_LOCAL_PKG_DIR"])
-        (pkg_dir / "rulesets" / "self_loop.ruleset").write_text(
-            "# Description: Self-referential ruleset\n"
-            "ruleset self_loop\n",
+        (pkg_dir / "agents" / "self_loop.bundle").write_text(
+            "# Description: Self-referential bundle\n"
+            "bundle self_loop\n",
             encoding="utf-8",
         )
-        (pkg_dir / "rulesets" / "cycle_a.ruleset").write_text(
+        (pkg_dir / "agents" / "cycle_a.bundle").write_text(
             "# Description: Cycle A\n"
             "rule core/start\n"
-            "ruleset cycle_b\n",
+            "bundle cycle_b\n",
             encoding="utf-8",
         )
-        (pkg_dir / "rulesets" / "cycle_b.ruleset").write_text(
+        (pkg_dir / "agents" / "cycle_b.bundle").write_text(
             "# Description: Cycle B\n"
-            "ruleset cycle_c\n",
+            "bundle cycle_c\n",
             encoding="utf-8",
         )
-        (pkg_dir / "rulesets" / "cycle_c.ruleset").write_text(
+        (pkg_dir / "agents" / "cycle_c.bundle").write_text(
             "# Description: Cycle C\n"
-            "ruleset vitalio/agents-rules:cycle_a\n",
+            "bundle vitalio/agents-rules:cycle_a\n",
             encoding="utf-8",
         )
 
-        # 1. Self-referential ruleset fails fast with cycle path
+        # 1. Self-referential bundle fails fast with cycle path
         r_rs_self = self._run(
-            [str(SCRIPT), "ruleset", "vitalio/agents-rules:self_loop"],
+            [str(SCRIPT), "bundle", "vitalio/agents-rules:self_loop"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -198,13 +198,13 @@ class TestRulesEngine(AgentsBundleTestCase):
         self.assertNotEqual(r_rs_self.returncode, 0, msg=f"stdout:\n{r_rs_self.stdout}\nstderr:\n{r_rs_self.stderr}")
         self.assertNotIn("RecursionError", r_rs_self.stderr)
         self.assertIn(
-            "circular ruleset reference detected: vitalio/agents-rules:self_loop -> vitalio/agents-rules:self_loop",
+            "circular bundle reference detected: vitalio/agents-rules:self_loop -> self_loop",
             r_rs_self.stderr,
         )
 
-        # 2. Multi-step package ruleset cycle fails fast with full cycle path
+        # 2. Multi-step package bundle cycle fails fast with full cycle path
         (self.tmp / ".agents_bundle").write_text(
-            "ruleset vitalio/agents-rules:cycle_a\n",
+            "bundle vitalio/agents-rules:cycle_a\n",
             encoding="utf-8",
         )
         r_rs_multi = self._run(
@@ -217,18 +217,18 @@ class TestRulesEngine(AgentsBundleTestCase):
         self.assertNotEqual(r_rs_multi.returncode, 0, msg=f"stdout:\n{r_rs_multi.stdout}\nstderr:\n{r_rs_multi.stderr}")
         self.assertNotIn("RecursionError", r_rs_multi.stderr)
         self.assertIn(
-            "circular ruleset reference detected: "
-            "vitalio/agents-rules:cycle_a -> vitalio/agents-rules:cycle_b -> "
-            "vitalio/agents-rules:cycle_c -> vitalio/agents-rules:cycle_a",
+            "circular bundle reference detected: "
+            ".agents_bundle -> vitalio/agents-rules:cycle_a -> cycle_b -> "
+            "cycle_c -> vitalio/agents-rules:cycle_a",
             r_rs_multi.stderr,
         )
 
-        # 3. Local file ruleset cycle across relative and absolute paths fails fast
-        rs_file_a = self.tmp / "rs_a.ruleset"
-        rs_file_b = self.tmp / "rs_b.ruleset"
-        rs_file_a.write_text("ruleset ./rs_b.ruleset\n", encoding="utf-8")
-        rs_file_b.write_text(f"ruleset {rs_file_a.resolve().as_posix()}\n", encoding="utf-8")
-        (self.tmp / ".agents_bundle").write_text("ruleset ./rs_a.ruleset\n", encoding="utf-8")
+        # 3. Local file bundle cycle across relative and absolute paths fails fast
+        rs_file_a = self.tmp / "rs_a.bundle"
+        rs_file_b = self.tmp / "rs_b.bundle"
+        rs_file_a.write_text("bundle ./rs_b.bundle\n", encoding="utf-8")
+        rs_file_b.write_text(f"bundle {rs_file_a.resolve().as_posix()}\n", encoding="utf-8")
+        (self.tmp / ".agents_bundle").write_text("bundle ./rs_a.bundle\n", encoding="utf-8")
         r_rs_file = self._run(
             [str(SCRIPT)],
             cwd=str(self.tmp),
@@ -238,8 +238,8 @@ class TestRulesEngine(AgentsBundleTestCase):
         )
         self.assertNotEqual(r_rs_file.returncode, 0, msg=f"stdout:\n{r_rs_file.stdout}\nstderr:\n{r_rs_file.stderr}")
         self.assertNotIn("RecursionError", r_rs_file.stderr)
-        self.assertIn("circular ruleset reference detected:", r_rs_file.stderr)
-        self.assertIn("./rs_a.ruleset -> ./rs_b.ruleset ->", r_rs_file.stderr)
+        self.assertIn("circular bundle reference detected:", r_rs_file.stderr)
+        self.assertIn("./rs_a.bundle -> ./rs_b.bundle ->", r_rs_file.stderr)
 
         # 4. Self-referential bundle (both local file and package repo shorthand alias) fails fast
         self_bundle = self.tmp / "self.bundle"
@@ -256,7 +256,7 @@ class TestRulesEngine(AgentsBundleTestCase):
         self.assertNotIn("RecursionError", r_b_self.stderr)
         self.assertIn("circular bundle reference detected: .agents_bundle -> ./self.bundle ->", r_b_self.stderr)
 
-        loop_pkg = pkg_dir / "vitalio" / "loop_pkg" / "bundles"
+        loop_pkg = pkg_dir / "vitalio" / "loop_pkg" / "agents"
         loop_pkg.mkdir(parents=True)
         (loop_pkg / "loop_pkg.bundle").write_text(
             "bundle vitalio/loop_pkg:loop_pkg\n",
@@ -316,9 +316,9 @@ class TestRulesEngine(AgentsBundleTestCase):
             r_b_root.stderr,
         )
 
-        # 6. Non-circular diamond ruleset and bundle references succeed
+        # 6. Non-circular diamond bundle references succeed
         shared_b = self.tmp / "diamond_shared.bundle"
-        shared_b.write_text("ruleset vitalio/agents-rules:core\n", encoding="utf-8")
+        shared_b.write_text("bundle vitalio/agents-rules:core\n", encoding="utf-8")
         branch_b = self.tmp / "diamond_branch.bundle"
         branch_b.write_text(
             f"bundle {shared_b.as_posix()}\n"

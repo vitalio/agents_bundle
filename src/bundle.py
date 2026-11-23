@@ -385,14 +385,12 @@ def _static_inspect_bundle_ast(
                     f"{prog}: 'allow' directive is only permitted in root {root_label} "
                     f"(found in bundle {bundle_label!r}: {line!r})"
                 )
-            if line.startswith(("cmd ", "$ ", "! ")):
-                kw_len = 4 if line.startswith("cmd ") else 2
-                cmd_str = line[kw_len:].strip()
+            if line.startswith("cmd "):
+                cmd_str = line[4:].strip()
                 if cmd_str:
                     _check_command_allowed(cmd_str, allowed_cmds, bundle_label, prog)
-            elif line.startswith(("let ", "var ")):
-                kw_len = 4
-                assign = line[kw_len:].strip()
+            elif line.startswith("let "):
+                assign = line[4:].strip()
                 if "=" in assign:
                     k, v_expr = assign.split("=", 1)
                     k_clean = k.strip()
@@ -403,9 +401,8 @@ def _static_inspect_bundle_ast(
                             _check_command_allowed(cmd_str, allowed_cmds, bundle_label, prog)
                     elif not sim_vars.get(k_clean) and s:
                         sim_vars[k_clean] = s
-            elif line.startswith(("file ", "include ")):
-                kw_len = 5 if line.startswith("file ") else 8
-                inc_expr = line[kw_len:].strip()
+            elif line.startswith("file "):
+                inc_expr = line[5:].strip()
                 if inc_expr.startswith("$(") and inc_expr.endswith(")") and len(inc_expr) >= 3:
                     cmd_str = inc_expr[2:-1].strip()
                     if cmd_str:
@@ -433,7 +430,8 @@ def parse_spec(
     session_vars: dict[str, str] | None = None,
 ) -> list[tuple[str, str, str | None, list[str]]]:
     prog = prog_name()
-    active_vars: dict[str, str] = dict(cli_vars) if cli_vars is not None else {}
+    caller_vars: dict[str, str] = dict(cli_vars) if cli_vars is not None else {}
+    active_vars: dict[str, str] = dict(caller_vars)
     bvars = {**builtin_vars(work_dir, piped=piped), **active_vars}
     cur_chain = list(chain) if chain else []
     cur_bdir = bundle_dir if bundle_dir is not None else work_dir
@@ -492,12 +490,11 @@ def parse_spec(
                 if line == "allow":
                     raise SystemExit(f"{prog}: empty allow list in {root_label}")
                 cur_allowed.update(_parse_allow_bins(line[len("allow ") :], root_label, prog))
-            elif line in ("let", "var") or line.startswith(("let ", "var ")):
-                kw = "let" if (line == "let" or line.startswith("let ")) else "var"
-                assign = line[len(kw) :].strip()
+            elif line == "let" or line.startswith("let "):
+                assign = line[len("let") :].strip()
                 if "=" not in assign:
                     raise SystemExit(
-                        f"{prog}: invalid {kw} directive in {bundle_label}: {line!r} (expected '{kw} key=val')"
+                        f"{prog}: invalid let directive in {bundle_label}: {line!r} (expected 'let key=val')"
                     )
                 k, v_expr = assign.split("=", 1)
                 k_clean = k.strip()
@@ -519,9 +516,8 @@ def parse_spec(
                                 session_vars[k_clean] = val
                             if resolved_vars is not None:
                                 resolved_vars[k_clean] = val
-            elif line in ("file", "include") or line.startswith(("file ", "include ")):
-                kw = "file" if (line == "file" or line.startswith("file ")) else "include"
-                inc_expr = line[len(kw) :].strip()
+            elif line == "file" or line.startswith("file "):
+                inc_expr = line[len("file") :].strip()
                 if not inc_expr:
                     continue
                 is_dyn = inc_expr.startswith("$(") and inc_expr.endswith(")") and len(inc_expr) >= 3
@@ -536,9 +532,8 @@ def parse_spec(
                     if is_external and work_dir is not None:
                         _expand_include(work_dir, clean_item, root_dir=work_dir, bundle_label=bundle_label)
                     entries.append(("file", clean_item, cond_expr, list(cur_chain)))
-            elif line in ("cmd", "$", "!") or line.startswith(("cmd ", "$ ", "! ")):
-                kw = "cmd" if (line == "cmd" or line.startswith("cmd ")) else line[0]
-                cmd_str = line[len(kw) :].strip()
+            elif line == "cmd" or line.startswith("cmd "):
+                cmd_str = line[len("cmd") :].strip()
                 if cmd_str:
                     if effective_allow_set is not None:
                         _check_command_allowed(cmd_str, effective_allow_set, bundle_label, prog)
@@ -546,22 +541,15 @@ def parse_spec(
             elif line == "rule" or line.startswith("rule "):
                 parts = shlex.split(line)
                 targets, vmap = _parse_rule_directive_tokens(parts[1:], prog)
-                var_tokens = [f"{k}={v}" for k, v in vmap.items()]
+                eff_vmap = {**active_vars, **vmap, **caller_vars}
+                var_tokens = [f"{k}={v}" for k, v in eff_vmap.items()]
                 for tgt in targets:
                     new_tgt = _qualify_nested_target(tgt, work_dir, cur_bdir, default_pkg, pkg_dir, prog)
                     single_line = shlex.join(["rule", new_tgt, *var_tokens])
                     entries.append(("directive", single_line, cond_expr, list(cur_chain)))
-            elif line in ("bundle", "ruleset") or line.startswith(("bundle ", "ruleset ")):
+            elif line == "bundle" or line.startswith("bundle "):
                 parts = shlex.split(line)
-                kw = parts[0]
                 target, _excls, vmap = _parse_directive_tokens(parts[1:], prog)
-                if kw == "ruleset":
-                    new_target = _qualify_nested_target(target, work_dir, cur_bdir, default_pkg, pkg_dir, prog)
-                    if new_target != target:
-                        parts[1] = new_target
-                        line = shlex.join(parts)
-                    entries.append(("directive", line, cond_expr, list(cur_chain)))
-                    continue
                 bundle_allow_raw = vmap.pop("allow", None)
                 child_allowed = set(cur_allowed)
                 child_enforce = enforce_allowlist
@@ -596,7 +584,7 @@ def parse_spec(
                     work_dir,
                     parent_is_external=is_external,
                 )
-                merged_cli = {**active_vars, **vmap}
+                merged_cli = {**active_vars, **vmap, **caller_vars}
                 sub_resolved: dict[str, str] = {}
                 child_chain_label = (
                     lookup_target
@@ -632,9 +620,8 @@ def parse_spec(
                             resolved_vars[rk] = rv
                         if session_vars is not None:
                             session_vars[rk] = rv
-            elif line in ("export", "expose") or line.startswith(("export ", "expose ")):
-                kw = "export" if (line == "export" or line.startswith("export ")) else "expose"
-                exp_raw = line[len(kw) :].strip()
+            elif line == "export" or line.startswith("export "):
+                exp_raw = line[len("export") :].strip()
                 if not exp_raw:
                     continue
                 for var_key in _parse_export_keys(exp_raw, bundle_label, prog):
@@ -796,13 +783,9 @@ def build_bundle(
             parts = shlex.split(val)
             d_kind = parts[0]
             target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
-            base_trace = f"[if {cond_expr}] {d_kind} {target}" if cond_expr else f"{d_kind} {target}"
+            base_trace = f"if {cond_expr} {d_kind} {target}" if cond_expr else f"{d_kind} {target}"
             trace_chain = [b for b in entry_chain if b not in (SPEC_FILE_NAME, LEGACY_SPEC_FILE_NAME)]
-            if trace_chain:
-                bundle_trace = " -> ".join(f"bundle {b}" for b in trace_chain)
-                trace_start = f"{bundle_trace} -> {base_trace}"
-            else:
-                trace_start = base_trace
+            trace_prefix = [*(f"bundle {b}" for b in trace_chain), base_trace]
             merged_vmap = {**vmap, **session_vars}
             pending_rules.extend(
                 collect_directive_items(
@@ -812,7 +795,7 @@ def build_bundle(
                     cli_vars=merged_vmap,
                     work_dir=spec_dir,
                     refresh=refresh,
-                    trace_prefix=[trace_start],
+                    trace_prefix=trace_prefix,
                     piped=piped,
                     chain=entry_chain,
                 )
@@ -825,7 +808,7 @@ def build_bundle(
         elif kind == "export":
             if val not in spec_exports:
                 spec_exports.append(val)
-        elif kind in ("file", "include"):
+        elif kind == "file":
             clean = val.strip()
             if not clean:
                 continue

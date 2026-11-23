@@ -44,7 +44,7 @@ class TestIncludes(AgentsBundleTestCase):
         mod = self._load_bundle_module()
         key = str((self.tmp / "big.txt").resolve())
         sliced = mod.span_from_fragment(
-            {"kind": "include", "name": "big.txt:2-3", "chain": ["todo_md"]},
+            {"kind": "file", "name": "big.txt:2-3", "chain": ["todo_md"]},
             "===== $ sed -n '2,3p' big.txt =====\nline2\nline3",
             self.tmp,
         )

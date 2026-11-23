@@ -116,37 +116,32 @@ same 9-keyword directive language; blank lines and `#` comments are ignored,
 and `file` and `cmd` fragments assemble in exact top-down declaration order:
 
 - `bundle <owner>/<repo>[@<ref>][:<name|path>] [allow=<cmd,...>] [k=v ...]`
-  (legacy alias `ruleset`; or a local path `./...`, `../...`, or URL) includes
-  a composite bundle from `agents/` (`<repo>.bundle` or `default.bundle` for
-  `<owner>/<repo>`, `<domain>.bundle`, `<domain>/<domain>.bundle`, or
-  `<domain>/default.bundle` for `:<domain>`, with fallback to legacy
-  `bundles/`, `rulesets/`, and `src/`, or an explicit package-relative path);
-  circular references fail fast. Pass `allow=<cmd,...>` to permit an external
-  bundle to run specific executables.
+  (or a local path `./...`, `../...`, or URL) includes a composite bundle from
+  `agents/` (`<repo>.bundle` or `default.bundle` for `<owner>/<repo>`,
+  `<domain>.bundle`, `<domain>/<domain>.bundle`, or `<domain>/default.bundle`
+  for `:<domain>`, or an explicit package-relative path); circular references
+  fail fast. Pass `allow=<cmd,...>` to permit an external bundle to run
+  specific executables.
 - `rule <target...> [k=v ...]` includes one or more atomic `.md` rule files
-  from a package's `agents/` directory (with fallback to legacy `rules/` and
-  `src/rules/`), an explicit package-relative path, a local relative path
-  (`./...`, `../...`), or a URL.
-- `file <path|glob|slice...>` (legacy alias `include`) includes space-separated
-  repository files, globs, `path:START-END` slices, or `$(<cmd>)` output
-  (external bundles are restricted to files within the repository root). Empty
-  `file` after variable expansion (such as `file {todo_md.files:}` when unset)
-  is a no-op.
-- `cmd <shell command>` (legacy alias `$ <cmd>`) runs a command in `Workdir`
-  and includes its output.
+  from a package's `agents/` directory, an explicit package-relative path, a
+  local relative path (`./...`, `../...`), or a URL.
+- `file <path|glob|slice...>` includes space-separated repository files, globs,
+  `path:START-END` slices, or `$(<cmd>)` output (external bundles are
+  restricted to files within the repository root). Empty `file` after variable
+  expansion (such as `file {todo_md.files:}` when unset) is a no-op.
+- `cmd <shell command>` runs a command in `Workdir` and includes its output.
 - `prompt <text>` appends text to the Prompt section.
-- `let <name>=<value>` or `let <name>=$(<cmd>)` (legacy alias `var`) sets a
-  lexically scoped bundle-local variable (set-if-unset; passed down to child
-  `rule` and `bundle` invocations, never leaking upward to parent/sibling
-  bundles or output preamble headers).
-- `export <name...>` (legacy alias `expose`) promotes variables to session
-  scope (visible to subsequent bundles) and emits them as capitalized `Key:
-  Value` output preamble headers when non-empty.
-- `if <cond>`, `else if <cond>` (synonym `elif <cond>`), `else` guard
-  4-space Python-style indented blocks without trailing colons or `endif`
-  (legacy `[if ...]` / `[/if]` syntax remains supported during migration).
-  Variable names in `if`, `let`, `export`, and `{name:default}` support
-  dot-separated producer namespaces (`<producer>.<key>`).
+- `let <name>=<value>` or `let <name>=$(<cmd>)` sets a lexically scoped
+  bundle-local variable (set-if-unset; passed down to child `rule` and `bundle`
+  invocations, never leaking upward to parent/sibling bundles or output
+  preamble headers).
+- `export <name...>` promotes variables to session scope (visible to subsequent
+  bundles) and emits them as capitalized `Key: Value` output preamble headers
+  when non-empty.
+- `if <cond>`, `else if <cond>` (synonym `elif <cond>`), `else` guard 4-space
+  Python-style indented blocks without trailing colons or `endif`. Variable
+  names in `if`, `let`, `export`, and `{name:default}` support dot-separated
+  producer namespaces (`<producer>.<key>`).
 - `allow <bin...>` (root `.ctx.bundle` / `.agents_bundle` only) permits
   external bundles to run the listed executables in `cmd`, `let <k>=$(<cmd>)`,
   and `file $(<cmd>)`. All commands from external bundles are inspected
@@ -189,12 +184,11 @@ from the assembled body sections (`===== Rules =====`, `===== $ cat <file>
   preamble headers (except `Workdir`) are namespaced as `<producer>.<key_lower>`
   (rejecting duplicate producer names in the same pipeline), and
   `Bundle-Command` is chained as `<upstream> | <this command>`. `rule`
-  fragments are merged and deduplicated by `id`; `file` (and legacy `include`)
-  fragments are merged with bundle and CLI files at first occurrence (where a
-  whole-file span absorbs any slice of the same file and overlapping slices
-  become one slice); `prompt` (and legacy `task` / `context`) fragments are
-  re-wrapped with the new boundary inside the Prompt section with their
-  metadata preserved.
+  fragments are merged and deduplicated by `id`; `file` fragments are merged
+  with bundle and CLI files at first occurrence (where a whole-file span
+  absorbs any slice of the same file and overlapping slices become one slice);
+  `prompt` fragments are re-wrapped with the new boundary inside the Prompt
+  section with their metadata preserved.
 - **Chain provenance:** fragments from `.ctx.bundle` or `.agents_bundle` (and
   nested bundles) carry `chain` starting with the root spec filename; piped
   upstream fragments keep their own chain, and CLI file and `-p` arguments use

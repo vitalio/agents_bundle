@@ -27,7 +27,7 @@ class TestTree(AgentsBundleTestCase):
         self.assertIn("more files", rt.stdout)
 
     def test_tree_pins_agents_md_and_rules_ignore_agents_md(self):
-        sub = self.tmp / "pkg_repo" / "rules" / "core"
+        sub = self.tmp / "pkg_repo" / "agents" / "core"
         sub.mkdir(parents=True)
         (sub / "AGENTS.md").write_text("# Core philosophy\n", encoding="utf-8")
         (sub / "ssot.md").write_text("# Description: SSOT\n- SSOT rule\n", encoding="utf-8")
@@ -42,22 +42,22 @@ class TestTree(AgentsBundleTestCase):
         self._assert_ok(r_tree)
         self.assertIn("AGENTS.md", r_tree.stdout)
 
-        # Verify comment stripping in rules and dynamic {role:} target resolution in rulesets
-        role_dir = self.tmp / "pkg_repo" / "rules" / "role"
+        # Verify comment stripping in rules and dynamic {role:} target resolution in bundles
+        role_dir = self.tmp / "pkg_repo" / "agents" / "role"
         role_dir.mkdir(parents=True)
         (role_dir / "audit.md").write_text(
             "# Description: Auditor\n# Maintainer comment that must be stripped\n<!-- html comment -->\n- Role (Auditor): Check consistency.\n",
             encoding="utf-8",
         )
-        p_dir = self.tmp / "pkg_repo" / "rulesets"
-        p_dir.mkdir(parents=True)
-        (p_dir / "default.ruleset").write_text(
-            "# Description: Default\nrule core/ssot\n[if role!=] rule role/{role:}\n",
+        p_dir = self.tmp / "pkg_repo" / "agents"
+        p_dir.mkdir(parents=True, exist_ok=True)
+        (p_dir / "default.bundle").write_text(
+            "# Description: Default\nrule core/ssot\nif role!=\n    rule role/{role:}\n",
             encoding="utf-8",
         )
         env = {**os.environ, "AGENTS_BUNDLE_LOCAL_PKG_DIR": str(self.tmp / "pkg_repo")}
         r_role = self._run(
-            [str(SCRIPT), "ruleset", "vitalio/agents-rules:default", "role=audit"],
+            [str(SCRIPT), "bundle", "vitalio/agents-rules:default", "role=audit", "--plain"],
             capture_output=True,
             text=True,
             env=env,

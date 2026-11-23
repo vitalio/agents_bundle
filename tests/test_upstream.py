@@ -78,13 +78,14 @@ class TestUpstream(AgentsBundleTestCase):
         self.assertEqual([m["name"] for m, _ in whole_files], ["big.txt"])
         self.assertTrue(whole_files[0][1].endswith("line10"))
 
-    def test_producer_namespacing_and_canonical_4_kind_normalization(self):
+    def test_producer_namespacing_and_canonical_4_kind_fragments(self):
         (self.tmp / "a.py").write_text("A = 1\n", encoding="utf-8")
         (self.tmp / "b.py").write_text("B = 2\n", encoding="utf-8")
-        task_meta = {"kind": "task", "id": "F9", "name": "TODO.md:F9", "chain": ["todo_md"]}
-        ctx_meta = {"kind": "context", "name": "notes", "chain": ["todo_md"]}
-        inc_meta = {"kind": "include", "name": "a.py", "chain": ["todo_md"]}
+        p1_meta = {"kind": "prompt", "id": "F9", "name": "TODO.md:F9", "chain": ["todo_md"]}
+        p2_meta = {"kind": "prompt", "name": "notes", "chain": ["todo_md"]}
+        file_meta = {"kind": "file", "name": "a.py", "chain": ["todo_md"]}
         weird = {"kind": "weird", "id": "w"}
+        legacy_inc = {"kind": "include", "name": "a.py"}
         upstream = (
             "Bundle-Command: todo_md F9\n"
             "Bundle-Name: todo_md\n"
@@ -94,16 +95,17 @@ class TestUpstream(AgentsBundleTestCase):
             "Status: WIP\n"
             "Title: Namespaced task\n"
             "Files: b.py\n\n"
-            f"<!-- bundle:abc123:part {json.dumps(inc_meta)} -->\n"
+            f"<!-- bundle:abc123:part {json.dumps(file_meta)} -->\n"
             "===== $ cat a.py =====\nA = 1\n"
             "<!-- bundle:abc123:end -->\n"
-            f"<!-- bundle:abc123:part {json.dumps(task_meta)} -->\n"
+            f"<!-- bundle:abc123:part {json.dumps(p1_meta)} -->\n"
             "===== Prompt =====\n# F9 title\n"
             "<!-- bundle:abc123:end -->\n"
-            f"<!-- bundle:abc123:part {json.dumps(ctx_meta)} -->\n"
+            f"<!-- bundle:abc123:part {json.dumps(p2_meta)} -->\n"
             "Extra context\n"
             "<!-- bundle:abc123:end -->\n"
             f"<!-- bundle:abc123:part {json.dumps(weird)} -->\nignored\n<!-- bundle:abc123:end -->\n"
+            f"<!-- bundle:abc123:part {json.dumps(legacy_inc)} -->\nignored\n<!-- bundle:abc123:end -->\n"
         )
         (self.tmp / ".ctx.bundle").write_text(
             "if todo_md.status=WIP,NEXT\n"
@@ -133,6 +135,7 @@ class TestUpstream(AgentsBundleTestCase):
         self.assertNotIn("Prefix:", r.stdout)
         self.assertNotIn("Status:", r.stdout)
         self.assertIn("unknown kind: weird", r.stderr)
+        self.assertIn("unknown kind: include", r.stderr)
         _n, frags = self._extract_fragments(r.stdout)
         for m, _ in frags:
             self.assertIn(m["kind"], ("rule", "file", "cmd", "prompt"))
