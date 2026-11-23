@@ -1,5 +1,3 @@
-# Description: Root context bundle (run: context | run_block)
-
 bundle vitalio/agents-rules:core
 bundle vitalio/agents-rules:adapters/todo_md
 bundle vitalio/agents-rules:coding
