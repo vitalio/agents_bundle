@@ -1,3 +1,9 @@
+# ✅ [DONE] F36: Show total byte size and large/dense file sizes in context --tree — *2026-11-23, Added total size summary and large/dense file byte sizes to context --tree*
+
+- Always include total size in the `# Total: <N> files, <M> lines (<size>)` summary line of `context --tree` (formatted compactly in `B` / `KB` / `MB`).
+- For individual files in the tree, keep the compact `(<N>L)` label by default and append byte size `(<N>L, <X>K)` only when a file is at least `16 KB` (`16384` bytes) or has an average line length above `120` bytes/line (catching minified/dense single-line files without cluttering small source files).
+- Add unit tests in `tests/test_tree.py` and update `README.md` / `AGENTS.md` if needed.
+
 # ✅ [DONE] F27: Rename project to context-bundle and CLI utility to context — *2026-11-23, Renamed repository to vitalio/context-bundle and CLI utility to context with qualified Bundle-Name producer namespaces, CONTEXT_BUNDLE_* environment variables, automatic cache/binary migration, and --uninstall*
 
 - Depends on: F15, F33

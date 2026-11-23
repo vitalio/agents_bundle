@@ -19,7 +19,7 @@ import textwrap
 import time
 from pathlib import Path
 
-VERSION = "0.20.1"
+VERSION = "0.20.2"
 REPO_MARKER = "context-bundle-repo: vitalio/context-bundle"
 LEGACY_REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/context-bundle/main/context"
@@ -309,6 +309,42 @@ def _collect_repo_files(root: Path, excluded_set: set[str]) -> tuple[list[str], 
     return sorted(set(files)), found_excluded
 
 
+_LARGE_FILE_BYTES = 16 * 1024
+_DENSE_LINE_BYTES = 120
+
+
+def _format_total_size(num_bytes: int) -> str:
+    if num_bytes < 1024:
+        return f"{num_bytes} B"
+    if num_bytes < 1024 * 1024:
+        val = f"{num_bytes / 1024:.1f}"
+        if val.endswith(".0"):
+            val = val[:-2]
+        return f"{val} KB"
+    val = f"{num_bytes / (1024 * 1024):.1f}"
+    if val.endswith(".0"):
+        val = val[:-2]
+    return f"{val} MB"
+
+
+def _format_file_size_k(num_bytes: int) -> str:
+    kb = num_bytes / 1024
+    if kb >= 10:
+        return f"{round(kb)}K"
+    val = f"{max(0.1, kb):.1f}"
+    if val.endswith(".0"):
+        val = val[:-2]
+    return f"{val}K"
+
+
+def _format_file_tag(lines_n: int, is_bin: bool, size: int) -> str:
+    if is_bin:
+        return f"({size:,}B)"
+    if size >= _LARGE_FILE_BYTES or (lines_n > 0 and size > lines_n * _DENSE_LINE_BYTES):
+        return f"({lines_n}L, {_format_file_size_k(size)})"
+    return f"({lines_n}L)"
+
+
 def _inspect_file_meta(path: Path) -> tuple[int, bool, int]:
     try:
         size = path.stat().st_size
@@ -382,18 +418,20 @@ def build_repo_tree(
                 cur_a = cur_a.rsplit("/", 1)[0]
 
     dirs_bottom_up = sorted(all_dirs, key=lambda x: (0 if not x else x.count("/") + 1), reverse=True)
-    dir_totals: dict[str, tuple[int, int]] = {}
+    dir_totals: dict[str, tuple[int, int, int]] = {}
     for d in dirs_bottom_up:
         if d in active_excluded:
-            dir_totals[d] = (0, 0)
+            dir_totals[d] = (0, 0, 0)
             continue
         f_cnt = len(dir_files[d])
         l_cnt = sum(file_info[f][0] for f in dir_files[d])
+        b_cnt = sum(file_info[f][2] for f in dir_files[d])
         for sub in dir_subdirs[d]:
-            sf, sl = dir_totals[sub]
+            sf, sl, sb = dir_totals[sub]
             f_cnt += sf
             l_cnt += sl
-        dir_totals[d] = (f_cnt, l_cnt)
+            b_cnt += sb
+        dir_totals[d] = (f_cnt, l_cnt, b_cnt)
 
     def render_dir(
         d: str,
@@ -426,7 +464,7 @@ def build_repo_tree(
                 if item in active_excluded:
                     out.append(f"{prefix}{conn}{name}/ (excluded)")
                 elif item in collapsed:
-                    fc, lc = dir_totals[item]
+                    fc, lc, _ = dir_totals[item]
                     ag_note = ", AGENTS.md" if item in dirs_with_agents else ""
                     out.append(f"{prefix}{conn}{name}/ ({fc} file{'s' if fc != 1 else ''}, {lc:,}L{ag_note})")
                 else:
@@ -435,7 +473,7 @@ def build_repo_tree(
             elif kind == "file":
                 name = item.rsplit("/", 1)[-1]
                 lines_n, is_bin, sz = file_info[item]
-                tag = f"({sz:,}B)" if is_bin else f"({lines_n}L)"
+                tag = _format_file_tag(lines_n, is_bin, sz)
                 out.append(f"{prefix}{conn}{name} {tag}")
             else:
                 out.append(f"{prefix}{conn}{item}")
@@ -443,8 +481,11 @@ def build_repo_tree(
 
     collapsed: set[str] = set()
     file_limits: dict[str, int] = {}
-    total_f, total_l = dir_totals[""]
-    footer = f"# Total: {total_f} file{'s' if total_f != 1 else ''}, {total_l:,} lines"
+    total_f, total_l, total_b = dir_totals[""]
+    footer = (
+        f"# Total: {total_f} file{'s' if total_f != 1 else ''}, "
+        f"{total_l:,} lines ({_format_total_size(total_b)})"
+    )
 
     def is_visible_dir(d: str) -> bool:
         if d == "" or d in active_excluded or d in collapsed:
