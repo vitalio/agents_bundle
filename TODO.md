@@ -15,3 +15,9 @@
 
 - Depends on: F34
 - Implement `context --compile` so `context --compile > AGENTS.md` renders a static baseline `AGENTS.md` from the project's `.context.bundle` (and local `agents/*.md` rules) without role-specific or session-specific runtime headers.
+
+# ⚪ [NEW] F36: Show total byte size and large/dense file sizes in context --tree
+
+- Always include total size in the `# Total: <N> files, <M> lines (<size>)` summary line of `context --tree` (formatted compactly in `B` / `KB` / `MB`).
+- For individual files in the tree, keep the compact `(<N>L)` label by default and append byte size `(<N>L, <X>K)` only when a file is at least `16 KB` (`16384` bytes) or has an average line length above `120` bytes/line (catching minified/dense single-line files without cluttering small source files).
+- Add unit tests in `tests/test_tree.py` and update `README.md` / `AGENTS.md` if needed.
