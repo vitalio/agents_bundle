@@ -1,14 +1,13 @@
 # `context-bundle` (`context`) — Project-Specific Agent Rules
 
 Universal workflow, language, Git, SemVer, Python CLI, and single-file build
-rules are loaded via `.context.bundle` (or `.agents_bundle`).
+rules are loaded via `.context.bundle`.
 
 ## Architecture & Module Boundaries
 
 - `src/header.py` — table-driven help data (`HELP_SECTIONS` and the `HELP_*`
   width constants), the standard library imports shared by the assembled
   executable, and version/protocol constants (`SPEC_FILE_NAME = ".context.bundle"`,
-  `LEGACY_SPEC_FILE_NAME = ".agents_bundle"`,
   `PRODUCER_NAME = "vitalio/context-bundle"`,
   `EMBEDDED_RULE_ID = "vitalio/context-bundle:context"`, `VAR_NAME_PATTERN`).
 - `src/core.py` — `prog_name()`, `cache_dir_path()`, and `usage_text()`
@@ -33,14 +32,14 @@ rules are loaded via `.context.bundle` (or `.agents_bundle`).
   against `os` (`linux`, `macos`), `vcs`, and dot-separated variables.
 - `src/includes.py` — `file` item expansion (globs, `path:start-end`),
   repository-root boundary enforcement (`root_dir`) for external bundle files,
-  and range-aware span deduplication shared by upstream, `.context.bundle` /
-  `.agents_bundle`, and CLI files; emits canonical `"kind": "file"` metadata.
+  and range-aware span deduplication shared by upstream, `.context.bundle`,
+  and CLI files; emits canonical `"kind": "file"` metadata.
 - `src/upstream.py` — parses piped stdin (preamble headers, `Bundle-Name:
   <owner>/<repo>` or `<producer>` producer namespacing `<owner>.<repo>.<key>`
   and unambiguous short alias `<repo>.<key>` with duplicate producer rejection,
   and upstream fragments by `Bundle-Boundary` for the 4 canonical `"rule"`,
   `"file"`, `"cmd"`, `"prompt"` kinds) into `PipedInput`.
-- `src/bundle.py` — locates `.context.bundle` (with fallback to `.agents_bundle`),
+- `src/bundle.py` — locates `.context.bundle`,
   parses the 9-keyword `.bundle` language (`bundle`, `rule`, `file`, `cmd`,
   `prompt`, `let`, `export`, `if`/`else if`/`elif`/`else`, `allow`), enforces
   lexical scoping on `let` and session/header promotion on `export`, enforces
@@ -79,7 +78,7 @@ rules are loaded via `.context.bundle` (or `.agents_bundle`).
   `<!-- bundle:<nonce>:end -->` JSON markers using the 4 canonical `kind`
   values (`rule`, `file`, `cmd`, `prompt`), `id`/`name`, `chain` (`[]` at
   root/CLI or ordered inclusion path of bundle specifiers), `rc`, and `ms`
-  fields without hardcoding `run_block` internals.
+  fields without hardcoding `run-block` internals.
 - Plain output (`--plain`): Pass `--plain` or set `CONTEXT_BUNDLE_PLAIN=1` to
   omit transport `Bundle-*` headers (`Bundle-Command`, `Bundle-Name`,
   `Bundle-Boundary`, `Bundle-Protocol`) and JSON fragment markers when pure
@@ -99,6 +98,6 @@ rules are loaded via `.context.bundle` (or `.agents_bundle`).
   `{name:default}` substitution apply; `if` conditions belong to `.bundle`
   specs, never to rule bodies.
 - Chain provenance: `build_bundle()` passes `chain=[spec_file.name]` to
-  `parse_spec()` only when `.context.bundle` or `.agents_bundle` is read; `bundle`
+  `parse_spec()` only when `.context.bundle` is read; `bundle`
   subcommand, piped, CLI, and embedded fragments stay outside it. Keep the
   `.bundle` directive reference in `README.md`.

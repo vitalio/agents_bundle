@@ -1,4 +1,4 @@
-bundle vitalio/agents-rules:adapters/todo_md
+bundle vitalio/agents-rules:adapters/todo-md
 bundle vitalio/agents-rules:core
 bundle vitalio/agents-rules:coding
 bundle vitalio/agents-rules:stack/python py_min=3.9
