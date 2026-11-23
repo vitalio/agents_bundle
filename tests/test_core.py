@@ -48,12 +48,39 @@ class TestCoreHelpers(unittest.TestCase):
 
     def test_usage_text_renders_help_sections(self):
         header = importlib.import_module("src.header")
-        text = self.core.usage_text()
+        with mock.patch.object(sys, "argv", ["context"]), mock.patch.dict(
+            os.environ, {"CONTEXT_BUNDLE_CACHE_DIR": "/tmp/ctx-cache"}
+        ):
+            text = self.core.usage_text()
         for title, _rows in header.HELP_SECTIONS:
             self.assertIn(title, text)
         self.assertIn(header.DEFAULT_RULES_PKG, text)
         self.assertNotIn("{prog}", text)
         self.assertNotIn("{cache_dir}", text)
+        fields = {
+            "prog": "context",
+            "default_pkg": header.DEFAULT_RULES_PKG,
+            "cache_dir": "/tmp/ctx-cache",
+        }
+        expected_col = (
+            header.HELP_INDENT
+            + max(
+                len(left.format(**fields))
+                for _, rows in header.HELP_SECTIONS
+                for left, _ in rows
+            )
+            + header.HELP_GAP
+        )
+        for line in text.splitlines():
+            self.assertLessEqual(len(line), header.HELP_MAX_WIDTH, msg=line)
+            if not line or not line.startswith(" " * header.HELP_INDENT):
+                continue
+            if line.startswith(" " * expected_col):
+                self.assertNotEqual(line[expected_col], " ", msg=line)
+            else:
+                self.assertGreater(len(line), expected_col, msg=line)
+                self.assertEqual(line[expected_col - 1], " ", msg=line)
+                self.assertNotEqual(line[expected_col], " ", msg=line)
 
 
 class TestStandaloneModules(unittest.TestCase):

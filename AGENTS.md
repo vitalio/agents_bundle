@@ -15,7 +15,7 @@ rules are loaded via `.context.bundle`.
   `~/.cache/agents_bundle` -> `~/.cache/context-bundle` and prunes obsolete
   `packages/vitalio/{agents_bundle,run_block,todo_md}` clones; `usage_text()`
   expands `{prog}`, `{default_pkg}`, and `{cache_dir}` in `HELP_SECTIONS`,
-  aligns each section's description column, and wraps lines to at most
+  aligns the description column at a shared column across all sections, and wraps lines to at most
   `HELP_MAX_WIDTH` columns.
 - `src/tree.py` — `context --tree` token-budgeted repository file tree
   with `-x/--exclude`, `AGENTS.md` pinning, large/dense file byte sizes, deep
