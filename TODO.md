@@ -7,6 +7,16 @@
   - Persist trusted `(realpath, sha256)` entries in `${XDG_STATE_HOME:-~/.local/state}/context-bundle/trusted.json` (`0600` permissions) managed via `context --trust [--revoke | --list]` (or an interactive `/dev/tty` confirmation prompt when a TTY is attached, failing closed in non-interactive pipes with an actionable error message instructing the user to inspect `.context.bundle` and run `context --trust`).
   - Document the root `.context.bundle` trust and `Workdir` boundary model in `README.md`, `AGENTS.md`, and `src/header.py` (`--help`), and add unit tests in `tests/test_bundle.py`, `tests/test_includes.py`, and `tests/test_cli.py`.
 
+# 🎯 [NEXT] F39: Resolve exported session variables in a pre-pass and stratify rules into invariant and conditional cache layers
+
+- Depends on: F38
+- Bump: `MINOR`
+- In `parse_spec()` and `build_bundle()` (`src/bundle.py`, `src/rules_engine.py`), combine a two-pass session variable pre-pass with two-layer rule cache stratification while preserving `.context.bundle` declaration order within each layer:
+  - Pass 1 (session variable & `export` pre-pass): traverse `.context.bundle` and child `.bundle` ASTs evaluating only `allow`, `let`, `export`, `if` / `else if` / `else`, and nested `bundle` directives without running `cmd` or expanding `file` items (caching dynamic `let x=$(...)` results by scope and command so subshells never execute twice). Enforce strict precedence: CLI `key=val` (`CONTEXT_BUNDLE_VARS`) > root `.context.bundle` `let key=val` (and inline `bundle ... key=val`) > child bundle `export <var>` in top-down order (first non-empty writer wins; empty values do not claim the variable and later child bundles cannot overwrite an already-resolved non-empty variable) > child bundle-local `let key=default`.
+  - Pass 2 (declaration-order content collection): evaluate `.context.bundle` top-down with `session_vars` populated from Pass 1 so `core` placed first in `.context.bundle` sees `role`, `task`, and `title` exported by a trailing `adapters/todo-md` bundle.
+  - Two-layer `===== Rules =====` cache stratification in `build_bundle()`: partition collected rules into Layer 1 (role- and session-invariant rules from `.context.bundle` whose condition chain and template placeholders do not reference dynamic session/pipeline variables such as `role`, `piped`, `upstream.vars` / `todo_md.*`, `export` variables, or CLI overrides — e.g. unconditional `core/*`, `os/*`, `vcs/*`, `collab/commits`, and `release/*` rules — followed by the embedded `vitalio/context-bundle:context` rule) and Layer 2 (session- and role-conditional rules from `.context.bundle` in declaration order, followed by upstream piped `up_groups["rules"]` such as `vitalio/todo-md:todo`).
+- Update `README.md` and `AGENTS.md`, and add unit tests in `tests/test_bundle.py` covering `adapters/todo-md` placed after `core`, variable precedence across CLI / root `let` / multiple child `export` bundles, and Layer 1 before Layer 2 rule stratification across role switches and piped vs. non-piped runs.
+
 # ⚪ [NEW] F35: Add --compile flag to compile baseline AGENTS.md from .context.bundle
 
 - Depends on: F36 -> F34
