@@ -64,6 +64,36 @@ class TestIncludes(AgentsBundleTestCase):
         )
         self.assertEqual(explicit.key, "/abs/x.txt")
 
+    def test_expand_include_enforces_root_dir_boundary_and_allows_cli_outside(self):
+        mod = self._load_bundle_module()
+        repo = self.tmp / "repo"
+        repo.mkdir()
+        inside = repo / "inside.txt"
+        inside.write_text("ok\n", encoding="utf-8")
+        outside = self.tmp / "secrets.env"
+        outside.write_text("SECRET=1\n", encoding="utf-8")
+
+        with self.subTest(case="inside root_dir succeeds"):
+            res = mod._expand_include(repo, "inside.txt", root_dir=repo)
+            self.assertEqual(res, [(inside.resolve(), None, None)])
+
+        for label, bad_spec in [
+            ("parent_relative", "../secrets.env"),
+            ("parent_slice", "../secrets.env:1-1"),
+            ("parent_glob", "../*.env"),
+            ("tilde_path", "~/.ssh/id_rsa"),
+            ("tilde_glob", "~/.ssh/*"),
+            ("absolute_outside", outside.as_posix()),
+        ]:
+            with self.subTest(blocked=label):
+                with self.assertRaises(SystemExit) as ctx:
+                    mod._expand_include(repo, bad_spec, root_dir=repo)
+                self.assertIn("resolves outside repository root", str(ctx.exception))
+
+        with self.subTest(case="unrestricted when root_dir is None (CLI arguments)"):
+            res_cli = mod._expand_include(repo, outside.as_posix(), root_dir=None)
+            self.assertEqual(res_cli, [(outside.resolve(), None, None)])
+
 
 if __name__ == "__main__":
     unittest.main()

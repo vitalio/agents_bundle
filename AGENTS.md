@@ -10,13 +10,14 @@ rules are loaded via `.context.bundle`.
   executable, and version/protocol constants (`SPEC_FILE_NAME = ".context.bundle"`,
   `PRODUCER_NAME = "vitalio/context-bundle"`,
   `EMBEDDED_RULE_ID = "vitalio/context-bundle:context"`, `VAR_NAME_PATTERN`).
-- `src/core.py` — `prog_name()`, `cache_dir_path()`, and `usage_text()`
-  helpers shared by all modules; `cache_dir_path()` atomically migrates
-  `~/.cache/agents_bundle` -> `~/.cache/context-bundle` and prunes obsolete
+- `src/core.py` — `prog_name()`, `cache_dir_path()`, `state_dir_path()`,
+  `trust_file_path()`, and `usage_text()` helpers shared by all modules;
+  `cache_dir_path()` atomically migrates `~/.cache/agents_bundle` ->
+  `~/.cache/context-bundle` and prunes obsolete
   `packages/vitalio/{agents_bundle,run_block,todo_md}` clones; `usage_text()`
-  expands `{prog}`, `{default_pkg}`, and `{cache_dir}` in `HELP_SECTIONS`,
-  aligns the description column at a shared column across all sections, and wraps lines to at most
-  `HELP_MAX_WIDTH` columns.
+  expands `{prog}`, `{default_pkg}`, `{cache_dir}`, and `{trust_file}` in
+  `HELP_SECTIONS`, aligns the description column at a shared column across all
+  sections, and wraps lines to at most `HELP_MAX_WIDTH` columns.
 - `src/tree.py` — `context --tree` token-budgeted repository file tree
   with `-x/--exclude`, `AGENTS.md` pinning, large/dense file byte sizes, deep
   directory collapsing, file list truncation, and total byte size summary.
@@ -30,10 +31,12 @@ rules are loaded via `.context.bundle`.
   `CONTEXT_BUNDLE_LOCAL_PKG_DIR` is set; parses Python-indented `if <cond>`,
   `else if <cond>` (`elif <cond>`), and `else` blocks; and evaluates conditions
   against `os` (`linux`, `macos`), `vcs`, and dot-separated variables.
-- `src/includes.py` — `file` item expansion (globs, `path:start-end`),
-  repository-root boundary enforcement (`root_dir`) for external bundle files,
-  and range-aware span deduplication shared by upstream, `.context.bundle`,
-  and CLI files; emits canonical `"kind": "file"` metadata.
+- `src/includes.py` — `file` item expansion (globs, `path:start-end`, `~`),
+  repository-root boundary enforcement (`root_dir=spec_dir`) for all bundle
+  `file` directives (root `.context.bundle` and external child bundles, while
+  keeping CLI `FILE ...` arguments unrestricted), and range-aware span
+  deduplication shared by upstream, `.context.bundle`, and CLI files; emits
+  canonical `"kind": "file"` metadata.
 - `src/upstream.py` — parses piped stdin (preamble headers, `Bundle-Name:
   <owner>/<repo>` or `<producer>` producer namespacing `<owner>.<repo>.<key>`
   and unambiguous short alias `<repo>.<key>` with duplicate producer rejection,
@@ -42,10 +45,15 @@ rules are loaded via `.context.bundle`.
 - `src/bundle.py` — locates `.context.bundle`,
   parses the 9-keyword `.bundle` language (`bundle`, `rule`, `file`, `cmd`,
   `prompt`, `let`, `export`, `if`/`else if`/`elif`/`else`, `allow`), enforces
-  lexical scoping on `let` and session/header promotion on `export`, enforces
-  the external bundle command allowlist before running shell commands,
-  assembles `file` and `cmd` in declaration order, and writes the bundle to
-  `stdout`.
+  lexical scoping on `let` and session/header promotion on `export`, allows
+  built-in read-only inspection commands (`context --tree`, read-only
+  `git status`/`branch`/`log`/`diff`/`rev-parse`, and read-only `todo` queries)
+  in root `.context.bundle` by default while requiring explicit `(realpath,
+  sha256)` trust in `${XDG_STATE_HOME:-~/.local/state}/context-bundle/trusted.json`
+  (`0600`, via `context --trust [--revoke | --list]` or `/dev/tty` prompt) for
+  arbitrary shell commands or `allow` grants, enforces the external bundle
+  command allowlist before running shell commands, assembles `file` and `cmd`
+  in declaration order, and writes the bundle to `stdout`.
 - `agents/context.md` — embedded agent rule (`id: "vitalio/context-bundle:context"`,
   `chain: ["vitalio/context-bundle"]`). `build.py` embeds it into `src/header.py`
   as `EMBEDDED_RULE_CONTEXT`; source-tree runs fall back to the file via

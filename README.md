@@ -50,11 +50,12 @@ context --uninstall
 
 ## Quick Start
 
-Initialize a starter `.context.bundle` and build a bundle:
+Initialize a starter `.context.bundle`, build a bundle, or trust a repository spec with custom commands:
 
 ```bash
 context --init
 context > bundle.txt
+context --trust
 context role=work task=F1 > bundle.txt
 ```
 
@@ -102,6 +103,7 @@ context --tree -x bumps -x resolutions --max-lines 160 --max-tokens 1600
 | `context --list \| -l [pkg]` | List bundles, rules, and built-in variables (default: `vitalio/agents-rules`) |
 | `context --update-cache` | Refresh cached git packages and URL files in `~/.cache/context-bundle` |
 | `context --init [--force]` | Create a starter `.context.bundle` in the current directory |
+| `context --trust [--revoke \| --list]` | Trust current `.context.bundle` (or revoke/list entries in `${XDG_STATE_HOME:-~/.local/state}/context-bundle/trusted.json`) |
 | `context --tree [DIR] [opts]` | Print token-budgeted repository file tree to `stdout` |
 | `context --update [--force]` | Self-update `context` from GitHub (`vitalio/context-bundle`) |
 | `context --check-update` | Check if a newer version is available |
@@ -123,6 +125,8 @@ context --tree -x bumps -x resolutions --max-lines 160 --max-tokens 1600
 | `--max-lines N` | Maximum output lines for `--tree` (default: `160`) |
 | `--max-tokens N` | Approximate token budget for `--tree` (default: `1600`) |
 | `--force` | Overwrite existing `.context.bundle` (`--init`) or force reinstall (`--update`) |
+| `--revoke` | Revoke trust for current `.context.bundle` (with `--trust`) |
+| `--list` | List bundles/rules, or list trusted specs (with `--trust`) |
 
 ### Environment
 
@@ -132,6 +136,7 @@ context --tree -x bumps -x resolutions --max-lines 160 --max-tokens 1600
 | `CONTEXT_BUNDLE_PLAIN` | Set to `1` to omit transport `Bundle-*` headers and fragment markers |
 | `CONTEXT_BUNDLE_LOCAL_PKG_DIR` | Use a local package checkout instead of the cache |
 | `CONTEXT_BUNDLE_CACHE_DIR` | Override the cache directory (default: `$XDG_CACHE_HOME/context-bundle` or `~/.cache/context-bundle`) |
+| `XDG_STATE_HOME` | Base directory for `context-bundle/trusted.json` (default: `~/.local/state`) |
 | `CONTEXT_BUNDLE_SHELL` | Override the shell executable used for `cmd` directives |
 | `CONTEXT_BUNDLE_UPDATE_URL` | Override the remote script URL for `--update` |
 
@@ -175,14 +180,26 @@ order:
 - `file <path|glob|slice...>` includes space-separated repository files, globs
   (`*`, `?`, `[`, and recursive `**`; matches are sorted and `.git` and
   `__pycache__` are skipped), 1-based inclusive line-range slices
-  `path:START-END` or `path:LINE`, or `$(<cmd>)` output (external bundles are
-  restricted to files within the repository root). An argument naming an
-  existing file is always included whole; a slice is emitted as a
+  `path:START-END` or `path:LINE`, or `$(<cmd>)` output. All `file` directives
+  in root `.context.bundle` and nested bundles are restricted to the repository
+  `Workdir` boundary (`spec_dir`), rejecting paths, globs, or symlinks that
+  resolve outside the repository while keeping explicit CLI file arguments
+  (`context /path/to/file`) unrestricted. An argument naming an existing file
+  is always included whole; a slice is emitted as a
   `===== $ sed -n 'START,ENDp' <path> =====` section with fragment name
   `<path>:START-END`, and overlapping or whole-file spans are merged at first
   occurrence. Empty `file` after variable expansion (such as
   `file {todo_md.files:}` when unset) is a no-op.
 - `cmd <shell command>` runs a command in `Workdir` and includes its output.
+  Built-in read-only inspection commands (`context --tree`, read-only
+  `git status`/`branch`/`log`/`diff`/`rev-parse`, and read-only `todo` queries)
+  run out of the box with zero friction; arbitrary shell commands in `cmd`,
+  `let <k>=$(<cmd>)`, or `file $(<cmd>)` and custom `allow` grants require the
+  root `.context.bundle` `(realpath, sha256)` to be trusted via
+  `context --trust` (or confirmed interactively via `/dev/tty`, failing closed
+  in non-interactive pipes; persisted in
+  `${XDG_STATE_HOME:-~/.local/state}/context-bundle/trusted.json` with `0600`
+  permissions).
 - `prompt <text>` appends text to the Prompt section.
 - `let <name>=<value>` or `let <name>=$(<cmd>)` sets a lexically scoped
   bundle-local variable (set-if-unset; passed down to child `rule` and `bundle`
@@ -195,11 +212,11 @@ order:
   Python-style indented blocks without trailing colons or `endif`. Variable
   names in `if`, `let`, `export`, and `{name:default}` support dot-separated
   producer namespaces (`<owner>.<repo>.<key>` and `<repo>.<key>`).
-- `allow <bin...>` (root `.context.bundle` / `.agents_bundle` only) permits
-  external bundles to run the listed executables in `cmd`, `let <k>=$(<cmd>)`,
-  and `file $(<cmd>)`. All commands from external bundles are inspected
-  statically before any shell command runs; unlisted executables fail fast
-  naming the blocked command and originating bundle.
+- `allow <bin...>` (trusted root `.context.bundle` / `.agents_bundle` only)
+  permits external bundles to run the listed executables in `cmd`,
+  `let <k>=$(<cmd>)`, and `file $(<cmd>)`. All commands from external bundles
+  are inspected statically before any shell command runs; unlisted executables
+  fail fast naming the blocked command and originating bundle.
 
 ## Bundle Output Protocol & Piped Input
 

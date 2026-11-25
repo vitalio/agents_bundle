@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import secrets
@@ -7,6 +9,7 @@ import shlex
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -23,7 +26,7 @@ from src.header import (
     SPEC_FILE_NAME,
     VAR_NAME_PATTERN,
 )
-from src.core import embedded_rule_text, prog_name
+from src.core import embedded_rule_text, prog_name, trust_file_path
 from src.tree import _tree_from_args
 from src.rules_engine import (
     VAR_NAME_RE,
@@ -129,6 +132,320 @@ def find_spec_file(start_dir: Path | None = None) -> Path | None:
 
 
 _SHELL_WRAPPER_BINS = {"command", "builtin", "exec", "nohup", "time", "env", "nice"}
+_GIT_READONLY_SUBCMDS = {"status", "branch", "log", "diff", "rev-parse"}
+_GIT_BRANCH_VALUE_FLAGS = {"--sort", "--format", "--color", "--column", "--abbrev", "--contains", "--no-contains", "--merged", "--no-merged", "--points-at"}
+_GIT_BRANCH_SAFE_BOOL_FLAGS = {
+    "-v", "-vv", "--verbose", "-a", "--all", "-r", "--remotes",
+    "--show-current", "--list", "-l", "--color", "--no-color",
+    "--column", "--no-column", "--abbrev", "--no-abbrev", "-i", "--ignore-case",
+}
+_TODO_MUTATING_SUBCMDS = {
+    "add", "edit", "append", "rename", "next", "status",
+    "reopen", "done", "cancel", "archive", "init",
+}
+_TODO_READONLY_SUBCMDS = {"overview", "projects", "show", "list", "chain", "check"}
+_TODO_FORBIDDEN_FLAGS = {"--init", "--update", "--self-update", "--check-update", "--uninstall", "--force"}
+
+
+def _has_unsafe_shell_syntax(cmd_str: str) -> bool:
+    in_single = False
+    in_double = False
+    escaped = False
+    for ch in cmd_str:
+        if escaped:
+            escaped = False
+            continue
+        if ch == "\\" and not in_single:
+            escaped = True
+            continue
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            continue
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            continue
+        if not in_single and ch in ("$", "`"):
+            return True
+        if not in_single and not in_double and ch in ("|", "&", ";", "<", ">", "(", ")", "{", "}", "\n", "\r"):
+            return True
+    return in_single or in_double or escaped
+
+
+def _is_safe_git_branch_args(subargs: list[str]) -> bool:
+    has_list_mode = False
+    has_positional = False
+    i = 0
+    while i < len(subargs):
+        arg = subargs[i]
+        if arg in ("--list", "-l"):
+            has_list_mode = True
+            i += 1
+            continue
+        if arg in _GIT_BRANCH_SAFE_BOOL_FLAGS:
+            i += 1
+            continue
+        if arg in _GIT_BRANCH_VALUE_FLAGS:
+            if i + 1 >= len(subargs):
+                return False
+            if arg in ("--contains", "--no-contains", "--merged", "--no-merged", "--points-at"):
+                has_list_mode = True
+            i += 2
+            continue
+        if any(arg.startswith(f"{flag}=") for flag in _GIT_BRANCH_VALUE_FLAGS):
+            if arg.startswith(("--contains=", "--no-contains=", "--merged=", "--no-merged=", "--points-at=")):
+                has_list_mode = True
+            i += 1
+            continue
+        if arg.startswith("-"):
+            return False
+        has_positional = True
+        i += 1
+    if has_positional and not has_list_mode:
+        return False
+    return True
+
+
+def _is_safe_todo_args(args: list[str]) -> bool:
+    for a in args:
+        if a in _TODO_FORBIDDEN_FLAGS or a.startswith(("--update=", "--init=")):
+            return False
+    positionals: list[str] = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("-C", "--dir", "-p", "--project"):
+            if i + 1 >= len(args):
+                return False
+            i += 2
+            continue
+        if a.startswith(("--dir=", "--project=")):
+            i += 1
+            continue
+        if not positionals and a in ("-w", "--wide", "--full", "--plain", "-h", "--help", "-V", "--version"):
+            i += 1
+            continue
+        positionals.append(a)
+        i += 1
+    if not positionals:
+        return True
+    first = positionals[0]
+    if first in _TODO_MUTATING_SUBCMDS:
+        return False
+    if first in _TODO_READONLY_SUBCMDS:
+        return True
+    for tok in positionals:
+        if tok in ("-w", "--wide", "--full", "--plain"):
+            continue
+        if re.fullmatch(r"role=[A-Za-z0-9_.-]+", tok):
+            continue
+        if re.fullmatch(r"(?:[A-Za-z0-9_.-]+:)?[A-Z][0-9]+", tok):
+            continue
+        return False
+    return True
+
+
+def _is_safe_builtin_command(cmd_str: str, prog: str | None = None) -> bool:
+    s = cmd_str.strip()
+    if not s or _has_unsafe_shell_syntax(s):
+        return False
+    try:
+        tokens = shlex.split(s, posix=True)
+    except ValueError:
+        return False
+    if not tokens:
+        return False
+    exe = tokens[0]
+    args = tokens[1:]
+    p = prog or prog_name()
+    if exe in (p, "context", "agents_bundle"):
+        return bool(args and args[0] == "--tree")
+    if exe == "git":
+        idx = 0
+        while idx < len(args) and args[idx] in ("--no-pager", "--no-optional-locks"):
+            idx += 1
+        if idx >= len(args):
+            return False
+        subcmd = args[idx]
+        subargs = args[idx + 1 :]
+        if subcmd not in _GIT_READONLY_SUBCMDS:
+            return False
+        for a in subargs:
+            if a in ("--ext-diff", "--textconv") or a.startswith(("--output", "-o", "--exec")):
+                return False
+        if subcmd == "branch":
+            return _is_safe_git_branch_args(subargs)
+        return True
+    if exe in ("todo", "todo_md"):
+        return _is_safe_todo_args(args)
+    return False
+
+
+def _spec_sha256(spec_file: Path) -> str:
+    return hashlib.sha256(spec_file.read_bytes()).hexdigest()
+
+
+def _load_trusted_store() -> dict[str, str]:
+    tpath = trust_file_path()
+    if not tpath.is_file():
+        return {}
+    try:
+        raw = json.loads(tpath.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    entries_src = raw.get("trusted") if isinstance(raw.get("trusted"), dict) else raw
+    out: dict[str, str] = {}
+    for k, v in entries_src.items():
+        if not isinstance(k, str):
+            continue
+        if isinstance(v, str) and v:
+            out[k] = v
+        elif isinstance(v, dict) and isinstance(v.get("sha256"), str):
+            out[k] = str(v["sha256"])
+    return out
+
+
+def _save_trusted_store(store: dict[str, str]) -> Path:
+    tpath = trust_file_path()
+    tpath.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(dict(sorted(store.items())), indent=2, ensure_ascii=False) + "\n"
+    tmp_fd, tmp_name = tempfile.mkstemp(prefix=".trusted.", dir=str(tpath.parent))
+    try:
+        os.chmod(tmp_name, 0o600)
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            f.write(payload)
+        os.replace(tmp_name, tpath)
+        os.chmod(tpath, 0o600)
+    except Exception:
+        if os.path.exists(tmp_name):
+            os.unlink(tmp_name)
+        raise
+    return tpath
+
+
+def is_spec_trusted(spec_file: Path) -> bool:
+    resolved = str(spec_file.resolve())
+    store = _load_trusted_store()
+    recorded = store.get(resolved)
+    if not recorded:
+        return False
+    try:
+        return recorded == _spec_sha256(spec_file)
+    except OSError:
+        return False
+
+
+def trust_spec_file(spec_file: Path) -> tuple[str, str]:
+    resolved = str(spec_file.resolve())
+    digest = _spec_sha256(spec_file)
+    store = _load_trusted_store()
+    store[resolved] = digest
+    _save_trusted_store(store)
+    return resolved, digest
+
+
+def _prompt_tty_trust(spec_file: Path, reason: str, prog: str) -> bool:
+    tty_override = os.environ.get("CONTEXT_BUNDLE_TTY", "").strip()
+    if not tty_override and not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return False
+    tty_path = tty_override or "/dev/tty"
+    try:
+        digest = _spec_sha256(spec_file)
+        prompt_msg = (
+            f"{prog}: untrusted {spec_file} requests permission for {reason}\n"
+            f"Trust {spec_file} (sha256:{digest[:12]})? [y/N]: "
+        )
+        if tty_override and Path(tty_path).is_file():
+            ans = Path(tty_path).read_text(encoding="utf-8", errors="replace").splitlines()[0].strip().lower()
+        else:
+            with open(tty_path, "w", encoding="utf-8", errors="replace") as tty_out:
+                tty_out.write(prompt_msg)
+                tty_out.flush()
+            with open(tty_path, "r", encoding="utf-8", errors="replace") as tty_in:
+                ans = tty_in.readline().strip().lower()
+    except (OSError, IndexError):
+        return False
+    if ans in ("y", "yes"):
+        trust_spec_file(spec_file)
+        return True
+    return False
+
+
+def _ensure_root_spec_trusted(
+    spec_file: Path | None,
+    trust_state: dict[str, bool],
+    reason: str,
+    prog: str,
+) -> None:
+    if spec_file is None or trust_state.get("trusted"):
+        return
+    if is_spec_trusted(spec_file) or _prompt_tty_trust(spec_file, reason, prog):
+        trust_state["trusted"] = True
+        return
+    raise SystemExit(
+        f"{prog}: untrusted {spec_file.name} ({spec_file.resolve()}): refusing to execute {reason}; "
+        f"inspect {spec_file.name} and run '{prog} --trust' to trust this file"
+    )
+
+
+def cmd_trust(argv: list[str] | None = None) -> int:
+    prog = prog_name()
+    args = list(argv or [])
+    revoke = False
+    list_mode = False
+    work_dir: Path | None = None
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--revoke":
+            revoke = True
+            i += 1
+        elif a in ("--list", "-l"):
+            list_mode = True
+            i += 1
+        elif a in ("-C", "--dir"):
+            if i + 1 >= len(args):
+                raise SystemExit(f"{prog}: {a} requires a directory path")
+            work_dir = Path(args[i + 1]).expanduser()
+            i += 2
+        else:
+            raise SystemExit(f"{prog}: usage: {prog} --trust [--revoke | --list] [-C DIR]")
+    if revoke and list_mode:
+        raise SystemExit(f"{prog}: usage: {prog} --trust [--revoke | --list] [-C DIR]")
+    if list_mode:
+        store = _load_trusted_store()
+        if not store:
+            sys.stdout.write(f"No trusted {SPEC_FILE_NAME} files in {trust_file_path()}\n")
+            return 0
+        for rpath, digest in sorted(store.items()):
+            sys.stdout.write(f"{digest}  {rpath}\n")
+        return 0
+    wdir = (work_dir if work_dir is not None else Path.cwd()).resolve()
+    spec_file = find_spec_file(wdir)
+    if revoke:
+        store = _load_trusted_store()
+        candidates = (
+            [str(spec_file.resolve())]
+            if spec_file is not None
+            else [str((wdir / SPEC_FILE_NAME).resolve()), str((wdir / LEGACY_SPEC_FILE_NAME).resolve())]
+        )
+        removed = [c for c in candidates if c in store]
+        if not removed and spec_file is None:
+            sys.stderr.write(f"{prog}: {SPEC_FILE_NAME} or {LEGACY_SPEC_FILE_NAME} not found in {wdir}\n")
+            return 2
+        for c in removed:
+            store.pop(c, None)
+        _save_trusted_store(store)
+        target_label = removed[0] if removed else str(spec_file.resolve())  # type: ignore[union-attr]
+        sys.stdout.write(f"{prog}: revoked trust for {target_label}\n")
+        return 0
+    if spec_file is None:
+        sys.stderr.write(f"{prog}: {SPEC_FILE_NAME} or {LEGACY_SPEC_FILE_NAME} not found in {wdir}\n")
+        return 2
+    resolved, digest = trust_spec_file(spec_file)
+    sys.stdout.write(f"{prog}: trusted {resolved} (sha256:{digest})\n")
+    return 0
 
 
 def _parse_allow_bins(raw_args: str, source_label: str, prog: str) -> list[str]:
@@ -412,6 +729,66 @@ def _static_inspect_bundle_ast(
     walk(nodes)
 
 
+def _static_inspect_root_trust_ast(
+    nodes: list[tuple[str, object]],
+    bvars: dict[str, str],
+    spec_file: Path,
+    trust_state: dict[str, bool],
+    in_child_bundle: bool,
+    prog: str,
+) -> None:
+    if trust_state.get("trusted"):
+        return
+    sim_vars = dict(bvars)
+
+    def walk(stmts: list[tuple[str, object]]) -> None:
+        for n_kind, payload in stmts:
+            if trust_state.get("trusted"):
+                return
+            if n_kind == "if_chain":
+                for b_cond, _b_trace, b_body in payload:  # type: ignore[misc]
+                    if b_cond is None or eval_if_condition(b_cond, sim_vars, prog):
+                        walk(b_body)
+                        break
+                continue
+            raw_line = str(payload)
+            line = _render_rule_vars(raw_line, sim_vars).strip()
+            if (line == "allow" or line.startswith("allow ")) and not in_child_bundle:
+                _ensure_root_spec_trusted(spec_file, trust_state, f"directive {line!r}", prog)
+            elif line.startswith("bundle "):
+                try:
+                    parts = shlex.split(line)
+                    _tgt, _ex, vmap = _parse_directive_tokens(parts[1:], prog)
+                except (ValueError, SystemExit):
+                    vmap = {}
+                if "allow" in vmap:
+                    _ensure_root_spec_trusted(spec_file, trust_state, f"allow grant in {line!r}", prog)
+            elif line.startswith("cmd "):
+                cmd_str = line[4:].strip()
+                if cmd_str and not _is_safe_builtin_command(cmd_str, prog):
+                    _ensure_root_spec_trusted(spec_file, trust_state, f"command {cmd_str!r}", prog)
+            elif line.startswith("let "):
+                assign = line[4:].strip()
+                if "=" in assign:
+                    k, v_expr = assign.split("=", 1)
+                    k_clean = k.strip()
+                    s = v_expr.strip()
+                    if s.startswith("$(") and s.endswith(")") and len(s) >= 3:
+                        cmd_str = s[2:-1].strip()
+                        if cmd_str and not _is_safe_builtin_command(cmd_str, prog):
+                            _ensure_root_spec_trusted(spec_file, trust_state, f"command substitution '$({cmd_str})'", prog)
+                    elif not sim_vars.get(k_clean) and s:
+                        sim_vars[k_clean] = s
+            elif line.startswith("file "):
+                inc_expr = line[5:].strip()
+                if inc_expr.startswith("$(") and inc_expr.endswith(")") and len(inc_expr) >= 3:
+                    cmd_str = inc_expr[2:-1].strip()
+                    if cmd_str and not _is_safe_builtin_command(cmd_str, prog):
+                        _ensure_root_spec_trusted(spec_file, trust_state, f"command substitution '$({cmd_str})'", prog)
+
+    walk(nodes)
+
+
 def parse_spec(
     text: str,
     work_dir: Path | None = None,
@@ -429,6 +806,8 @@ def parse_spec(
     enforce_allowlist: bool = True,
     external_chains: dict[tuple[str, ...], tuple[str, set[str] | None]] | None = None,
     session_vars: dict[str, str] | None = None,
+    root_spec_file: Path | None = None,
+    root_trust_state: dict[str, bool] | None = None,
 ) -> list[tuple[str, str, str | None, list[str]]]:
     prog = prog_name()
     caller_vars: dict[str, str] = dict(cli_vars) if cli_vars is not None else {}
@@ -444,10 +823,13 @@ def parse_spec(
     in_child_bundle = bool(cur_chain and cur_chain != [root_label])
     bundle_label = cur_chain[-1] if in_child_bundle else root_label
     cur_allowed: set[str] = set(allowed_cmds) if allowed_cmds is not None else set()
+    trust_state = root_trust_state if root_trust_state is not None else {}
     ast_nodes = parse_bundle_ast(text, prog)
 
     if is_external and enforce_allowlist and in_child_bundle:
         _static_inspect_bundle_ast(ast_nodes, bvars, cur_allowed, bundle_label, root_label, prog)
+    elif not is_external and root_spec_file is not None:
+        _static_inspect_root_trust_ast(ast_nodes, bvars, root_spec_file, trust_state, in_child_bundle, prog)
 
     effective_allow_set: set[str] | None = cur_allowed if (is_external and enforce_allowlist) else None
     if is_external and external_chains is not None:
@@ -490,7 +872,9 @@ def parse_spec(
                     )
                 if line == "allow":
                     raise SystemExit(f"{prog}: empty allow list in {root_label}")
-                cur_allowed.update(_parse_allow_bins(line[len("allow ") :], root_label, prog))
+                parsed_allow = _parse_allow_bins(line[len("allow ") :], root_label, prog)
+                _ensure_root_spec_trusted(root_spec_file, trust_state, f"directive {line!r}", prog)
+                cur_allowed.update(parsed_allow)
             elif line == "let" or line.startswith("let "):
                 assign = line[len("let") :].strip()
                 if "=" not in assign:
@@ -502,6 +886,13 @@ def parse_spec(
                 if not VAR_NAME_RE.fullmatch(k_clean):
                     raise SystemExit(f"{prog}: invalid variable name {k_clean!r} in {line!r}")
                 if not active_vars.get(k_clean):
+                    s_expr = v_expr.strip()
+                    if not is_external and s_expr.startswith("$(") and s_expr.endswith(")") and len(s_expr) >= 3:
+                        inner_cmd = s_expr[2:-1].strip()
+                        if inner_cmd and not _is_safe_builtin_command(inner_cmd, prog):
+                            _ensure_root_spec_trusted(
+                                root_spec_file, trust_state, f"command substitution '$({inner_cmd})'", prog
+                            )
                     val = _eval_dynamic_expr(
                         v_expr,
                         work_dir=work_dir,
@@ -522,6 +913,12 @@ def parse_spec(
                 if not inc_expr:
                     continue
                 is_dyn = inc_expr.startswith("$(") and inc_expr.endswith(")") and len(inc_expr) >= 3
+                if not is_external and is_dyn:
+                    inner_cmd = inc_expr[2:-1].strip()
+                    if inner_cmd and not _is_safe_builtin_command(inner_cmd, prog):
+                        _ensure_root_spec_trusted(
+                            root_spec_file, trust_state, f"command substitution '$({inner_cmd})'", prog
+                        )
                 resolved_inc = _eval_dynamic_expr(
                     inc_expr,
                     work_dir=work_dir,
@@ -530,14 +927,21 @@ def parse_spec(
                     prog=prog,
                 )
                 for clean_item in _split_file_items(resolved_inc, is_dyn):
-                    if is_external and work_dir is not None:
-                        _expand_include(work_dir, clean_item, root_dir=work_dir, bundle_label=bundle_label)
+                    if work_dir is not None:
+                        _expand_include(
+                            work_dir,
+                            clean_item,
+                            root_dir=work_dir,
+                            bundle_label=bundle_label if is_external else None,
+                        )
                     entries.append(("file", clean_item, cond_expr, list(cur_chain)))
             elif line == "cmd" or line.startswith("cmd "):
                 cmd_str = line[len("cmd") :].strip()
                 if cmd_str:
                     if effective_allow_set is not None:
                         _check_command_allowed(cmd_str, effective_allow_set, bundle_label, prog)
+                    elif not is_external and not _is_safe_builtin_command(cmd_str, prog):
+                        _ensure_root_spec_trusted(root_spec_file, trust_state, f"command {cmd_str!r}", prog)
                     entries.append(("cmd", cmd_str, cond_expr, list(cur_chain)))
             elif line == "rule" or line.startswith("rule "):
                 parts = shlex.split(line)
@@ -565,6 +969,7 @@ def parse_spec(
                             )
                         child_allowed = cur_allowed & parsed_bins
                     else:
+                        _ensure_root_spec_trusted(root_spec_file, trust_state, f"allow grant in {line!r}", prog)
                         child_allowed.update(parsed_bins)
                         child_enforce = True
                 lookup_target = _qualify_nested_target(target, work_dir, cur_bdir, default_pkg, pkg_dir, prog)
@@ -610,6 +1015,8 @@ def parse_spec(
                     enforce_allowlist=child_enforce,
                     external_chains=external_chains,
                     session_vars=session_vars,
+                    root_spec_file=root_spec_file,
+                    root_trust_state=trust_state,
                 ):
                     comb_cond = " ".join(c for c in (cond_expr, sub_cond) if c) or None
                     entries.append((sub_kind, sub_val, comb_cond, sub_chain))
@@ -728,6 +1135,7 @@ def build_bundle(
     external_chains: dict[tuple[str, ...], tuple[str, set[str] | None]] = {}
     session_vars: dict[str, str] = dict(effective_cli_vars)
     resolved_vars: dict[str, str] = {}
+    root_trust_state: dict[str, bool] = {"trusted": is_spec_trusted(spec_file) if spec_file is not None else True}
     entries = parse_spec(
         spec_source,
         work_dir=spec_dir,
@@ -741,6 +1149,8 @@ def build_bundle(
         enforce_allowlist=enforce_allowlist,
         external_chains=external_chains,
         session_vars=session_vars,
+        root_spec_file=spec_file,
+        root_trust_state=root_trust_state,
     )
     session_vars.update(resolved_vars)
     boundary = secrets.token_hex(16)
@@ -817,7 +1227,7 @@ def build_bundle(
             slices = _expand_include(
                 wdir,
                 clean,
-                root_dir=spec_dir if ext_policy is not None else None,
+                root_dir=spec_dir,
                 bundle_label=ext_policy[0] if ext_policy is not None else None,
             )
             for p, start, end in slices:

@@ -15,6 +15,7 @@ class TestUpstream(AgentsBundleTestCase):
             "cmd echo up_cmd\n",
             encoding="utf-8",
         )
+        self._trust()
         up = self._run(
             [str(SCRIPT), "role=work", "task=F1", "-p", "up prompt", "big.txt:2-4"], cwd=str(self.tmp)
         )
@@ -32,6 +33,7 @@ class TestUpstream(AgentsBundleTestCase):
             "cmd echo down_cmd\n",
             encoding="utf-8",
         )
+        self._trust()
         return up.stdout
 
     def test_pipe_merges_dedups_and_chains_fragments(self):

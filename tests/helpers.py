@@ -91,16 +91,19 @@ class AgentsBundleTestCase(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="ab_test_"))
         self._saved_env = {
             k: os.environ.pop(k, None)
-            for k in ("CONTEXT_BUNDLE_VARS", "CONTEXT_BUNDLE_PLAIN")
+            for k in ("CONTEXT_BUNDLE_VARS", "CONTEXT_BUNDLE_PLAIN", "XDG_STATE_HOME", "CONTEXT_BUNDLE_TTY")
         }
         pkg_dir = self.tmp / "offline_rules_pkg"
         _seed_offline_rules_pkg(pkg_dir)
         os.environ["CONTEXT_BUNDLE_CACHE_DIR"] = str(self.tmp / "cache")
         os.environ["CONTEXT_BUNDLE_LOCAL_PKG_DIR"] = str(pkg_dir)
+        os.environ["XDG_STATE_HOME"] = str(self.tmp / "state")
 
     def tearDown(self):
         os.environ.pop("CONTEXT_BUNDLE_CACHE_DIR", None)
         os.environ.pop("CONTEXT_BUNDLE_LOCAL_PKG_DIR", None)
+        os.environ.pop("XDG_STATE_HOME", None)
+        os.environ.pop("CONTEXT_BUNDLE_TTY", None)
         for k, v in self._saved_env.items():
             if v is not None:
                 os.environ[k] = v
@@ -215,6 +218,11 @@ class AgentsBundleTestCase(unittest.TestCase):
             text=text,
             check=check,
         )
+
+    def _trust(self, repo_dir: str | Path | None = None) -> None:
+        target = Path(repo_dir) if repo_dir is not None else self.tmp
+        r = self._run([str(SCRIPT), "--trust", "-C", str(target)])
+        self._assert_ok(r)
 
     def _git(self, repo, *args):
         r = subprocess.run(

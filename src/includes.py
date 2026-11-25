@@ -35,8 +35,8 @@ def _expand_include(
     resolved_root = root_dir.resolve() if root_dir is not None else None
 
     def to_abs(raw: str) -> Path:
-        p = Path(raw)
-        return p.resolve() if p.is_absolute() else (wdir / raw).resolve()
+        p = Path(raw).expanduser()
+        return p.resolve() if p.is_absolute() else (wdir / p).resolve()
 
     def ensure_within_root(candidate: Path) -> None:
         if resolved_root is not None and not _is_within_root(candidate, resolved_root):
@@ -60,7 +60,8 @@ def _expand_include(
             return []
     if not base:
         return []
-    if Path(base).is_absolute() or not any(c in base for c in "*?["):
+    expanded_base = Path(base).expanduser()
+    if expanded_base.is_absolute() or not any(c in base for c in "*?["):
         target = to_abs(base)
         ensure_within_root(target)
         return [(target, start, end)] if target.is_file() else []

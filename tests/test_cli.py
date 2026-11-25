@@ -196,6 +196,58 @@ class TestCLI(AgentsBundleTestCase):
             self.assertFalse(installed_context.exists())
             self.assertFalse(new_cache.exists())
 
+    def test_trust_cli_lifecycle_and_permissions(self):
+        import hashlib
+        import json
+        import stat
+
+        repo = self.tmp / "trust_repo"
+        repo.mkdir()
+        spec = repo / ".context.bundle"
+
+        with self.subTest(case="missing spec fails with exit code 2"):
+            r_miss = self._run([str(SCRIPT), "--trust", "-C", str(repo)])
+            self.assertEqual(r_miss.returncode, 2, msg=r_miss.stderr)
+            self.assertIn(".context.bundle or .agents_bundle not found", r_miss.stderr)
+
+        with self.subTest(case="empty trust list before trusting"):
+            r_empty = self._run([str(SCRIPT), "--trust", "--list"])
+            self._assert_ok(r_empty)
+            self.assertIn("No trusted .context.bundle files", r_empty.stdout)
+
+        spec.write_text("cmd echo trusted_hello\n", encoding="utf-8")
+        expected_sha = hashlib.sha256(spec.read_bytes()).hexdigest()
+
+        with self.subTest(case="--trust records (realpath, sha256) with 0600 permissions"):
+            r_trust = self._run([str(SCRIPT), "--trust", "-C", str(repo)])
+            self._assert_ok(r_trust)
+            self.assertIn(str(spec.resolve()), r_trust.stdout)
+            self.assertIn(expected_sha, r_trust.stdout)
+            trust_json = self.tmp / "state" / "context-bundle" / "trusted.json"
+            self.assertTrue(trust_json.is_file())
+            self.assertEqual(stat.S_IMODE(trust_json.stat().st_mode), 0o600)
+            data = json.loads(trust_json.read_text(encoding="utf-8"))
+            self.assertEqual(data.get(str(spec.resolve())), expected_sha)
+
+        with self.subTest(case="--trust --list prints digest and realpath"):
+            r_list = self._run([str(SCRIPT), "--trust", "--list"])
+            self._assert_ok(r_list)
+            self.assertIn(expected_sha, r_list.stdout)
+            self.assertIn(str(spec.resolve()), r_list.stdout)
+
+        with self.subTest(case="--trust --revoke removes entry"):
+            r_rev = self._run([str(SCRIPT), "--trust", "--revoke", "-C", str(repo)])
+            self._assert_ok(r_rev)
+            self.assertIn("revoked trust", r_rev.stdout)
+            r_list2 = self._run([str(SCRIPT), "--trust", "--list"])
+            self._assert_ok(r_list2)
+            self.assertNotIn(expected_sha, r_list2.stdout)
+
+        with self.subTest(case="conflicting flags fail with usage"):
+            r_bad = self._run([str(SCRIPT), "--trust", "--revoke", "--list"])
+            self.assertNotEqual(r_bad.returncode, 0)
+            self.assertIn("usage: context --trust", r_bad.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,6 +29,7 @@ class TestBundle(AgentsBundleTestCase):
             "cmd echo cmd_ok\n",
             encoding="utf-8",
         )
+        self._trust()
         rb = self._run(
             [str(SCRIPT), "extra.txt", "-p", "Solve task 1"],
             cwd=str(self.tmp),
@@ -102,6 +103,7 @@ class TestBundle(AgentsBundleTestCase):
             "export role task\n",
             encoding="utf-8",
         )
+        self._trust()
         r_none = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
         self._assert_ok(r_none)
         self.assertIn("Context bundler & rules engine", r_none.stdout)
@@ -262,6 +264,7 @@ class TestBundle(AgentsBundleTestCase):
             "    prompt Executing {task:}\n",
             encoding="utf-8",
         )
+        self._trust()
         # Dynamic var resolution and include directive without explicit task=<ID>
         r_dyn = self._run(
             [str(SCRIPT), "role=execute"],
@@ -381,6 +384,7 @@ class TestBundle(AgentsBundleTestCase):
             "rule vitalio/agents-rules:core/lang\n",
             encoding="utf-8",
         )
+        self._trust()
         r = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
         self._assert_ok(r)
         self.assertEqual(r.stdout.count("===== Rules ====="), 1)
@@ -420,6 +424,7 @@ class TestBundle(AgentsBundleTestCase):
             "cmd pwd\n",
             encoding="utf-8",
         )
+        self._trust(proj)
 
         # Piped Key: Value preamble maps Workdir and non-transport headers to lowercase vars
         piped = (
@@ -509,6 +514,7 @@ class TestBundle(AgentsBundleTestCase):
             "cmd cat AGENTS.md\n",
             encoding="utf-8",
         )
+        self._trust(override_proj)
         r_override = self._run(
             [str(SCRIPT), "-C", str(override_proj)],
             cwd=str(self.tmp),
@@ -544,6 +550,7 @@ class TestBundle(AgentsBundleTestCase):
             "    cmd echo already_piped\n",
             encoding="utf-8",
         )
+        self._trust(piped_guard_proj)
         for label, stdin_val, expect_piped in [
             ("no_stdin", None, False),
             ("bare_id", "F20\n", False),
@@ -592,6 +599,7 @@ class TestBundle(AgentsBundleTestCase):
         proj = self.tmp / "empty_pipe_proj"
         proj.mkdir()
         (proj / ".agents_bundle").write_text("cmd echo marker_should_not_run\n", encoding="utf-8")
+        self._trust(proj)
         for label, data in [("empty", ""), ("whitespace", "  \n")]:
             with self.subTest(fifo_case=label):
                 r_fifo = self._run_subprocess([str(SCRIPT), "-C", str(proj)], cwd=self.tmp, input=data)
@@ -713,6 +721,7 @@ class TestBundle(AgentsBundleTestCase):
             "prompt Root prompt\n"
         )
         (self.tmp / ".agents_bundle").write_text(spec_text, encoding="utf-8")
+        self._trust()
 
         # 1. Verify parse_spec preserves full multi-hop chain (root=[] vs nested bundles)
         parsed = mod.parse_spec(spec_text, work_dir=self.tmp)
@@ -874,6 +883,7 @@ class TestBundle(AgentsBundleTestCase):
             "prompt Line two\n",
             encoding="utf-8",
         )
+        self._trust()
 
         r = self._run(
             [str(SCRIPT), "cli_doc.txt", "-p", "CLI prompt line"],
@@ -1019,6 +1029,7 @@ class TestBundle(AgentsBundleTestCase):
             "prompt Plain mode prompt\n",
             encoding="utf-8",
         )
+        self._trust()
 
         for label, extra_args, extra_env in [
             ("cli_flag", ["--plain"], {}),
@@ -1154,6 +1165,7 @@ class TestBundle(AgentsBundleTestCase):
             "bundle vitalio/agents-rules:ext_cmd\n",
             encoding="utf-8",
         )
+        self._trust()
         r_blocked = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
         self.assertNotEqual(r_blocked.returncode, 0)
         self.assertIn("printf ext_cmd_ok", r_blocked.stderr)
@@ -1167,6 +1179,7 @@ class TestBundle(AgentsBundleTestCase):
             "bundle vitalio/agents-rules:ext_subshell\n",
             encoding="utf-8",
         )
+        self._trust()
         r_static = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
         self.assertNotEqual(r_static.returncode, 0)
         self.assertIn("forbidden_after_var", r_static.stderr)
@@ -1180,6 +1193,7 @@ class TestBundle(AgentsBundleTestCase):
             "bundle vitalio/agents-rules:ext_var_only\n",
             encoding="utf-8",
         )
+        self._trust()
         r_allowed = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
         self._assert_ok(r_allowed)
         self.assertIn("ext_cmd_ok", r_allowed.stdout)
@@ -1190,6 +1204,7 @@ class TestBundle(AgentsBundleTestCase):
             "bundle vitalio/agents-rules:ext_pipe allow=printf,head\n",
             encoding="utf-8",
         )
+        self._trust()
         r_per_bundle = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
         self._assert_ok(r_per_bundle)
         self.assertNotIn("Allow:", r_per_bundle.stdout)
@@ -1200,6 +1215,7 @@ class TestBundle(AgentsBundleTestCase):
             "bundle vitalio/agents-rules:ext_pipe allow=printf\n",
             encoding="utf-8",
         )
+        self._trust()
         r_pipe_block = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
         self.assertNotEqual(r_pipe_block.returncode, 0)
         self.assertIn("executable 'head'", r_pipe_block.stderr)
@@ -1232,6 +1248,7 @@ class TestBundle(AgentsBundleTestCase):
                 f"bundle {outside_bundle.as_posix()} allow=printf\n",
                 encoding="utf-8",
             )
+            self._trust()
             r_out_ok = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
             self._assert_ok(r_out_ok)
             self.assertIn("outside_ran", r_out_ok.stdout)
@@ -1333,6 +1350,7 @@ class TestBundle(AgentsBundleTestCase):
             "file second.txt first.txt\n",
             encoding="utf-8",
         )
+        self._trust()
 
         for label, cli_args, expected_role in [
             ("explicit_role", ["todo_md.role=audit", "todo_md.prefix=D"], "audit"),
@@ -1377,6 +1395,161 @@ class TestBundle(AgentsBundleTestCase):
                 r_bad = self._run([str(SCRIPT)], cwd=str(self.tmp))
                 self.assertNotEqual(r_bad.returncode, 0, msg=r_bad.stdout)
                 self.assertIn(err_sub, r_bad.stderr)
+
+    def test_root_bundle_file_workdir_boundary_and_unrestricted_cli_files(self):
+        repo = self.tmp / "boundary_repo"
+        repo.mkdir()
+        (repo / "local.txt").write_text("inside repo\n", encoding="utf-8")
+        outside = self.tmp / "secrets.env"
+        outside.write_text("API_KEY=secret123\n", encoding="utf-8")
+        sym = repo / "escape_link.env"
+        sym.symlink_to(outside)
+
+        for label, spec_line in [
+            ("tilde_home", "file ~/.ssh/id_rsa\n"),
+            ("parent_relative", "file ../secrets.env\n"),
+            ("parent_slice", "file ../secrets.env:1-1\n"),
+            ("parent_glob", "file ../*.env\n"),
+            ("absolute_outside", f"file {outside.as_posix()}\n"),
+            ("symlink_outside", "file escape_link.env\n"),
+        ]:
+            with self.subTest(blocked_root_file=label):
+                (repo / ".context.bundle").write_text(spec_line, encoding="utf-8")
+                r_bad = self._run([str(SCRIPT)], cwd=str(repo))
+                self.assertNotEqual(r_bad.returncode, 0, msg=r_bad.stdout)
+                self.assertIn("resolves outside repository root", r_bad.stderr)
+                self.assertNotIn("secret123", r_bad.stdout)
+
+        with self.subTest(case="CLI extra file argument outside repo remains unrestricted"):
+            (repo / ".context.bundle").write_text("file local.txt\n", encoding="utf-8")
+            r_ok = self._run([str(SCRIPT), outside.as_posix()], cwd=str(repo))
+            self._assert_ok(r_ok)
+            self.assertIn("inside repo", r_ok.stdout)
+            self.assertIn("API_KEY=secret123", r_ok.stdout)
+
+    def test_root_bundle_builtin_readonly_commands_and_trust_enforcement(self):
+        mod = self._load_bundle_module()
+        for safe_cmd in [
+            "context --tree",
+            "context --tree -x build --max-lines 50",
+            "git status -sb",
+            "git branch -vv",
+            "git branch --show-current",
+            "git branch --list 'main*'",
+            "git branch --contains HEAD",
+            "git log --oneline -10",
+            "git diff --stat",
+            "git rev-parse --short HEAD",
+            "todo",
+            "todo -w",
+            "todo overview --full",
+            "todo projects",
+            "todo show F38",
+            "todo F38 role=work",
+            "todo list --ready -l 5",
+            "todo chain F38 --tree",
+            "todo check",
+        ]:
+            with self.subTest(safe_builtin=safe_cmd):
+                self.assertTrue(mod._is_safe_builtin_command(safe_cmd, "context"), msg=safe_cmd)
+
+        for unsafe_cmd in [
+            "echo hello",
+            "cat AGENTS.md",
+            "git status -sb; id",
+            "git status -sb | cat",
+            "git status -sb && echo pwn",
+            "git status $(id)",
+            "git status `id`",
+            "git -c core.pager=id log -1",
+            "git diff --output=/tmp/out.diff",
+            "git diff --ext-diff",
+            "git branch new-branch",
+            "git branch -D main",
+            "git branch -m old new",
+            "git checkout -b feat",
+            "todo add F 'New task'",
+            "todo status F38 WIP",
+            "todo done F38",
+            "todo cancel F38",
+            "todo archive",
+            "todo --update",
+            "context --update",
+        ]:
+            with self.subTest(unsafe_cmd=unsafe_cmd):
+                self.assertFalse(mod._is_safe_builtin_command(unsafe_cmd, "context"), msg=unsafe_cmd)
+
+        repo = self.tmp / "untrusted_repo"
+        repo.mkdir()
+        self._git(repo, "init", "-q")
+        self._git(repo, "symbolic-ref", "HEAD", "refs/heads/main")
+        (repo / "AGENTS.md").write_text("# Repo Rules\n", encoding="utf-8")
+        self._git(repo, "add", "AGENTS.md")
+        self._git(repo, "commit", "-q", "-m", "init")
+
+        with self.subTest(case="starter builtin read-only commands run with zero friction without trust"):
+            (repo / ".context.bundle").write_text(
+                "file AGENTS.md\n"
+                "let head_sha=$(git rev-parse --short HEAD)\n"
+                "export head_sha\n"
+                "cmd context --tree\n"
+                "cmd git status -sb\n"
+                "cmd git branch -vv\n"
+                "cmd git log --oneline -5\n"
+                "cmd git diff\n"
+                "cmd git rev-parse HEAD\n",
+                encoding="utf-8",
+            )
+            r_safe = self._run([str(SCRIPT)], cwd=str(repo))
+            self._assert_ok(r_safe)
+            self.assertIn("Head-Sha:", r_safe.stdout)
+            self.assertIn("===== $ context --tree =====", r_safe.stdout)
+            self.assertIn("===== $ git status -sb =====", r_safe.stdout)
+
+        marker = self.tmp / "untrusted_ran.txt"
+        for label, untrusted_spec in [
+            ("arbitrary_cmd", f"cmd \x22{sys.executable}\x22 -c \x22import pathlib; pathlib.Path({str(marker)!r}).write_text('pwn')\x22\n"),
+            ("arbitrary_let_subshell", "let x=$(printf pwn_val)\n"),
+            ("arbitrary_file_subshell", "file $(printf AGENTS.md)\n"),
+            ("root_allow_directive", "allow printf\n"),
+            ("bundle_allow_grant", "bundle vitalio/agents-rules:core allow=printf\n"),
+        ]:
+            with self.subTest(blocked_without_trust=label):
+                (repo / ".context.bundle").write_text(untrusted_spec, encoding="utf-8")
+                r_blk = self._run([str(SCRIPT)], cwd=str(repo))
+                self.assertNotEqual(r_blk.returncode, 0, msg=r_blk.stdout)
+                self.assertEqual(r_blk.stdout, "")
+                self.assertIn("untrusted .context.bundle", r_blk.stderr)
+                self.assertIn("context --trust", r_blk.stderr)
+                self.assertFalse(marker.exists())
+
+        with self.subTest(case="trust allows execution and file edit invalidates sha256 trust"):
+            (repo / ".context.bundle").write_text("cmd printf trusted_ok\n", encoding="utf-8")
+            self._trust(repo)
+            r_tr = self._run([str(SCRIPT)], cwd=str(repo))
+            self._assert_ok(r_tr)
+            self.assertIn("===== $ printf trusted_ok =====\ntrusted_ok", r_tr.stdout)
+
+            # Modifying .context.bundle changes sha256 and requires re-trusting
+            (repo / ".context.bundle").write_text("cmd printf modified_untrusted\n", encoding="utf-8")
+            r_mod = self._run([str(SCRIPT)], cwd=str(repo))
+            self.assertNotEqual(r_mod.returncode, 0)
+            self.assertIn("untrusted .context.bundle", r_mod.stderr)
+            self.assertNotIn("modified_untrusted", r_mod.stdout)
+
+        with self.subTest(case="interactive /dev/tty confirmation prompt declines and accepts"):
+            tty_file = self.tmp / "fake_tty.txt"
+            tty_file.write_text("n\n", encoding="utf-8")
+            env_tty = {**os.environ, "CONTEXT_BUNDLE_TTY": str(tty_file)}
+            r_no = self._run([str(SCRIPT)], cwd=str(repo), env=env_tty)
+            self.assertNotEqual(r_no.returncode, 0)
+            self.assertIn("untrusted .context.bundle", r_no.stderr)
+
+            tty_file.write_text("y\n", encoding="utf-8")
+            r_yes = self._run([str(SCRIPT)], cwd=str(repo), env=env_tty)
+            self._assert_ok(r_yes)
+            self.assertIn("===== $ printf modified_untrusted =====\nmodified_untrusted", r_yes.stdout)
+            self.assertTrue(mod.is_spec_trusted(repo / ".context.bundle"))
 
 
 if __name__ == "__main__":

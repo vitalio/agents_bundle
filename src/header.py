@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import math
 import os
@@ -65,6 +66,10 @@ HELP_SECTIONS = (
             ),
             ("{prog} --update-cache", "Refresh cached git packages and URL files in {cache_dir}"),
             ("{prog} --init [--force]", "Create a starter .context.bundle in the current directory"),
+            (
+                "{prog} --trust [--revoke | --list]",
+                "Trust current .context.bundle (or revoke/list entries in {trust_file})",
+            ),
             ("{prog} --tree [DIR] [opts]", "Print token-budgeted repository file tree to stdout"),
             ("{prog} --update [--force]", "Self-update {prog} from GitHub (vitalio/context-bundle)"),
             ("{prog} --check-update", "Check if a newer version is available"),
@@ -93,6 +98,8 @@ HELP_SECTIONS = (
                 "--force",
                 "Overwrite existing .context.bundle (--init) or force reinstall (--update)",
             ),
+            ("--revoke", "Revoke trust for current .context.bundle (with --trust)"),
+            ("--list", "List bundles/rules, or list trusted specs (with --trust)"),
         ),
     ),
     (
@@ -137,6 +144,7 @@ HELP_SECTIONS = (
                 "Use a local package checkout instead of the cache",
             ),
             ("CONTEXT_BUNDLE_CACHE_DIR", "Override the cache directory"),
+            ("XDG_STATE_HOME", "Base directory for context-bundle/trusted.json (default: ~/.local/state)"),
             ("CONTEXT_BUNDLE_SHELL", "Override the shell executable used for cmd directives"),
             ("CONTEXT_BUNDLE_UPDATE_URL", "Override the remote script URL for --update"),
         ),

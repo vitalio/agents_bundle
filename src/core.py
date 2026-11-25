@@ -63,6 +63,16 @@ def cache_dir_path() -> Path:
     return _migrate_and_prune_cache(base)
 
 
+def state_dir_path() -> Path:
+    xdg = os.environ.get("XDG_STATE_HOME", "").strip()
+    base = Path(xdg).expanduser() if xdg else (Path.home() / ".local" / "state")
+    return base / "context-bundle"
+
+
+def trust_file_path() -> Path:
+    return state_dir_path() / "trusted.json"
+
+
 def render_help_section(title: str, rows, col: int | None = None) -> str:
     if col is None:
         col = HELP_INDENT + max(len(left) for left, _ in rows) + HELP_GAP
@@ -76,7 +86,12 @@ def render_help_section(title: str, rows, col: int | None = None) -> str:
 
 
 def usage_text() -> str:
-    fields = {"prog": prog_name(), "default_pkg": DEFAULT_RULES_PKG, "cache_dir": cache_dir_path()}
+    fields = {
+        "prog": prog_name(),
+        "default_pkg": DEFAULT_RULES_PKG,
+        "cache_dir": cache_dir_path(),
+        "trust_file": trust_file_path(),
+    }
     sections = [
         (title, [(left.format(**fields), right.format(**fields)) for left, right in rows])
         for title, rows in HELP_SECTIONS
