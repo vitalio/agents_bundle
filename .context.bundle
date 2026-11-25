@@ -1,9 +1,9 @@
 bundle vitalio/agents-rules:adapters/todo-md
 bundle vitalio/agents-rules:core
 bundle vitalio/agents-rules:coding
-bundle vitalio/agents-rules:stack/python py_min=3.9
+bundle vitalio/agents-rules:coding/python py_min=3.9
 bundle vitalio/agents-rules:release single_file_build=1
-bundle vitalio/agents-rules:stack/cli
+bundle vitalio/agents-rules:coding/cli
 rule vitalio/agents-rules:collab/commits
 
 file AGENTS.md
