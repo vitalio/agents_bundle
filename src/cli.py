@@ -226,10 +226,8 @@ def main(argv: list[str] | None = None) -> int:
         if rest:
             raise SystemExit(f"{prog}: usage: {prog} --init [--force]")
         return cmd_init(force=force)
-    if "--trust" in args:
-        idx = args.index("--trust")
-        rest = args[:idx] + args[idx + 1 :]
-        return cmd_trust(rest)
+    if args and args[0] == "--trust":
+        return cmd_trust(args[1:])
     if args and args[0] == "--tree":
         return cmd_tree(args[1:])
     if args and args[0] == "--check-update":

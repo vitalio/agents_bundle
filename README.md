@@ -103,7 +103,7 @@ context --tree -x bumps -x resolutions --max-lines 160 --max-tokens 1600
 | `context --list \| -l [pkg]` | List bundles, rules, and built-in variables (default: `vitalio/agents-rules`) |
 | `context --update-cache` | Refresh cached git packages and URL files in `~/.cache/context-bundle` |
 | `context --init [--force]` | Create a starter `.context.bundle` in the current directory |
-| `context --trust [--revoke \| --list]` | Trust current `.context.bundle` (or revoke/list entries in `${XDG_STATE_HOME:-~/.local/state}/context-bundle/trusted.json`) |
+| `context --trust [--revoke \| --list] [-C DIR]` | Trust current `.context.bundle` (or revoke/list entries in `${XDG_STATE_HOME:-~/.local/state}/context-bundle/trusted.json`) |
 | `context --tree [DIR] [opts]` | Print token-budgeted repository file tree to `stdout` |
 | `context --update [--force]` | Self-update `context` from GitHub (`vitalio/context-bundle`) |
 | `context --check-update` | Check if a newer version is available |
@@ -126,7 +126,7 @@ context --tree -x bumps -x resolutions --max-lines 160 --max-tokens 1600
 | `--max-tokens N` | Approximate token budget for `--tree` (default: `1600`) |
 | `--force` | Overwrite existing `.context.bundle` (`--init`) or force reinstall (`--update`) |
 | `--revoke` | Revoke trust for current `.context.bundle` (with `--trust`) |
-| `--list` | List bundles/rules, or list trusted specs (with `--trust`) |
+| `-l, --list` | List bundles/rules, or list trusted specs (with `--trust`) |
 
 ### Environment
 

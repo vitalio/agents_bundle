@@ -47,7 +47,7 @@ from src.rules_engine import (
     strip_if_blocks_and_lines,
     wrap_bundle_fragment,
 )
-from src.includes import IncludeSpan, _expand_include, display_path, merge_spans, read_span, render_span, span_from_fragment
+from src.includes import IncludeSpan, _expand_include, _is_within_root, display_path, merge_spans, read_span, render_span, span_from_fragment
 from src.upstream import (
     PipedInput,
     group_fragments,
@@ -244,7 +244,40 @@ def _is_safe_todo_args(args: list[str]) -> bool:
     return True
 
 
-def _is_safe_builtin_command(cmd_str: str, prog: str | None = None) -> bool:
+def _is_safe_tree_args(args: list[str], work_dir: Path | None = None) -> bool:
+    if not args or args[0] != "--tree":
+        return False
+    wdir = (work_dir if work_dir is not None else Path.cwd()).resolve()
+    i = 1
+    seen_dir = False
+    while i < len(args):
+        a = args[i]
+        if a in ("-x", "--exclude", "--max-lines", "--max-tokens"):
+            if i + 1 >= len(args):
+                return False
+            i += 2
+            continue
+        if a.startswith(("--exclude=", "--max-lines=", "--max-tokens=")):
+            i += 1
+            continue
+        if a.startswith("-"):
+            return False
+        if seen_dir:
+            return False
+        seen_dir = True
+        p = Path(a).expanduser()
+        cand = p.resolve() if p.is_absolute() else (wdir / p).resolve()
+        if not _is_within_root(cand, wdir):
+            return False
+        i += 1
+    return True
+
+
+def _is_safe_builtin_command(
+    cmd_str: str,
+    prog: str | None = None,
+    work_dir: Path | None = None,
+) -> bool:
     s = cmd_str.strip()
     if not s or _has_unsafe_shell_syntax(s):
         return False
@@ -258,7 +291,7 @@ def _is_safe_builtin_command(cmd_str: str, prog: str | None = None) -> bool:
     args = tokens[1:]
     p = prog or prog_name()
     if exe in (p, "context", "agents_bundle"):
-        return bool(args and args[0] == "--tree")
+        return _is_safe_tree_args(args, work_dir=work_dir)
     if exe == "git":
         idx = 0
         while idx < len(args) and args[idx] in ("--no-pager", "--no-optional-locks"):
@@ -270,7 +303,7 @@ def _is_safe_builtin_command(cmd_str: str, prog: str | None = None) -> bool:
         if subcmd not in _GIT_READONLY_SUBCMDS:
             return False
         for a in subargs:
-            if a in ("--ext-diff", "--textconv") or a.startswith(("--output", "-o", "--exec")):
+            if a.startswith(("--ext-diff", "--textconv", "--output", "-o", "--exec")):
                 return False
         if subcmd == "branch":
             return _is_safe_git_branch_args(subargs)
@@ -280,8 +313,54 @@ def _is_safe_builtin_command(cmd_str: str, prog: str | None = None) -> bool:
     return False
 
 
+def _collect_local_child_bundles(
+    bundle_file: Path,
+    root_dir: Path,
+    visited: set[Path],
+) -> None:
+    resolved_file = bundle_file.resolve()
+    if resolved_file in visited or not resolved_file.is_file():
+        return
+    visited.add(resolved_file)
+    try:
+        raw_text = resolved_file.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    for raw_line in raw_text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#") or not stripped.startswith("bundle "):
+            continue
+        try:
+            parts = shlex.split(stripped)
+        except ValueError:
+            continue
+        if len(parts) < 2:
+            continue
+        target = parts[1].strip()
+        if "{" in target or not _is_local_path_spec(target):
+            continue
+        cand = Path(target).expanduser()
+        cand = cand.resolve() if cand.is_absolute() else (resolved_file.parent / cand).resolve()
+        if not cand.is_file() and not cand.suffix and cand.with_suffix(".bundle").is_file():
+            cand = cand.with_suffix(".bundle").resolve()
+        if cand.is_file() and _is_within_root(cand, root_dir):
+            _collect_local_child_bundles(cand, root_dir, visited)
+
+
 def _spec_sha256(spec_file: Path) -> str:
-    return hashlib.sha256(spec_file.read_bytes()).hexdigest()
+    resolved_spec = spec_file.resolve()
+    root_dir = resolved_spec.parent
+    visited: set[Path] = set()
+    _collect_local_child_bundles(resolved_spec, root_dir, visited)
+    if len(visited) <= 1:
+        return hashlib.sha256(resolved_spec.read_bytes()).hexdigest()
+    h = hashlib.sha256()
+    h.update(hashlib.sha256(resolved_spec.read_bytes()).digest())
+    for child in sorted(visited - {resolved_spec}):
+        rel = child.relative_to(root_dir).as_posix()
+        h.update(f"\0{rel}\0".encode("utf-8"))
+        h.update(hashlib.sha256(child.read_bytes()).digest())
+    return h.hexdigest()
 
 
 def _load_trusted_store() -> dict[str, str]:
@@ -735,11 +814,14 @@ def _static_inspect_root_trust_ast(
     spec_file: Path,
     trust_state: dict[str, bool],
     in_child_bundle: bool,
+    bundle_label: str,
+    work_dir: Path | None,
     prog: str,
 ) -> None:
     if trust_state.get("trusted"):
         return
     sim_vars = dict(bvars)
+    origin_suffix = f" in local bundle {bundle_label!r}" if in_child_bundle else ""
 
     def walk(stmts: list[tuple[str, object]]) -> None:
         for n_kind, payload in stmts:
@@ -762,11 +844,11 @@ def _static_inspect_root_trust_ast(
                 except (ValueError, SystemExit):
                     vmap = {}
                 if "allow" in vmap:
-                    _ensure_root_spec_trusted(spec_file, trust_state, f"allow grant in {line!r}", prog)
+                    _ensure_root_spec_trusted(spec_file, trust_state, f"allow grant in {line!r}{origin_suffix}", prog)
             elif line.startswith("cmd "):
                 cmd_str = line[4:].strip()
-                if cmd_str and not _is_safe_builtin_command(cmd_str, prog):
-                    _ensure_root_spec_trusted(spec_file, trust_state, f"command {cmd_str!r}", prog)
+                if cmd_str and not _is_safe_builtin_command(cmd_str, prog, work_dir=work_dir):
+                    _ensure_root_spec_trusted(spec_file, trust_state, f"command {cmd_str!r}{origin_suffix}", prog)
             elif line.startswith("let "):
                 assign = line[4:].strip()
                 if "=" in assign:
@@ -775,16 +857,20 @@ def _static_inspect_root_trust_ast(
                     s = v_expr.strip()
                     if s.startswith("$(") and s.endswith(")") and len(s) >= 3:
                         cmd_str = s[2:-1].strip()
-                        if cmd_str and not _is_safe_builtin_command(cmd_str, prog):
-                            _ensure_root_spec_trusted(spec_file, trust_state, f"command substitution '$({cmd_str})'", prog)
+                        if cmd_str and not _is_safe_builtin_command(cmd_str, prog, work_dir=work_dir):
+                            _ensure_root_spec_trusted(
+                                spec_file, trust_state, f"command substitution '$({cmd_str})'{origin_suffix}", prog
+                            )
                     elif not sim_vars.get(k_clean) and s:
                         sim_vars[k_clean] = s
             elif line.startswith("file "):
                 inc_expr = line[5:].strip()
                 if inc_expr.startswith("$(") and inc_expr.endswith(")") and len(inc_expr) >= 3:
                     cmd_str = inc_expr[2:-1].strip()
-                    if cmd_str and not _is_safe_builtin_command(cmd_str, prog):
-                        _ensure_root_spec_trusted(spec_file, trust_state, f"command substitution '$({cmd_str})'", prog)
+                    if cmd_str and not _is_safe_builtin_command(cmd_str, prog, work_dir=work_dir):
+                        _ensure_root_spec_trusted(
+                            spec_file, trust_state, f"command substitution '$({cmd_str})'{origin_suffix}", prog
+                        )
 
     walk(nodes)
 
@@ -829,7 +915,9 @@ def parse_spec(
     if is_external and enforce_allowlist and in_child_bundle:
         _static_inspect_bundle_ast(ast_nodes, bvars, cur_allowed, bundle_label, root_label, prog)
     elif not is_external and root_spec_file is not None:
-        _static_inspect_root_trust_ast(ast_nodes, bvars, root_spec_file, trust_state, in_child_bundle, prog)
+        _static_inspect_root_trust_ast(
+            ast_nodes, bvars, root_spec_file, trust_state, in_child_bundle, bundle_label, work_dir, prog
+        )
 
     effective_allow_set: set[str] | None = cur_allowed if (is_external and enforce_allowlist) else None
     if is_external and external_chains is not None:
@@ -889,9 +977,10 @@ def parse_spec(
                     s_expr = v_expr.strip()
                     if not is_external and s_expr.startswith("$(") and s_expr.endswith(")") and len(s_expr) >= 3:
                         inner_cmd = s_expr[2:-1].strip()
-                        if inner_cmd and not _is_safe_builtin_command(inner_cmd, prog):
+                        if inner_cmd and not _is_safe_builtin_command(inner_cmd, prog, work_dir=work_dir):
+                            origin_s = f" in local bundle {bundle_label!r}" if in_child_bundle else ""
                             _ensure_root_spec_trusted(
-                                root_spec_file, trust_state, f"command substitution '$({inner_cmd})'", prog
+                                root_spec_file, trust_state, f"command substitution '$({inner_cmd})'{origin_s}", prog
                             )
                     val = _eval_dynamic_expr(
                         v_expr,
@@ -915,9 +1004,10 @@ def parse_spec(
                 is_dyn = inc_expr.startswith("$(") and inc_expr.endswith(")") and len(inc_expr) >= 3
                 if not is_external and is_dyn:
                     inner_cmd = inc_expr[2:-1].strip()
-                    if inner_cmd and not _is_safe_builtin_command(inner_cmd, prog):
+                    if inner_cmd and not _is_safe_builtin_command(inner_cmd, prog, work_dir=work_dir):
+                        origin_s = f" in local bundle {bundle_label!r}" if in_child_bundle else ""
                         _ensure_root_spec_trusted(
-                            root_spec_file, trust_state, f"command substitution '$({inner_cmd})'", prog
+                            root_spec_file, trust_state, f"command substitution '$({inner_cmd})'{origin_s}", prog
                         )
                 resolved_inc = _eval_dynamic_expr(
                     inc_expr,
@@ -940,8 +1030,9 @@ def parse_spec(
                 if cmd_str:
                     if effective_allow_set is not None:
                         _check_command_allowed(cmd_str, effective_allow_set, bundle_label, prog)
-                    elif not is_external and not _is_safe_builtin_command(cmd_str, prog):
-                        _ensure_root_spec_trusted(root_spec_file, trust_state, f"command {cmd_str!r}", prog)
+                    elif not is_external and not _is_safe_builtin_command(cmd_str, prog, work_dir=work_dir):
+                        origin_s = f" in local bundle {bundle_label!r}" if in_child_bundle else ""
+                        _ensure_root_spec_trusted(root_spec_file, trust_state, f"command {cmd_str!r}{origin_s}", prog)
                     entries.append(("cmd", cmd_str, cond_expr, list(cur_chain)))
             elif line == "rule" or line.startswith("rule "):
                 parts = shlex.split(line)

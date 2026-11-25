@@ -248,6 +248,13 @@ class TestCLI(AgentsBundleTestCase):
             self.assertNotEqual(r_bad.returncode, 0)
             self.assertIn("usage: context --trust", r_bad.stderr)
 
+        with self.subTest(case="--trust inside prompt argument is not hijacked as subcommand"):
+            spec.write_text("file AGENTS.md\n", encoding="utf-8")
+            (repo / "AGENTS.md").write_text("# Doc\n", encoding="utf-8")
+            r_prompt = self._run([str(SCRIPT), "-p", "--trust", "--plain"], cwd=str(repo))
+            self._assert_ok(r_prompt)
+            self.assertIn("===== Prompt =====\n--trust", r_prompt.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

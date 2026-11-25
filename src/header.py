@@ -67,7 +67,7 @@ HELP_SECTIONS = (
             ("{prog} --update-cache", "Refresh cached git packages and URL files in {cache_dir}"),
             ("{prog} --init [--force]", "Create a starter .context.bundle in the current directory"),
             (
-                "{prog} --trust [--revoke | --list]",
+                "{prog} --trust [--revoke | --list] [-C DIR]",
                 "Trust current .context.bundle (or revoke/list entries in {trust_file})",
             ),
             ("{prog} --tree [DIR] [opts]", "Print token-budgeted repository file tree to stdout"),
@@ -99,7 +99,7 @@ HELP_SECTIONS = (
                 "Overwrite existing .context.bundle (--init) or force reinstall (--update)",
             ),
             ("--revoke", "Revoke trust for current .context.bundle (with --trust)"),
-            ("--list", "List bundles/rules, or list trusted specs (with --trust)"),
+            ("-l, --list", "List bundles/rules, or list trusted specs (with --trust)"),
         ),
     ),
     (

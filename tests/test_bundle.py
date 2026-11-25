@@ -1464,6 +1464,11 @@ class TestBundle(AgentsBundleTestCase):
             "git -c core.pager=id log -1",
             "git diff --output=/tmp/out.diff",
             "git diff --ext-diff",
+            "git diff --ext-diff=id",
+            "git log -p --textconv=id",
+            "context --tree /etc",
+            "context --tree ~/.ssh",
+            "context --tree ../outside",
             "git branch new-branch",
             "git branch -D main",
             "git branch -m old new",
@@ -1550,6 +1555,23 @@ class TestBundle(AgentsBundleTestCase):
             self._assert_ok(r_yes)
             self.assertIn("===== $ printf modified_untrusted =====\nmodified_untrusted", r_yes.stdout)
             self.assertTrue(mod.is_spec_trusted(repo / ".context.bundle"))
+
+        with self.subTest(case="modifying local child bundle inside repo invalidates composite sha256 trust"):
+            child_b = repo / "local_child.bundle"
+            child_b.write_text("cmd printf child_v1\n", encoding="utf-8")
+            (repo / ".context.bundle").write_text("bundle ./local_child.bundle\n", encoding="utf-8")
+            self._trust(repo)
+            r_c1 = self._run([str(SCRIPT)], cwd=str(repo))
+            self._assert_ok(r_c1)
+            self.assertIn("child_v1", r_c1.stdout)
+
+            # Tampering with local_child.bundle without touching .context.bundle invalidates trust
+            child_b.write_text("cmd printf child_tampered\n", encoding="utf-8")
+            r_c2 = self._run([str(SCRIPT)], cwd=str(repo))
+            self.assertNotEqual(r_c2.returncode, 0)
+            self.assertIn("untrusted .context.bundle", r_c2.stderr)
+            self.assertIn("./local_child.bundle", r_c2.stderr)
+            self.assertNotIn("child_tampered", r_c2.stdout)
 
 
 if __name__ == "__main__":
