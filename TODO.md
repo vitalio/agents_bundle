@@ -1,12 +1,3 @@
-# 🎯 [NEXT] F40: Replace allow directive and hardcoded git/todo command whitelists with unified trusted.json command-tree hashing
-
-- Depends on: F39
-- Bump: `MINOR`
-- Remove the `allow` directive (and inline `bundle ... allow=...`) from the `.bundle` language in `src/bundle.py` and `src/header.py`, leaving the 8 core directives (`bundle`, `rule`, `file`, `cmd`, `prompt`, `let`, `export`, `if` / `else if` / `else`).
-- Remove all hardcoded external CLI command whitelists and shell-command executable parsers from `src/bundle.py`: `_GIT_READONLY_SUBCMDS`, `_GIT_BRANCH_VALUE_FLAGS`, `_GIT_BRANCH_SAFE_BOOL_FLAGS`, `_is_safe_git_branch_args()`, `_TODO_MUTATING_SUBCMDS`, `_TODO_READONLY_SUBCMDS`, `_TODO_FORBIDDEN_FLAGS`, `_is_safe_todo_args()`, `_SHELL_WRAPPER_BINS`, `_parse_allow_bins()`, `_extract_subshells_and_segments()`, `_extract_command_executables()`, `_check_command_allowed()`, and the legacy `agents_bundle` executable alias. Keep only the in-process `context --tree` fast path exempt from external shell execution trust.
-- Unify trust verification around `context --trust` (`trusted.json`): compute the trust digest over the root `.context.bundle` (and local child bundles) together with the ordered set of shell command templates (`cmd ...`, `let x=$(...)`, `file $(...)`) collected across referenced external bundles; when untrusted, display the pending shell commands in the `/dev/tty` `[y/N]` trust prompt (or non-interactive error message), and automatically record trust in `trusted.json` when creating a starter file via `context --init`.
-- Update `README.md`, `AGENTS.md`, and `tests/test_bundle.py`, and rebuild `./context` via `python3 build.py`.
-
 # 🎯 [NEXT] D1: Design local .context/ overlays, package lock/vendoring, and ephemeral task-scout bundles
 
 - Depends on: F39 -> F40

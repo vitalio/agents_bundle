@@ -3,18 +3,18 @@
 **Unix-style context bundler, rule/bundle engine, and token-budgeted repository file tree for AI coding agents on POSIX (`linux` and `macos`).**
 
 `context` executes `.context.bundle` (with fallback to `.agents_bundle`) in the
-target working directory, evaluates the 9-keyword `.bundle` directive language,
+target working directory, evaluates the 8-keyword `.bundle` directive language,
 merges rules, files, command outputs, and prompts, and writes the assembled
 context bundle strictly to `stdout` (with diagnostics on `stderr`) so it
 composes cleanly in Unix pipelines.
 
 ## Key Features
 
-- **Declarative 9-keyword `.bundle` language:** compose remote or local
+- **Declarative 8-keyword `.bundle` language:** compose remote or local
   `bundle` and `rule` specs, include `file` globs and `path:START-END` slices,
   capture `cmd` outputs, append `prompt` text, manage `let` and `export`
-  variables, branch with `if`/`else if`/`else`, and enforce an external command
-  `allow` list.
+  variables, branch with `if`/`else if`/`else`, and verify shell execution via
+  unified `trusted.json` command-tree hashing.
 - **Composable Unix pipeline protocol:** emit structured `Bundle-*` and
   exported `Key: Value` headers with 4-kind JSON fragment markers (`rule`,
   `file`, `cmd`, `prompt`), chain upstream tools such as `todo` and downstream
@@ -98,7 +98,7 @@ context --tree -x bumps -x resolutions --max-lines 160 --max-tokens 1600
 | Command | Description |
 | :--- | :--- |
 | `context [k=v ...] [-p TEXT] [FILE ...]` | Build context bundle from `.context.bundle` (or `.agents_bundle`) to `stdout` (`stdin`: `Key: Value` preamble, task ID, or prompt; sets `piped=1` on prompt; empty piped `stdin` exits `2`) |
-| `context bundle <pkg>[:<name>] [k=v]` | Render a bundle's rules, files, commands, and prompts from `agents/` in the regular bundle format without `.context.bundle` (reads no `stdin`; honors `-C`, `-p`, `--plain`, `-v`, `--refresh`, `allow=<cmd,...>`) |
+| `context bundle <pkg>[:<name>] [k=v]` | Render a bundle's rules, files, commands, and prompts from `agents/` in the regular bundle format without `.context.bundle` (reads no `stdin`; honors `-C`, `-p`, `--plain`, `-v`, `--refresh`) |
 | `context rule <pkg>[:<name...>] [k=v]` | Render one or more rules from `agents/` (`<owner>/<repo>[@ref][:<name\|path>]`, `./path`, or URL) to `stdout` |
 | `context --list \| -l [pkg]` | List bundles, rules, and built-in variables (default: `vitalio/agents-rules`) |
 | `context --update-cache` | Refresh cached git packages and URL files in `~/.cache/context-bundle` |
@@ -140,14 +140,14 @@ context --tree -x bumps -x resolutions --max-lines 160 --max-tokens 1600
 | `CONTEXT_BUNDLE_SHELL` | Override the shell executable used for `cmd` directives |
 | `CONTEXT_BUNDLE_UPDATE_URL` | Override the remote script URL for `--update` |
 
-## `.context.bundle` Format & 9-Keyword Directive Reference
+## `.context.bundle` Format & 8-Keyword Directive Reference
 
 Starter `.context.bundle` example:
 
 ```text
 bundle vitalio/agents-rules:core
-bundle vitalio/agents-rules:stack/python py_min=3.9
-bundle vitalio/agents-rules:stack/cli
+bundle vitalio/agents-rules:coding/python py_min=3.9
+bundle vitalio/agents-rules:coding/cli
 rule vitalio/agents-rules:release/semver
 bundle vitalio/agents-rules:adapters/todo-md
 
@@ -163,19 +163,18 @@ if mode=summary
 ```
 
 `.context.bundle` (legacy `.agents_bundle`) and package `.bundle` files share
-the same 9-keyword directive language; blank lines and `#` comments are
+the same 8-keyword directive language; blank lines and `#` comments are
 ignored, exported session variables resolve in a pre-pass (so `core` placed
 before a trailing `adapters/todo-md` bundle still sees `role`, `task`, and
 `title`), and `file` and `cmd` fragments assemble in exact top-down declaration
 order:
 
-- `bundle <owner>/<repo>[@<ref>][:<name|path>] [allow=<cmd,...>] [k=v ...]`
+- `bundle <owner>/<repo>[@<ref>][:<name|path>] [k=v ...]`
   (or a local path `./...`, `../...`, or URL) includes a composite bundle from
   `agents/` (`<repo>.bundle` or `default.bundle` for `<owner>/<repo>`,
   `<domain>.bundle`, `<domain>/<domain>.bundle`, or `<domain>/default.bundle`
   for `:<domain>`, or an explicit package-relative path); circular references
-  fail fast. Pass `allow=<cmd,...>` to permit an external bundle to run
-  specific executables.
+  fail fast.
 - `rule <owner>/<repo>[@<ref>][:<name|path>...] [k=v ...]` (or a local path
   `./...`, `../...`, or URL) includes one or more atomic `.md` rule files from
   `agents/` (`<repo>.md`, `default.md`, or the sole rule in `agents/*.md` for
@@ -195,15 +194,15 @@ order:
   occurrence. Empty `file` after variable expansion (such as
   `file {todo_md.files:}` when unset) is a no-op.
 - `cmd <shell command>` runs a command in `Workdir` and includes its output.
-  Built-in read-only inspection commands (`context --tree`, read-only
-  `git status`/`branch`/`log`/`diff`/`rev-parse`, and read-only `todo` queries)
-  run out of the box with zero friction; arbitrary shell commands in `cmd`,
-  `let <k>=$(<cmd>)`, or `file $(<cmd>)` and custom `allow` grants require the
-  root `.context.bundle` `(realpath, sha256)` to be trusted via
-  `context --trust` (or confirmed interactively via `/dev/tty`, failing closed
-  in non-interactive pipes; persisted in
-  `${XDG_STATE_HOME:-~/.local/state}/context-bundle/trusted.json` with `0600`
-  permissions).
+  The in-process `context --tree` fast path is exempt from external shell
+  execution trust; all external shell commands in `cmd`, `let <k>=$(<cmd>)`, or
+  `file $(<cmd>)` (across the root spec, local child bundles, and referenced
+  external bundles) require the root `.context.bundle` `(realpath, sha256)`
+  command-tree digest to be trusted in
+  `${XDG_STATE_HOME:-~/.local/state}/context-bundle/trusted.json` (`0600`) via
+  `context --trust`, `context --init`, or interactive `/dev/tty` `[y/N]`
+  confirmation displaying the pending shell commands (failing closed in
+  non-interactive runs).
 - `prompt <text>` appends text to the Prompt section.
 - `let <name>=<value>` or `let <name>=$(<cmd>)` sets a lexically scoped
   bundle-local variable (set-if-unset; passed down to child `rule` and `bundle`
@@ -219,11 +218,6 @@ order:
   Python-style indented blocks without trailing colons or `endif`. Variable
   names in `if`, `let`, `export`, and `{name:default}` support dot-separated
   producer namespaces (`<owner>.<repo>.<key>` and `<repo>.<key>`).
-- `allow <bin...>` (trusted root `.context.bundle` / `.agents_bundle` only)
-  permits external bundles to run the listed executables in `cmd`,
-  `let <k>=$(<cmd>)`, and `file $(<cmd>)`. All commands from external bundles
-  are inspected statically before any shell command runs; unlisted executables
-  fail fast naming the blocked command and originating bundle.
 
 ## Bundle Output Protocol & Piped Input
 

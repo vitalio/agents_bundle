@@ -25,7 +25,7 @@ class TestBundle(AgentsBundleTestCase):
             f"if os={cur_os}\n"
             "    rule vitalio/agents-rules:stack/python-cli py_min=3.12\n"
             "cmd cat AGENTS.md\n"
-            "cmd agents_bundle --tree --max-lines 10\n"
+            "cmd context --tree --max-lines 10\n"
             "cmd echo cmd_ok\n",
             encoding="utf-8",
         )
@@ -351,6 +351,7 @@ class TestBundle(AgentsBundleTestCase):
             "cmd git status -sb\n",
             encoding="utf-8",
         )
+        self._trust()
         env = {**os.environ, "CONTEXT_BUNDLE_SHELL": str(sh_shim)}
         r = self._run(
             [str(SCRIPT)],
@@ -410,6 +411,8 @@ class TestBundle(AgentsBundleTestCase):
         ]
         self.assertIn("file AGENTS.md", init_lines)
         self.assertIn("bundle vitalio/agents-rules:default", init_lines)
+        mod = self._load_bundle_module()
+        self.assertTrue(mod.is_spec_trusted(init_dir / ".context.bundle"))
 
     def test_piped_workdir_preamble_and_dir_priority(self):
         proj = self.tmp / "target_proj"
@@ -420,7 +423,7 @@ class TestBundle(AgentsBundleTestCase):
             "bundle vitalio/agents-rules:core\n"
             "export project task title role chat_lang\n"
             "cmd cat AGENTS.md\n"
-            "cmd agents_bundle --tree\n"
+            "cmd context --tree\n"
             "cmd pwd\n",
             encoding="utf-8",
         )
@@ -1129,7 +1132,7 @@ class TestBundle(AgentsBundleTestCase):
         self.assertEqual(by_name["big.txt:9-20"], "===== $ sed -n '9,20p' big.txt =====\nline9\nline10")
         self.assertEqual(by_name["odd:1-2.txt"], "===== $ cat odd:1-2.txt =====\nwhole")
 
-    def test_external_bundle_command_allowlist_and_static_inspection(self):
+    def test_external_bundle_command_tree_trust_hashing_and_allow_rejection(self):
         pkg_dir = Path(os.environ["CONTEXT_BUNDLE_LOCAL_PKG_DIR"])
         ext_bundles = pkg_dir / "agents"
         marker_file = self.tmp / "should_not_exist.txt"
@@ -1145,7 +1148,7 @@ class TestBundle(AgentsBundleTestCase):
         )
         (ext_bundles / "ext_subshell.bundle").write_text(
             f"let dyn=$(\x22{sys.executable}\x22 -c \x22import pathlib; pathlib.Path({str(marker_file)!r}).write_text('ran'); print('val')\x22)\n"
-            "cmd forbidden_after_var\n",
+            "cmd printf after_var\n",
             encoding="utf-8",
         )
         (ext_bundles / "ext_var_only.bundle").write_text(
@@ -1159,99 +1162,89 @@ class TestBundle(AgentsBundleTestCase):
             encoding="utf-8",
         )
 
-        # 1. Blocked cmd in external bundle fails fast before running root commands
-        (self.tmp / ".agents_bundle").write_text(
-            f"cmd \x22{sys.executable}\x22 -c \x22import pathlib; pathlib.Path({str(marker_file)!r}).write_text('root')\x22\n"
-            "bundle vitalio/agents-rules:ext_cmd\n",
-            encoding="utf-8",
-        )
-        self._trust()
-        r_blocked = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
-        self.assertNotEqual(r_blocked.returncode, 0)
-        self.assertIn("printf ext_cmd_ok", r_blocked.stderr)
-        self.assertIn("executable 'printf'", r_blocked.stderr)
-        self.assertIn("vitalio/agents-rules:ext_cmd", r_blocked.stderr)
-        self.assertFalse(marker_file.exists())
-
-        # 2. Static inspection blocks before executing earlier var $(...) subshell in external bundle
-        (self.tmp / ".agents_bundle").write_text(
-            f"allow {sys.executable}\n"
+        # 1. Untrusted root spec referencing external bundle with shell commands fails closed before running anything
+        (self.tmp / ".context.bundle").write_text(
             "bundle vitalio/agents-rules:ext_subshell\n",
             encoding="utf-8",
         )
-        self._trust()
-        r_static = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
-        self.assertNotEqual(r_static.returncode, 0)
-        self.assertIn("forbidden_after_var", r_static.stderr)
-        self.assertIn("vitalio/agents-rules:ext_subshell", r_static.stderr)
+        r_untrusted = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self.assertNotEqual(r_untrusted.returncode, 0)
+        self.assertIn("untrusted .context.bundle", r_untrusted.stderr)
+        self.assertIn("pending shell commands:", r_untrusted.stderr)
+        self.assertIn("cmd printf after_var (external bundle vitalio/agents-rules:ext_subshell)", r_untrusted.stderr)
         self.assertFalse(marker_file.exists())
 
-        # 3. Root allow directive permits external $ command and var $(...) subshell
-        (self.tmp / ".agents_bundle").write_text(
-            "allow printf\n"
+        # 2. Trusting root spec trusts external bundle commands and subshells without allow directive
+        (self.tmp / ".context.bundle").write_text(
             "bundle vitalio/agents-rules:ext_cmd\n"
-            "bundle vitalio/agents-rules:ext_var_only\n",
+            "bundle vitalio/agents-rules:ext_var_only\n"
+            "bundle vitalio/agents-rules:ext_pipe\n",
             encoding="utf-8",
         )
         self._trust()
-        r_allowed = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
-        self._assert_ok(r_allowed)
-        self.assertIn("ext_cmd_ok", r_allowed.stdout)
-        self.assertIn("Dynamic: dyn_val", r_allowed.stdout)
+        r_trusted = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self._assert_ok(r_trusted)
+        self.assertIn("ext_cmd_ok", r_trusted.stdout)
+        self.assertIn("Dynamic: dyn_val", r_trusted.stdout)
+        self.assertIn("===== $ printf 'a\\nb\\n' | head -n 1 =====\na\n", r_trusted.stdout)
 
-        # 4. Per-bundle allow=... permits commands for that bundle without leaking Allow header
-        (self.tmp / ".agents_bundle").write_text(
-            "bundle vitalio/agents-rules:ext_pipe allow=printf,head\n",
+        # 3. Changing non-command rules/prompts in external bundle keeps trust digest valid,
+        #    while modifying or adding a shell command template in external bundle invalidates trust
+        (ext_bundles / "ext_cmd.bundle").write_text(
+            "rule vitalio/agents-rules:core/start\n"
+            "prompt Added non-command prompt\n"
+            "cmd printf ext_cmd_ok\n",
             encoding="utf-8",
         )
-        self._trust()
-        r_per_bundle = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
-        self._assert_ok(r_per_bundle)
-        self.assertNotIn("Allow:", r_per_bundle.stdout)
-        self.assertIn("===== $ printf 'a\\nb\\n' | head -n 1 =====\na\n", r_per_bundle.stdout)
+        r_still_trusted = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self._assert_ok(r_still_trusted)
+        self.assertIn("Added non-command prompt", r_still_trusted.stdout)
 
-        # Missing second binary in pipeline is blocked
-        (self.tmp / ".agents_bundle").write_text(
-            "bundle vitalio/agents-rules:ext_pipe allow=printf\n",
+        (ext_bundles / "ext_cmd.bundle").write_text(
+            "rule vitalio/agents-rules:core/start\n"
+            "cmd printf ext_cmd_tampered\n",
             encoding="utf-8",
         )
-        self._trust()
-        r_pipe_block = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
-        self.assertNotEqual(r_pipe_block.returncode, 0)
-        self.assertIn("executable 'head'", r_pipe_block.stderr)
-        self.assertIn("vitalio/agents-rules:ext_pipe", r_pipe_block.stderr)
+        r_tampered = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self.assertNotEqual(r_tampered.returncode, 0)
+        self.assertIn("untrusted .context.bundle", r_tampered.stderr)
+        self.assertIn("cmd printf ext_cmd_tampered (external bundle vitalio/agents-rules:ext_cmd)", r_tampered.stderr)
+        self.assertNotIn("ext_cmd_tampered", r_tampered.stdout)
 
-        # 5. External bundle cannot declare its own allow directive
-        (self.tmp / ".agents_bundle").write_text(
-            "bundle vitalio/agents-rules:ext_self_allow\n",
-            encoding="utf-8",
-        )
-        r_self_allow = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
-        self.assertNotEqual(r_self_allow.returncode, 0)
-        self.assertIn("'allow' directive is only permitted in root .agents_bundle", r_self_allow.stderr)
+        # 4. 'allow' directive is rejected as an invalid directive in both root and child bundles
+        for bad_spec in ("allow printf\n", "bundle vitalio/agents-rules:ext_self_allow\n"):
+            with self.subTest(rejected_allow=bad_spec.strip()):
+                (self.tmp / ".context.bundle").write_text(bad_spec, encoding="utf-8")
+                self._trust()
+                r_allow = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+                self.assertNotEqual(r_allow.returncode, 0)
+                self.assertIn("invalid line", r_allow.stderr)
+                self.assertNotIn("or 'allow ...'", r_allow.stderr)
 
-        # 6. File bundle outside spec_dir is treated as external
+        # 5. File bundle outside spec_dir is treated as external and included in command-tree trust digest
         outside_dir = self.tmp.parent / f"{self.tmp.name}_ext_outside"
         outside_dir.mkdir(exist_ok=True)
         try:
             outside_bundle = outside_dir / "out.bundle"
             outside_bundle.write_text("cmd printf outside_ran\n", encoding="utf-8")
-            (self.tmp / ".agents_bundle").write_text(
+            (self.tmp / ".context.bundle").write_text(
                 f"bundle {outside_bundle.as_posix()}\n",
                 encoding="utf-8",
             )
             r_out_blocked = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
             self.assertNotEqual(r_out_blocked.returncode, 0)
-            self.assertIn("executable 'printf'", r_out_blocked.stderr)
+            self.assertIn("untrusted .context.bundle", r_out_blocked.stderr)
+            self.assertIn("cmd printf outside_ran", r_out_blocked.stderr)
 
-            (self.tmp / ".agents_bundle").write_text(
-                f"bundle {outside_bundle.as_posix()} allow=printf\n",
-                encoding="utf-8",
-            )
             self._trust()
             r_out_ok = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
             self._assert_ok(r_out_ok)
             self.assertIn("outside_ran", r_out_ok.stdout)
+
+            outside_bundle.write_text("cmd printf outside_modified\n", encoding="utf-8")
+            r_out_tampered = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+            self.assertNotEqual(r_out_tampered.returncode, 0)
+            self.assertIn("untrusted .context.bundle", r_out_tampered.stderr)
         finally:
             import shutil
             shutil.rmtree(outside_dir, ignore_errors=True)
@@ -1431,93 +1424,78 @@ class TestBundle(AgentsBundleTestCase):
         mod = self._load_bundle_module()
         for safe_cmd in [
             "context --tree",
-            "context --tree -x build --max-lines 50",
-            "git status -sb",
-            "git branch -vv",
-            "git branch --show-current",
-            "git branch --list 'main*'",
-            "git branch --contains HEAD",
-            "git log --oneline -10",
-            "git diff --stat",
-            "git rev-parse --short HEAD",
-            "todo",
-            "todo -w",
-            "todo overview --full",
-            "todo projects",
-            "todo show F38",
-            "todo F38 role=work",
-            "todo list --ready -l 5",
-            "todo chain F38 --tree",
-            "todo check",
+            "context --tree -x build --max-lines 50 --max-tokens 800",
+            "context --tree --exclude=dist --max-lines=50 --max-tokens=800",
         ]:
             with self.subTest(safe_builtin=safe_cmd):
                 self.assertTrue(mod._is_safe_builtin_command(safe_cmd, "context"), msg=safe_cmd)
 
         for unsafe_cmd in [
+            "agents_bundle --tree",
             "echo hello",
             "cat AGENTS.md",
-            "git status -sb; id",
-            "git status -sb | cat",
-            "git status -sb && echo pwn",
-            "git status $(id)",
-            "git status `id`",
-            "git -c core.pager=id log -1",
-            "git diff --output=/tmp/out.diff",
-            "git diff --ext-diff",
-            "git diff --ext-diff=id",
-            "git log -p --textconv=id",
+            "git status -sb",
+            "git branch -vv",
+            "git log --oneline -10",
+            "git diff --stat",
+            "git rev-parse --short HEAD",
+            "todo",
+            "todo overview --full",
+            "todo list --ready -l 5",
+            "context --tree; id",
+            "context --tree | cat",
+            "context --tree $(id)",
+            "context --tree `id`",
             "context --tree /etc",
             "context --tree ~/.ssh",
             "context --tree ../outside",
-            "git branch new-branch",
-            "git branch -D main",
-            "git branch -m old new",
-            "git checkout -b feat",
-            "todo add F 'New task'",
-            "todo status F38 WIP",
-            "todo done F38",
-            "todo cancel F38",
-            "todo archive",
-            "todo --update",
             "context --update",
         ]:
             with self.subTest(unsafe_cmd=unsafe_cmd):
                 self.assertFalse(mod._is_safe_builtin_command(unsafe_cmd, "context"), msg=unsafe_cmd)
 
+        for removed_attr in (
+            "_GIT_READONLY_SUBCMDS",
+            "_GIT_BRANCH_VALUE_FLAGS",
+            "_GIT_BRANCH_SAFE_BOOL_FLAGS",
+            "_is_safe_git_branch_args",
+            "_TODO_MUTATING_SUBCMDS",
+            "_TODO_READONLY_SUBCMDS",
+            "_TODO_FORBIDDEN_FLAGS",
+            "_is_safe_todo_args",
+            "_SHELL_WRAPPER_BINS",
+            "_parse_allow_bins",
+            "_extract_subshells_and_segments",
+            "_extract_command_executables",
+            "_check_command_allowed",
+        ):
+            self.assertFalse(hasattr(mod, removed_attr), msg=removed_attr)
+
         repo = self.tmp / "untrusted_repo"
         repo.mkdir()
-        self._git(repo, "init", "-q")
-        self._git(repo, "symbolic-ref", "HEAD", "refs/heads/main")
         (repo / "AGENTS.md").write_text("# Repo Rules\n", encoding="utf-8")
-        self._git(repo, "add", "AGENTS.md")
-        self._git(repo, "commit", "-q", "-m", "init")
 
-        with self.subTest(case="starter builtin read-only commands run with zero friction without trust"):
+        with self.subTest(case="in-process context --tree runs without trust"):
             (repo / ".context.bundle").write_text(
                 "file AGENTS.md\n"
-                "let head_sha=$(git rev-parse --short HEAD)\n"
-                "export head_sha\n"
-                "cmd context --tree\n"
-                "cmd git status -sb\n"
-                "cmd git branch -vv\n"
-                "cmd git log --oneline -5\n"
-                "cmd git diff\n"
-                "cmd git rev-parse HEAD\n",
+                "cmd context --tree\n",
                 encoding="utf-8",
             )
             r_safe = self._run([str(SCRIPT)], cwd=str(repo))
             self._assert_ok(r_safe)
-            self.assertIn("Head-Sha:", r_safe.stdout)
             self.assertIn("===== $ context --tree =====", r_safe.stdout)
-            self.assertIn("===== $ git status -sb =====", r_safe.stdout)
 
         marker = self.tmp / "untrusted_ran.txt"
-        for label, untrusted_spec in [
-            ("arbitrary_cmd", f"cmd \x22{sys.executable}\x22 -c \x22import pathlib; pathlib.Path({str(marker)!r}).write_text('pwn')\x22\n"),
-            ("arbitrary_let_subshell", "let x=$(printf pwn_val)\n"),
-            ("arbitrary_file_subshell", "file $(printf AGENTS.md)\n"),
-            ("root_allow_directive", "allow printf\n"),
-            ("bundle_allow_grant", "bundle vitalio/agents-rules:core allow=printf\n"),
+        for label, untrusted_spec, expected_cmd in [
+            (
+                "arbitrary_cmd",
+                f"cmd \x22{sys.executable}\x22 -c \x22import pathlib; pathlib.Path({str(marker)!r}).write_text('pwn')\x22\n",
+                "pathlib.Path",
+            ),
+            ("git_status_cmd", "cmd git status -sb\n", "cmd git status -sb"),
+            ("todo_cmd", "cmd todo overview\n", "cmd todo overview"),
+            ("arbitrary_let_subshell", "let x=$(printf pwn_val)\n", "let x=$(printf pwn_val)"),
+            ("arbitrary_file_subshell", "file $(printf AGENTS.md)\n", "file $(printf AGENTS.md)"),
         ]:
             with self.subTest(blocked_without_trust=label):
                 (repo / ".context.bundle").write_text(untrusted_spec, encoding="utf-8")
@@ -1525,6 +1503,8 @@ class TestBundle(AgentsBundleTestCase):
                 self.assertNotEqual(r_blk.returncode, 0, msg=r_blk.stdout)
                 self.assertEqual(r_blk.stdout, "")
                 self.assertIn("untrusted .context.bundle", r_blk.stderr)
+                self.assertIn("pending shell commands:", r_blk.stderr)
+                self.assertIn(expected_cmd, r_blk.stderr)
                 self.assertIn("context --trust", r_blk.stderr)
                 self.assertFalse(marker.exists())
 
@@ -1540,9 +1520,10 @@ class TestBundle(AgentsBundleTestCase):
             r_mod = self._run([str(SCRIPT)], cwd=str(repo))
             self.assertNotEqual(r_mod.returncode, 0)
             self.assertIn("untrusted .context.bundle", r_mod.stderr)
+            self.assertIn("cmd printf modified_untrusted", r_mod.stderr)
             self.assertNotIn("modified_untrusted", r_mod.stdout)
 
-        with self.subTest(case="interactive /dev/tty confirmation prompt declines and accepts"):
+        with self.subTest(case="interactive /dev/tty confirmation prompt displays pending commands and accepts"):
             tty_file = self.tmp / "fake_tty.txt"
             tty_file.write_text("n\n", encoding="utf-8")
             env_tty = {**os.environ, "CONTEXT_BUNDLE_TTY": str(tty_file)}
@@ -1572,6 +1553,21 @@ class TestBundle(AgentsBundleTestCase):
             self.assertIn("untrusted .context.bundle", r_c2.stderr)
             self.assertIn("./local_child.bundle", r_c2.stderr)
             self.assertNotIn("child_tampered", r_c2.stdout)
+
+        with self.subTest(case="context --init automatically records trust in trusted.json"):
+            init_repo = self.tmp / "init_trusted_repo"
+            init_repo.mkdir()
+            self._git(init_repo, "init", "-q")
+            self._git(init_repo, "symbolic-ref", "HEAD", "refs/heads/main")
+            (init_repo / "AGENTS.md").write_text("# Agents\n", encoding="utf-8")
+            self._git(init_repo, "add", "AGENTS.md")
+            self._git(init_repo, "commit", "-q", "-m", "init")
+            r_init = self._run([str(SCRIPT), "--init"], cwd=str(init_repo))
+            self._assert_ok(r_init)
+            self.assertTrue(mod.is_spec_trusted(init_repo / ".context.bundle"))
+            r_run = self._run([str(SCRIPT)], cwd=str(init_repo))
+            self._assert_ok(r_run)
+            self.assertIn("===== $ git status -sb =====", r_run.stdout)
 
     def test_prepass_session_variables_precedence_and_subshell_caching(self):
         pkg_dir = Path(os.environ["CONTEXT_BUNDLE_LOCAL_PKG_DIR"])

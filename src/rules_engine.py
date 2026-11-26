@@ -877,7 +877,7 @@ def collect_directive_items(
                     if not local_vars.get(k_clean) and v_expr.strip():
                         local_vars[k_clean] = v_expr.strip()
                     continue
-                if rendered_line == "export" or rendered_line.startswith(("export ", "file ", "cmd ", "prompt ", "allow ")):
+                if rendered_line == "export" or rendered_line.startswith(("export ", "file ", "cmd ", "prompt ")):
                     continue
                 parts = shlex.split(rendered_line)
                 if not parts or parts[0] not in ("bundle", "rule"):

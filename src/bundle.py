@@ -66,7 +66,7 @@ def default_spec_template(prog: str | None = None) -> str:
     lines = [
         f"# {SPEC_FILE_NAME} — root context bundle for '{cmd}'",
         "# Directives:",
-        "#   bundle <owner>/<repo>[:<name>] [allow=<cmd,...>] [key=val ...]",
+        "#   bundle <owner>/<repo>[:<name>] [key=val ...]",
         "#   rule <owner>/<repo>[:<name...>] [key=val ...]",
         "#   file <path|glob|slice...>  (or file $(<shell command>))",
         "#   cmd <shell command>",
@@ -74,7 +74,6 @@ def default_spec_template(prog: str | None = None) -> str:
         "#   let <name>=<value>  (or let <name>=$(<shell command>); bundle-scoped)",
         "#   export <name...>  (promote to session scope and output preamble)",
         "#   if <cond> / else if <cond> / else  (4-space indented blocks)",
-        "#   allow <bin...>  (permit external bundles to run listed executables)",
         "",
         f"bundle {DEFAULT_RULES_PKG}:default",
         "",
@@ -96,6 +95,7 @@ def cmd_init(force: bool = False, target_dir: Path | None = None) -> int:
         sys.stderr.write(f"{prog}: {path} already exists (use --force to overwrite)\n")
         return 2
     path.write_text(default_spec_template(prog), encoding="utf-8")
+    trust_spec_file(path)
     sys.stdout.write(f"{prog}: wrote starter {SPEC_FILE_NAME} to {path}\n")
     return 0
 
@@ -135,22 +135,6 @@ def find_spec_file(start_dir: Path | None = None) -> Path | None:
     return None
 
 
-_SHELL_WRAPPER_BINS = {"command", "builtin", "exec", "nohup", "time", "env", "nice"}
-_GIT_READONLY_SUBCMDS = {"status", "branch", "log", "diff", "rev-parse"}
-_GIT_BRANCH_VALUE_FLAGS = {"--sort", "--format", "--color", "--column", "--abbrev", "--contains", "--no-contains", "--merged", "--no-merged", "--points-at"}
-_GIT_BRANCH_SAFE_BOOL_FLAGS = {
-    "-v", "-vv", "--verbose", "-a", "--all", "-r", "--remotes",
-    "--show-current", "--list", "-l", "--color", "--no-color",
-    "--column", "--no-column", "--abbrev", "--no-abbrev", "-i", "--ignore-case",
-}
-_TODO_MUTATING_SUBCMDS = {
-    "add", "edit", "append", "rename", "next", "status",
-    "reopen", "done", "cancel", "archive", "init",
-}
-_TODO_READONLY_SUBCMDS = {"overview", "projects", "show", "list", "chain", "check"}
-_TODO_FORBIDDEN_FLAGS = {"--init", "--update", "--self-update", "--check-update", "--uninstall", "--force"}
-
-
 def _has_unsafe_shell_syntax(cmd_str: str) -> bool:
     in_single = False
     in_double = False
@@ -173,79 +157,6 @@ def _has_unsafe_shell_syntax(cmd_str: str) -> bool:
         if not in_single and not in_double and ch in ("|", "&", ";", "<", ">", "(", ")", "{", "}", "\n", "\r"):
             return True
     return in_single or in_double or escaped
-
-
-def _is_safe_git_branch_args(subargs: list[str]) -> bool:
-    has_list_mode = False
-    has_positional = False
-    i = 0
-    while i < len(subargs):
-        arg = subargs[i]
-        if arg in ("--list", "-l"):
-            has_list_mode = True
-            i += 1
-            continue
-        if arg in _GIT_BRANCH_SAFE_BOOL_FLAGS:
-            i += 1
-            continue
-        if arg in _GIT_BRANCH_VALUE_FLAGS:
-            if i + 1 >= len(subargs):
-                return False
-            if arg in ("--contains", "--no-contains", "--merged", "--no-merged", "--points-at"):
-                has_list_mode = True
-            i += 2
-            continue
-        if any(arg.startswith(f"{flag}=") for flag in _GIT_BRANCH_VALUE_FLAGS):
-            if arg.startswith(("--contains=", "--no-contains=", "--merged=", "--no-merged=", "--points-at=")):
-                has_list_mode = True
-            i += 1
-            continue
-        if arg.startswith("-"):
-            return False
-        has_positional = True
-        i += 1
-    if has_positional and not has_list_mode:
-        return False
-    return True
-
-
-def _is_safe_todo_args(args: list[str]) -> bool:
-    for a in args:
-        if a in _TODO_FORBIDDEN_FLAGS or a.startswith(("--update=", "--init=")):
-            return False
-    positionals: list[str] = []
-    i = 0
-    while i < len(args):
-        a = args[i]
-        if a in ("-C", "--dir", "-p", "--project"):
-            if i + 1 >= len(args):
-                return False
-            i += 2
-            continue
-        if a.startswith(("--dir=", "--project=")):
-            i += 1
-            continue
-        if not positionals and a in ("-w", "--wide", "--full", "--plain", "-h", "--help", "-V", "--version"):
-            i += 1
-            continue
-        positionals.append(a)
-        i += 1
-    if not positionals:
-        return True
-    first = positionals[0]
-    if first in _TODO_MUTATING_SUBCMDS:
-        return False
-    if first in _TODO_READONLY_SUBCMDS:
-        return True
-    for tok in positionals:
-        if tok in ("-w", "--wide", "--full", "--plain"):
-            continue
-        if re.fullmatch(r"role=[A-Za-z0-9_.-]+", tok):
-            continue
-        if re.fullmatch(r"(?:[A-Za-z0-9_.-]+:)?[A-Z][0-9]+", tok):
-            continue
-        return False
-    return True
 
 
 def _is_safe_tree_args(args: list[str], work_dir: Path | None = None) -> bool:
@@ -294,76 +205,165 @@ def _is_safe_builtin_command(
     exe = tokens[0]
     args = tokens[1:]
     p = prog or prog_name()
-    if exe in (p, "context", "agents_bundle"):
+    if exe in (p, "context"):
         return _is_safe_tree_args(args, work_dir=work_dir)
-    if exe == "git":
-        idx = 0
-        while idx < len(args) and args[idx] in ("--no-pager", "--no-optional-locks"):
-            idx += 1
-        if idx >= len(args):
-            return False
-        subcmd = args[idx]
-        subargs = args[idx + 1 :]
-        if subcmd not in _GIT_READONLY_SUBCMDS:
-            return False
-        for a in subargs:
-            if a.startswith(("--ext-diff", "--textconv", "--output", "-o", "--exec")):
-                return False
-        if subcmd == "branch":
-            return _is_safe_git_branch_args(subargs)
-        return True
-    if exe in ("todo", "todo_md"):
-        return _is_safe_todo_args(args)
     return False
 
 
-def _collect_local_child_bundles(
-    bundle_file: Path,
-    root_dir: Path,
-    visited: set[Path],
-) -> None:
-    resolved_file = bundle_file.resolve()
-    if resolved_file in visited or not resolved_file.is_file():
-        return
-    visited.add(resolved_file)
+def _extract_directive_shell_template(raw_line: str) -> tuple[str, str] | None:
+    stripped = raw_line.strip()
+    if stripped.startswith("cmd "):
+        cmd_str = stripped[4:].strip()
+        if cmd_str:
+            return f"cmd {cmd_str}", cmd_str
+    elif stripped.startswith("let "):
+        assign = stripped[4:].strip()
+        if "=" in assign:
+            k, v_expr = assign.split("=", 1)
+            k_clean = k.strip()
+            s = v_expr.strip()
+            if s.startswith("$(") and s.endswith(")") and len(s) >= 3:
+                cmd_str = s[2:-1].strip()
+                if cmd_str:
+                    return f"let {k_clean}=$({cmd_str})", cmd_str
+    elif stripped.startswith("file "):
+        inc_expr = stripped[5:].strip()
+        if inc_expr.startswith("$(") and inc_expr.endswith(")") and len(inc_expr) >= 3:
+            cmd_str = inc_expr[2:-1].strip()
+            if cmd_str:
+                return f"file $({cmd_str})", cmd_str
+    return None
+
+
+def _collect_spec_trust_tree(
+    spec_file: Path,
+    prog: str | None = None,
+) -> tuple[set[Path], list[str], list[str]]:
+    p = prog or prog_name()
+    resolved_spec = spec_file.resolve()
+    root_dir = resolved_spec.parent
+    local_files: set[Path] = {resolved_spec}
+    external_templates: list[str] = []
+    seen_external_templates: set[str] = set()
+    pending_commands: list[str] = []
+    seen_pending: set[str] = set()
+    visited_bundles: set[str] = {str(resolved_spec)}
+
+    def add_pending(display_item: str) -> None:
+        if display_item not in seen_pending:
+            seen_pending.add(display_item)
+            pending_commands.append(display_item)
+
+    def walk_bundle(
+        text: str,
+        bundle_dir: Path | None,
+        default_pkg: str | None,
+        pkg_dir: Path | None,
+        is_external: bool,
+        bundle_label: str,
+        in_child: bool,
+    ) -> None:
+        for raw_line in text.splitlines():
+            stripped = raw_line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if stripped == "else" or stripped.startswith(("if ", "else if ", "elif ")):
+                continue
+            extracted = _extract_directive_shell_template(stripped)
+            if extracted is not None:
+                directive_tmpl, cmd_tmpl = extracted
+                if is_external and directive_tmpl not in seen_external_templates:
+                    seen_external_templates.add(directive_tmpl)
+                    external_templates.append(directive_tmpl)
+                if not _is_safe_builtin_command(cmd_tmpl, p, work_dir=root_dir):
+                    origin = (
+                        f" (external bundle {bundle_label})"
+                        if is_external
+                        else (f" (local bundle {bundle_label})" if in_child else "")
+                    )
+                    add_pending(f"{directive_tmpl}{origin}")
+                continue
+            if not stripped.startswith("bundle "):
+                continue
+            try:
+                parts = shlex.split(stripped)
+            except ValueError:
+                continue
+            if len(parts) < 2:
+                continue
+            target = parts[1].strip()
+            if not target or "{" in target:
+                continue
+            cur_bdir = bundle_dir if bundle_dir is not None else root_dir
+            try:
+                lookup_target = _qualify_nested_target(
+                    target, root_dir, cur_bdir, default_pkg, pkg_dir, p, kind="bundle"
+                )
+                canonical_bundle, inc_text, child_pkg, child_pkg_dir, child_bdir = _resolve_bundle_context(
+                    lookup_target,
+                    work_dir=cur_bdir,
+                    refresh=False,
+                    default_pkg=default_pkg or DEFAULT_RULES_PKG,
+                )
+            except (SystemExit, OSError):
+                if _is_local_path_spec(target):
+                    cand = Path(target).expanduser()
+                    cand = cand.resolve() if cand.is_absolute() else (cur_bdir / cand).resolve()
+                    if not cand.is_file() and not cand.suffix and cand.with_suffix(".bundle").is_file():
+                        cand = cand.with_suffix(".bundle").resolve()
+                    if cand.is_file() and _is_within_root(cand, root_dir) and str(cand) not in visited_bundles:
+                        visited_bundles.add(str(cand))
+                        local_files.add(cand)
+                        try:
+                            c_text = cand.read_text(encoding="utf-8", errors="replace")
+                        except OSError:
+                            continue
+                        walk_bundle(c_text, cand.parent, None, None, False, target, True)
+                continue
+            if canonical_bundle in visited_bundles:
+                continue
+            visited_bundles.add(canonical_bundle)
+            child_is_ext = _is_external_bundle_source(
+                canonical_bundle,
+                child_pkg,
+                child_bdir,
+                root_dir,
+                parent_is_external=is_external,
+            )
+            if not child_is_ext:
+                cand_path = Path(canonical_bundle)
+                if cand_path.is_file() and _is_within_root(cand_path.resolve(), root_dir):
+                    local_files.add(cand_path.resolve())
+            child_label = (
+                lookup_target
+                if (default_pkg is not None and ":" not in target and not _is_local_path_spec(target))
+                else target
+            )
+            walk_bundle(inc_text, child_bdir, child_pkg, child_pkg_dir, child_is_ext, child_label, True)
+
     try:
-        raw_text = resolved_file.read_text(encoding="utf-8", errors="replace")
+        root_text = resolved_spec.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return
-    for raw_line in raw_text.splitlines():
-        stripped = raw_line.strip()
-        if not stripped or stripped.startswith("#") or not stripped.startswith("bundle "):
-            continue
-        try:
-            parts = shlex.split(stripped)
-        except ValueError:
-            continue
-        if len(parts) < 2:
-            continue
-        target = parts[1].strip()
-        if "{" in target or not _is_local_path_spec(target):
-            continue
-        cand = Path(target).expanduser()
-        cand = cand.resolve() if cand.is_absolute() else (resolved_file.parent / cand).resolve()
-        if not cand.is_file() and not cand.suffix and cand.with_suffix(".bundle").is_file():
-            cand = cand.with_suffix(".bundle").resolve()
-        if cand.is_file() and _is_within_root(cand, root_dir):
-            _collect_local_child_bundles(cand, root_dir, visited)
+        return local_files, external_templates, pending_commands
+    walk_bundle(root_text, root_dir, None, None, False, resolved_spec.name, False)
+    return local_files, external_templates, pending_commands
 
 
 def _spec_sha256(spec_file: Path) -> str:
     resolved_spec = spec_file.resolve()
     root_dir = resolved_spec.parent
-    visited: set[Path] = set()
-    _collect_local_child_bundles(resolved_spec, root_dir, visited)
-    if len(visited) <= 1:
+    local_files, external_templates, _pending = _collect_spec_trust_tree(resolved_spec)
+    extra_locals = sorted(local_files - {resolved_spec})
+    if not extra_locals and not external_templates:
         return hashlib.sha256(resolved_spec.read_bytes()).hexdigest()
     h = hashlib.sha256()
     h.update(hashlib.sha256(resolved_spec.read_bytes()).digest())
-    for child in sorted(visited - {resolved_spec}):
+    for child in extra_locals:
         rel = child.relative_to(root_dir).as_posix()
         h.update(f"\0{rel}\0".encode("utf-8"))
         h.update(hashlib.sha256(child.read_bytes()).digest())
+    for tmpl in external_templates:
+        h.update(f"\0ext_cmd\0{tmpl}\0".encode("utf-8"))
     return h.hexdigest()
 
 
@@ -428,6 +428,13 @@ def trust_spec_file(spec_file: Path) -> tuple[str, str]:
     return resolved, digest
 
 
+def _format_pending_commands(spec_file: Path, fallback_reason: str, prog: str) -> list[str]:
+    _locals, _ext_tmpls, pending = _collect_spec_trust_tree(spec_file, prog=prog)
+    if fallback_reason and fallback_reason not in pending:
+        pending.append(fallback_reason)
+    return pending
+
+
 def _prompt_tty_trust(spec_file: Path, reason: str, prog: str) -> bool:
     tty_override = os.environ.get("CONTEXT_BUNDLE_TTY", "").strip()
     if not tty_override and not (sys.stdin.isatty() and sys.stdout.isatty()):
@@ -435,8 +442,11 @@ def _prompt_tty_trust(spec_file: Path, reason: str, prog: str) -> bool:
     tty_path = tty_override or "/dev/tty"
     try:
         digest = _spec_sha256(spec_file)
+        pending = _format_pending_commands(spec_file, reason, prog)
+        cmd_lines = "\n".join(f"  - {item}" for item in pending)
         prompt_msg = (
-            f"{prog}: untrusted {spec_file} requests permission for {reason}\n"
+            f"{prog}: untrusted {spec_file} requests permission to execute shell commands:\n"
+            f"{cmd_lines}\n"
             f"Trust {spec_file} (sha256:{digest[:12]})? [y/N]: "
         )
         if tty_override and Path(tty_path).is_file():
@@ -466,8 +476,11 @@ def _ensure_root_spec_trusted(
     if is_spec_trusted(spec_file) or _prompt_tty_trust(spec_file, reason, prog):
         trust_state["trusted"] = True
         return
+    pending = _format_pending_commands(spec_file, reason, prog)
+    pending_summary = "; ".join(pending)
     raise SystemExit(
-        f"{prog}: untrusted {spec_file.name} ({spec_file.resolve()}): refusing to execute {reason}; "
+        f"{prog}: untrusted {spec_file.name} ({spec_file.resolve()}): refusing to execute {reason} "
+        f"(pending shell commands: {pending_summary}); "
         f"inspect {spec_file.name} and run '{prog} --trust' to trust this file"
     )
 
@@ -531,182 +544,9 @@ def cmd_trust(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _parse_allow_bins(raw_args: str, source_label: str, prog: str) -> list[str]:
-    tokens = [tok for tok in re.split(r"[\s,]+", raw_args.strip()) if tok]
-    if not tokens:
-        raise SystemExit(f"{prog}: empty allow list in {source_label}")
-    bins: list[str] = []
-    for tok in tokens:
-        if not re.fullmatch(r"[A-Za-z0-9_./+-]+", tok):
-            raise SystemExit(f"{prog}: invalid command name {tok!r} in {source_label}")
-        if tok not in bins:
-            bins.append(tok)
-    return bins
-
-
-def _extract_subshells_and_segments(cmd_str: str) -> list[str]:
-    segments: list[str] = []
-    subshells: list[str] = []
-    buf: list[str] = []
-    in_single = False
-    in_double = False
-    escaped = False
-    i = 0
-    n = len(cmd_str)
-    while i < n:
-        ch = cmd_str[i]
-        if escaped:
-            buf.append(ch)
-            escaped = False
-            i += 1
-            continue
-        if ch == "\\" and not in_single:
-            escaped = True
-            buf.append(ch)
-            i += 1
-            continue
-        if ch == "'" and not in_double:
-            in_single = not in_single
-            buf.append(ch)
-            i += 1
-            continue
-        if ch == '"' and not in_single:
-            in_double = not in_double
-            buf.append(ch)
-            i += 1
-            continue
-        if not in_single and ch == "$" and i + 1 < n and cmd_str[i + 1] == "(":
-            depth = 1
-            j = i + 2
-            sub_s = False
-            sub_d = False
-            sub_esc = False
-            while j < n and depth > 0:
-                c2 = cmd_str[j]
-                if sub_esc:
-                    sub_esc = False
-                elif c2 == "\\" and not sub_s:
-                    sub_esc = True
-                elif c2 == "'" and not sub_d:
-                    sub_s = not sub_s
-                elif c2 == '"' and not sub_s:
-                    sub_d = not sub_d
-                elif not sub_s and not sub_d:
-                    if c2 == "(":
-                        depth += 1
-                    elif c2 == ")":
-                        depth -= 1
-                j += 1
-            inner = cmd_str[i + 2 : j - 1 if depth == 0 else j].strip()
-            if inner:
-                subshells.append(inner)
-            buf.append("__SUBSHELL__")
-            i = j
-            continue
-        if not in_single and ch == "`":
-            j = i + 1
-            sub_esc = False
-            while j < n:
-                c2 = cmd_str[j]
-                if sub_esc:
-                    sub_esc = False
-                elif c2 == "\\":
-                    sub_esc = True
-                elif c2 == "`":
-                    break
-                j += 1
-            inner = cmd_str[i + 1 : j].strip()
-            if inner:
-                subshells.append(inner)
-            buf.append("__SUBSHELL__")
-            i = min(n, j + 1)
-            continue
-        if not in_single and not in_double:
-            if cmd_str[i : i + 2] in ("&&", "||"):
-                seg = "".join(buf).strip()
-                if seg:
-                    segments.append(seg)
-                buf = []
-                i += 2
-                continue
-            if ch in ("|", ";", "&", "\n"):
-                seg = "".join(buf).strip()
-                if seg:
-                    segments.append(seg)
-                buf = []
-                i += 1
-                continue
-        buf.append(ch)
-        i += 1
-    tail = "".join(buf).strip()
-    if tail:
-        segments.append(tail)
-    for sub in subshells:
-        segments.extend(_extract_subshells_and_segments(sub))
-    return segments
-
-
-def _extract_command_executables(cmd_str: str) -> list[str]:
-    exes: list[str] = []
-    for raw_seg in _extract_subshells_and_segments(cmd_str):
-        seg = raw_seg.strip()
-        while seg and seg[0] in ("(", "{", "!"):
-            seg = seg[1:].strip()
-        while seg and seg[-1] in (")", "}"):
-            seg = seg[:-1].strip()
-        if not seg or seg.startswith("#"):
-            continue
-        try:
-            tokens = shlex.split(seg, posix=True)
-        except ValueError:
-            tokens = seg.split()
-        idx = 0
-        while idx < len(tokens):
-            tok = tokens[idx].lstrip("({!").rstrip(")}")
-            if not tok or tok in ("!", "(", ")", "{", "}"):
-                idx += 1
-                continue
-            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tok, flags=re.DOTALL):
-                idx += 1
-                continue
-            if tok != "__SUBSHELL__":
-                exes.append(tok)
-            if tok in _SHELL_WRAPPER_BINS:
-                idx += 1
-                if tok == "command" and idx < len(tokens) and tokens[idx] in ("-v", "-V"):
-                    break
-                while idx < len(tokens) and (
-                    tokens[idx].startswith("-")
-                    or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[idx], flags=re.DOTALL)
-                ):
-                    idx += 1
-                continue
-            break
-    return exes
-
-
-def _check_command_allowed(
-    cmd_str: str,
-    allowed_cmds: set[str],
-    bundle_label: str,
-    prog: str,
-) -> None:
-    exes = _extract_command_executables(cmd_str)
-    for exe in exes:
-        if exe not in allowed_cmds:
-            raise SystemExit(
-                f"{prog}: command {cmd_str!r} (executable {exe!r}) in external bundle "
-                f"{bundle_label!r} is not in allowlist (add 'allow {exe}' in {SPEC_FILE_NAME} "
-                f"or 'bundle {bundle_label} allow={exe}')"
-            )
-
-
 def _eval_dynamic_expr(
     expr: str,
     work_dir: Path | None = None,
-    allowed_cmds: set[str] | None = None,
-    bundle_label: str | None = None,
-    prog: str | None = None,
     subshell_cache: dict[tuple[str, str], str] | None = None,
     scope_key: str = "",
 ) -> str:
@@ -715,8 +555,6 @@ def _eval_dynamic_expr(
         cmd = s[2:-1].strip()
         if not cmd:
             return ""
-        if allowed_cmds is not None:
-            _check_command_allowed(cmd, allowed_cmds, bundle_label or SPEC_FILE_NAME, prog or prog_name())
         cache_key = (scope_key, cmd)
         if subshell_cache is not None and cache_key in subshell_cache:
             return subshell_cache[cache_key]
@@ -773,63 +611,13 @@ def _qualify_nested_target(
     return target
 
 
-def _static_inspect_bundle_ast(
-    nodes: list[tuple[str, object]],
-    bvars: dict[str, str],
-    allowed_cmds: set[str],
-    bundle_label: str,
-    root_label: str,
-    prog: str,
-) -> None:
-    sim_vars = dict(bvars)
-
-    def walk(stmts: list[tuple[str, object]]) -> None:
-        for n_kind, payload in stmts:
-            if n_kind == "if_chain":
-                for b_cond, _b_trace, b_body in payload:  # type: ignore[misc]
-                    if b_cond is None or eval_if_condition(b_cond, sim_vars, prog):
-                        walk(b_body)
-                        break
-                continue
-            raw_line = str(payload)
-            line = _render_rule_vars(raw_line, sim_vars).strip()
-            if line == "allow" or line.startswith("allow "):
-                raise SystemExit(
-                    f"{prog}: 'allow' directive is only permitted in root {root_label} "
-                    f"(found in bundle {bundle_label!r}: {line!r})"
-                )
-            if line.startswith("cmd "):
-                cmd_str = line[4:].strip()
-                if cmd_str:
-                    _check_command_allowed(cmd_str, allowed_cmds, bundle_label, prog)
-            elif line.startswith("let "):
-                assign = line[4:].strip()
-                if "=" in assign:
-                    k, v_expr = assign.split("=", 1)
-                    k_clean = k.strip()
-                    s = v_expr.strip()
-                    if s.startswith("$(") and s.endswith(")") and len(s) >= 3:
-                        cmd_str = s[2:-1].strip()
-                        if cmd_str:
-                            _check_command_allowed(cmd_str, allowed_cmds, bundle_label, prog)
-                    elif not sim_vars.get(k_clean) and s:
-                        sim_vars[k_clean] = s
-            elif line.startswith("file "):
-                inc_expr = line[5:].strip()
-                if inc_expr.startswith("$(") and inc_expr.endswith(")") and len(inc_expr) >= 3:
-                    cmd_str = inc_expr[2:-1].strip()
-                    if cmd_str:
-                        _check_command_allowed(cmd_str, allowed_cmds, bundle_label, prog)
-
-    walk(nodes)
-
-
 def _static_inspect_root_trust_ast(
     nodes: list[tuple[str, object]],
     bvars: dict[str, str],
     spec_file: Path,
     trust_state: dict[str, bool],
     in_child_bundle: bool,
+    is_external: bool,
     bundle_label: str,
     work_dir: Path | None,
     prog: str,
@@ -837,7 +625,12 @@ def _static_inspect_root_trust_ast(
     if trust_state.get("trusted"):
         return
     sim_vars = dict(bvars)
-    origin_suffix = f" in local bundle {bundle_label!r}" if in_child_bundle else ""
+    if is_external:
+        origin_suffix = f" in external bundle {bundle_label!r}"
+    elif in_child_bundle:
+        origin_suffix = f" in local bundle {bundle_label!r}"
+    else:
+        origin_suffix = ""
 
     def walk(stmts: list[tuple[str, object]]) -> None:
         for n_kind, payload in stmts:
@@ -851,17 +644,7 @@ def _static_inspect_root_trust_ast(
                 continue
             raw_line = str(payload)
             line = _render_rule_vars(raw_line, sim_vars).strip()
-            if (line == "allow" or line.startswith("allow ")) and not in_child_bundle:
-                _ensure_root_spec_trusted(spec_file, trust_state, f"directive {line!r}", prog)
-            elif line.startswith("bundle "):
-                try:
-                    parts = shlex.split(line)
-                    _tgt, _ex, vmap = _parse_directive_tokens(parts[1:], prog)
-                except (ValueError, SystemExit):
-                    vmap = {}
-                if "allow" in vmap:
-                    _ensure_root_spec_trusted(spec_file, trust_state, f"allow grant in {line!r}{origin_suffix}", prog)
-            elif line.startswith("cmd "):
+            if line.startswith("cmd "):
                 cmd_str = line[4:].strip()
                 if cmd_str and not _is_safe_builtin_command(cmd_str, prog, work_dir=work_dir):
                     _ensure_root_spec_trusted(spec_file, trust_state, f"command {cmd_str!r}{origin_suffix}", prog)
@@ -904,9 +687,7 @@ def _parse_spec_pass(
     pkg_dir: Path | None = None,
     bundle_dir: Path | None = None,
     is_external: bool = False,
-    allowed_cmds: set[str] | None = None,
-    enforce_allowlist: bool = True,
-    external_chains: dict[tuple[str, ...], tuple[str, set[str] | None]] | None = None,
+    external_chains: dict[tuple[str, ...], str] | None = None,
     session_vars: dict[str, str] | None = None,
     root_spec_file: Path | None = None,
     root_trust_state: dict[str, bool] | None = None,
@@ -931,23 +712,31 @@ def _parse_spec_pass(
     in_child_bundle = bool(cur_chain and cur_chain != [root_label])
     bundle_label = cur_chain[-1] if in_child_bundle else root_label
     scope_key = " -> ".join(cur_chain) if cur_chain else root_label
-    cur_allowed: set[str] = set(allowed_cmds) if allowed_cmds is not None else set()
     trust_state = root_trust_state if root_trust_state is not None else {}
     ast_nodes = parse_bundle_ast(text, prog)
 
-    if is_external and enforce_allowlist and in_child_bundle:
-        _static_inspect_bundle_ast(ast_nodes, bvars, cur_allowed, bundle_label, root_label, prog)
-    elif not is_external and root_spec_file is not None:
+    if root_spec_file is not None:
         _static_inspect_root_trust_ast(
-            ast_nodes, bvars, root_spec_file, trust_state, in_child_bundle, bundle_label, work_dir, prog
+            ast_nodes,
+            bvars,
+            root_spec_file,
+            trust_state,
+            in_child_bundle,
+            is_external,
+            bundle_label,
+            work_dir,
+            prog,
         )
 
-    effective_allow_set: set[str] | None = cur_allowed if (is_external and enforce_allowlist) else None
     if is_external and external_chains is not None:
-        external_chains[tuple(cur_chain)] = (
-            bundle_label,
-            set(cur_allowed) if effective_allow_set is not None else None,
-        )
+        external_chains[tuple(cur_chain)] = bundle_label
+
+    if is_external:
+        origin_s = f" in external bundle {bundle_label!r}"
+    elif in_child_bundle:
+        origin_s = f" in local bundle {bundle_label!r}"
+    else:
+        origin_s = ""
 
     entries: list[tuple[str, str, str | None, list[str]]] = []
     local_exports: list[str] = []
@@ -980,18 +769,7 @@ def _parse_spec_pass(
             line = _render_rule_vars(raw_line, bvars).strip()
             if not line:
                 continue
-            if line == "allow" or line.startswith("allow "):
-                if in_child_bundle:
-                    raise SystemExit(
-                        f"{prog}: 'allow' directive is only permitted in root {root_label} "
-                        f"(found in bundle {bundle_label!r}: {line!r})"
-                    )
-                if line == "allow":
-                    raise SystemExit(f"{prog}: empty allow list in {root_label}")
-                parsed_allow = _parse_allow_bins(line[len("allow ") :], root_label, prog)
-                _ensure_root_spec_trusted(root_spec_file, trust_state, f"directive {line!r}", prog)
-                cur_allowed.update(parsed_allow)
-            elif line == "let" or line.startswith("let "):
+            if line == "let" or line.startswith("let "):
                 assign = line[len("let") :].strip()
                 if "=" not in assign:
                     raise SystemExit(
@@ -1008,19 +786,15 @@ def _parse_spec_pass(
                 )
                 if can_set:
                     s_expr = v_expr.strip()
-                    if not is_external and s_expr.startswith("$(") and s_expr.endswith(")") and len(s_expr) >= 3:
+                    if s_expr.startswith("$(") and s_expr.endswith(")") and len(s_expr) >= 3:
                         inner_cmd = s_expr[2:-1].strip()
                         if inner_cmd and not _is_safe_builtin_command(inner_cmd, prog, work_dir=work_dir):
-                            origin_s = f" in local bundle {bundle_label!r}" if in_child_bundle else ""
                             _ensure_root_spec_trusted(
                                 root_spec_file, trust_state, f"command substitution '$({inner_cmd})'{origin_s}", prog
                             )
                     val = _eval_dynamic_expr(
                         v_expr,
                         work_dir=work_dir,
-                        allowed_cmds=effective_allow_set,
-                        bundle_label=bundle_label,
-                        prog=prog,
                         subshell_cache=subshell_cache,
                         scope_key=scope_key,
                     )
@@ -1045,19 +819,15 @@ def _parse_spec_pass(
                 if not inc_expr:
                     continue
                 is_dyn = inc_expr.startswith("$(") and inc_expr.endswith(")") and len(inc_expr) >= 3
-                if not is_external and is_dyn:
+                if is_dyn:
                     inner_cmd = inc_expr[2:-1].strip()
                     if inner_cmd and not _is_safe_builtin_command(inner_cmd, prog, work_dir=work_dir):
-                        origin_s = f" in local bundle {bundle_label!r}" if in_child_bundle else ""
                         _ensure_root_spec_trusted(
                             root_spec_file, trust_state, f"command substitution '$({inner_cmd})'{origin_s}", prog
                         )
                 resolved_inc = _eval_dynamic_expr(
                     inc_expr,
                     work_dir=work_dir,
-                    allowed_cmds=effective_allow_set,
-                    bundle_label=bundle_label,
-                    prog=prog,
                     subshell_cache=subshell_cache,
                     scope_key=scope_key,
                 )
@@ -1073,10 +843,7 @@ def _parse_spec_pass(
             elif line == "cmd" or line.startswith("cmd "):
                 cmd_str = line[len("cmd") :].strip()
                 if cmd_str:
-                    if effective_allow_set is not None:
-                        _check_command_allowed(cmd_str, effective_allow_set, bundle_label, prog)
-                    elif not is_external and not _is_safe_builtin_command(cmd_str, prog, work_dir=work_dir):
-                        origin_s = f" in local bundle {bundle_label!r}" if in_child_bundle else ""
+                    if not _is_safe_builtin_command(cmd_str, prog, work_dir=work_dir):
                         _ensure_root_spec_trusted(root_spec_file, trust_state, f"command {cmd_str!r}{origin_s}", prog)
                     if not prepass_only:
                         entries.append(("cmd", cmd_str, cond_expr, list(cur_chain)))
@@ -1094,23 +861,6 @@ def _parse_spec_pass(
             elif line == "bundle" or line.startswith("bundle "):
                 parts = shlex.split(line)
                 target, _excls, vmap = _parse_directive_tokens(parts[1:], prog)
-                bundle_allow_raw = vmap.pop("allow", None)
-                child_allowed = set(cur_allowed)
-                child_enforce = enforce_allowlist
-                if bundle_allow_raw is not None:
-                    parsed_bins = set(_parse_allow_bins(bundle_allow_raw, f"bundle {target}", prog))
-                    if is_external and enforce_allowlist:
-                        disallowed = sorted(parsed_bins - cur_allowed)
-                        if disallowed:
-                            raise SystemExit(
-                                f"{prog}: external bundle {bundle_label!r} cannot grant allow={','.join(disallowed)!r} "
-                                f"to child bundle {target!r}"
-                            )
-                        child_allowed = cur_allowed & parsed_bins
-                    else:
-                        _ensure_root_spec_trusted(root_spec_file, trust_state, f"allow grant in {line!r}", prog)
-                        child_allowed.update(parsed_bins)
-                        child_enforce = True
                 lookup_target = _qualify_nested_target(target, work_dir, cur_bdir, default_pkg, pkg_dir, prog, kind="bundle")
                 canonical_bundle, inc_text, child_pkg, child_pkg_dir, child_bdir = _resolve_bundle_context(
                     lookup_target,
@@ -1154,8 +904,6 @@ def _parse_spec_pass(
                     pkg_dir=child_pkg_dir,
                     bundle_dir=child_bdir,
                     is_external=child_is_external,
-                    allowed_cmds=child_allowed,
-                    enforce_allowlist=child_enforce,
                     external_chains=external_chains,
                     session_vars=session_vars,
                     root_spec_file=root_spec_file,
@@ -1190,7 +938,7 @@ def _parse_spec_pass(
             else:
                 raise SystemExit(
                     f"{prog}: invalid line in {bundle_label}: {line!r} (expected 'bundle ...', 'rule ...', "
-                    f"'file ...', 'cmd ...', 'prompt ...', 'let ...', 'export ...', 'if ...', or 'allow ...')"
+                    f"'file ...', 'cmd ...', 'prompt ...', 'let ...', 'export ...', or 'if ...')"
                 )
 
     exec_nodes(ast_nodes, [])
@@ -1210,9 +958,7 @@ def parse_spec(
     pkg_dir: Path | None = None,
     bundle_dir: Path | None = None,
     is_external: bool = False,
-    allowed_cmds: set[str] | None = None,
-    enforce_allowlist: bool = True,
-    external_chains: dict[tuple[str, ...], tuple[str, set[str] | None]] | None = None,
+    external_chains: dict[tuple[str, ...], str] | None = None,
     session_vars: dict[str, str] | None = None,
     root_spec_file: Path | None = None,
     root_trust_state: dict[str, bool] | None = None,
@@ -1226,7 +972,7 @@ def parse_spec(
     eff_cache: dict[tuple[str, str], str] = subshell_cache if subshell_cache is not None else {}
     eff_trust: dict[str, bool] = root_trust_state if root_trust_state is not None else {}
 
-    # Pass 1: session variable & export pre-pass (evaluates allow, let, export, if/elif/else, bundle)
+    # Pass 1: session variable & export pre-pass (evaluates let, export, if/elif/else, bundle)
     _parse_spec_pass(
         text,
         work_dir=work_dir,
@@ -1240,8 +986,6 @@ def parse_spec(
         pkg_dir=pkg_dir,
         bundle_dir=bundle_dir,
         is_external=is_external,
-        allowed_cmds=allowed_cmds,
-        enforce_allowlist=enforce_allowlist,
         external_chains=external_chains,
         session_vars=eff_session,
         root_spec_file=root_spec_file,
@@ -1264,8 +1008,6 @@ def parse_spec(
         pkg_dir=pkg_dir,
         bundle_dir=bundle_dir,
         is_external=is_external,
-        allowed_cmds=allowed_cmds,
-        enforce_allowlist=enforce_allowlist,
         external_chains=external_chains,
         session_vars=eff_session,
         root_spec_file=root_spec_file,
@@ -1279,7 +1021,7 @@ def _run_spec_command(cmd_str: str, cwd: Path) -> tuple[int, str, int]:
     t0 = time.monotonic()
     prog = prog_name()
     self_dir = str(Path(__file__).resolve().parent)
-    if re.match(rf"^(?:{re.escape(prog)}|context|agents_bundle)\s+--tree(?:\s+.*)?$", cmd_str):
+    if not _has_unsafe_shell_syntax(cmd_str) and re.match(rf"^(?:{re.escape(prog)}|context)\s+--tree(?:\s+.*)?$", cmd_str):
         try:
             parts = shlex.split(cmd_str)[2:]
             out = _tree_from_args(parts, default_dir=cwd).rstrip()
@@ -1353,12 +1095,7 @@ def build_bundle(
         spec_label = SPEC_FILE_NAME
         root_bundles = []
     effective_cli_vars: dict[str, str] = dict(cli_vars or {})
-    cli_allow_raw = effective_cli_vars.pop("allow", None) if spec_file is None else None
-    init_allowed: set[str] | None = (
-        set(_parse_allow_bins(cli_allow_raw, "allow", prog)) if cli_allow_raw is not None else None
-    )
-    enforce_allowlist = spec_file is not None or cli_allow_raw is not None
-    external_chains: dict[tuple[str, ...], tuple[str, set[str] | None]] = {}
+    external_chains: dict[tuple[str, ...], str] = {}
     session_vars: dict[str, str] = dict(effective_cli_vars)
     resolved_vars: dict[str, str] = {}
     root_trust_state: dict[str, bool] = {"trusted": is_spec_trusted(spec_file) if spec_file is not None else True}
@@ -1371,8 +1108,6 @@ def build_bundle(
         piped=piped,
         chain=[spec_label] if spec_file is not None else None,
         active_bundles=root_bundles,
-        allowed_cmds=init_allowed,
-        enforce_allowlist=enforce_allowlist,
         external_chains=external_chains,
         session_vars=session_vars,
         root_spec_file=spec_file,
@@ -1467,9 +1202,6 @@ def build_bundle(
                 )
             )
         elif kind == "cmd":
-            ext_policy = external_chains.get(tuple(entry_chain))
-            if ext_policy is not None and ext_policy[1] is not None:
-                _check_command_allowed(val, ext_policy[1], ext_policy[0], prog)
             middle_items.append(("cmd", (val, list(entry_chain))))
         elif kind == "export":
             pass
@@ -1477,12 +1209,12 @@ def build_bundle(
             clean = val.strip()
             if not clean:
                 continue
-            ext_policy = external_chains.get(tuple(entry_chain))
+            ext_label = external_chains.get(tuple(entry_chain))
             slices = _expand_include(
                 wdir,
                 clean,
                 root_dir=spec_dir,
-                bundle_label=ext_policy[0] if ext_policy is not None else None,
+                bundle_label=ext_label,
             )
             for p, start, end in slices:
                 middle_items.append(("span", read_span(p, display_path(p, spec_dir), start, end, entry_chain)))
