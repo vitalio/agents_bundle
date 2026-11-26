@@ -453,10 +453,28 @@ def _is_repo_shorthand_spec(spec: str) -> bool:
     return re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:@[A-Za-z0-9_./-]+)?", s) is not None
 
 
+def _target_exists_in_pkg(
+    pkg_dir: Path,
+    target: str,
+    kind: str = "rule",
+) -> bool:
+    rules_dict, bundles_dict = _load_package_from_dir(pkg_dir)
+    if kind == "bundle":
+        if _match_bundle_in_dict(target, bundles_dict, repo_shorthand=False) is not None:
+            return True
+        return _resolve_package_rel_file(pkg_dir, target, (".bundle",)) is not None
+    if _match_rule_in_dict(target, rules_dict, repo_shorthand=False) is not None:
+        return True
+    return _resolve_package_rel_file(pkg_dir, target, (".md",)) is not None
+
+
 def _parse_target_spec(
     spec: str,
     default_pkg: str | None = None,
     allow_repo_shorthand: bool = False,
+    work_dir: Path | None = None,
+    refresh: bool = False,
+    kind: str = "bundle",
 ) -> tuple[str, str]:
     prog = prog_name()
     if ":" not in spec and _is_local_path_spec(spec):
@@ -469,6 +487,15 @@ def _parse_target_spec(
         return spec[:idx], spec[idx + 1:].strip().lower()
     if ":" not in spec:
         s_clean = spec.strip()
+        if default_pkg and "@" not in s_clean:
+            if not (allow_repo_shorthand and _is_repo_shorthand_spec(s_clean)):
+                return default_pkg, s_clean.lower()
+            try:
+                def_dir = _resolve_package_dir(default_pkg, work_dir=work_dir, refresh=refresh)
+            except SystemExit:
+                def_dir = None
+            if def_dir is not None and _target_exists_in_pkg(def_dir, s_clean, kind=kind):
+                return default_pkg, s_clean.lower()
         if allow_repo_shorthand and _is_repo_shorthand_spec(s_clean):
             repo_leaf = s_clean.split("@", 1)[0].rsplit("/", 1)[-1].lower()
             return s_clean, repo_leaf
@@ -514,16 +541,59 @@ def _match_exact_or_norm(key: str, mapping: dict[str, object]) -> str | None:
     return None
 
 
-def _match_rule_in_dict(name: str, rules_dict: dict[str, tuple[str, str]]) -> str | None:
+def _match_rule_in_dict(
+    name: str,
+    rules_dict: dict[str, tuple[str, str]],
+    repo_shorthand: bool = False,
+) -> str | None:
     for cand in _strip_item_affixes(name, ("agents/",), (".md",)):
-        hit = _match_exact_or_norm(cand, rules_dict)
-        if hit is not None:
-            return hit
+        leaf = cand.rsplit("/", 1)[-1]
+        for probe in (cand, f"{cand}/{leaf}"):
+            hit = _match_exact_or_norm(probe, rules_dict)
+            if hit is not None:
+                return hit
         norm = cand.replace("-", "_")
         matches = [k for k in rules_dict if k.rsplit("/", 1)[-1].replace("-", "_") == norm]
         if len(matches) == 1:
             return matches[0]
+    if repo_shorthand:
+        for probe in ("default", "default/default"):
+            hit = _match_exact_or_norm(probe, rules_dict)
+            if hit is not None:
+                return hit
+        if len(rules_dict) == 1:
+            return next(iter(rules_dict))
     return None
+
+
+def _is_invariant_condition_var(var_name: str, dynamic_vars: set[str] | None = None) -> bool:
+    return var_name in ("os", "vcs") and (dynamic_vars is None or var_name not in dynamic_vars)
+
+
+def _cond_is_invariant(
+    cond_expr: str | None,
+    dynamic_vars: set[str] | None = None,
+    prog: str | None = None,
+) -> bool:
+    if not cond_expr:
+        return True
+    p = prog or prog_name()
+    for _op, k, _allowed in _validate_if_condition_tokens(cond_expr, p):
+        if not _is_invariant_condition_var(k, dynamic_vars):
+            return False
+    return True
+
+
+def _rule_template_is_invariant(
+    raw_body: str,
+    dynamic_vars: set[str] | None = None,
+) -> bool:
+    dyn = dynamic_vars or set()
+    for m in RULE_VAR_RE.finditer(raw_body):
+        k = m.group(1)
+        if "." in k or k in ("role", "task", "title", "piped") or k in dyn:
+            return False
+    return True
 
 
 def _match_bundle_in_dict(
@@ -628,7 +698,14 @@ def _resolve_bundle_context(
     kind_label: str = "bundle",
 ) -> tuple[str, str, str | None, Path | None, Path | None]:
     prog = prog_name()
-    pkg_id, item_name = _parse_target_spec(target_spec, default_pkg=default_pkg, allow_repo_shorthand=True)
+    pkg_id, item_name = _parse_target_spec(
+        target_spec,
+        default_pkg=default_pkg,
+        allow_repo_shorthand=True,
+        work_dir=work_dir,
+        refresh=refresh,
+        kind="bundle",
+    )
     if pkg_id in ("__file__", "__url__"):
         if pkg_id == "__url__":
             fpath = _fetch_url_file(item_name, refresh=refresh)
@@ -659,7 +736,7 @@ def _resolve_bundle_context(
         return str(fpath), _parse_md_text(raw, fpath.stem)[1], None, None, fpath.parent
 
     s_clean = target_spec.strip()
-    is_shorthand = _is_repo_shorthand_spec(s_clean)
+    is_shorthand = _is_repo_shorthand_spec(s_clean) and pkg_id == s_clean
     raw_item = s_clean.split(":", 1)[1].strip() if ":" in s_clean else item_name
     pkg_dir = _resolve_package_dir(pkg_id, work_dir=work_dir, refresh=refresh)
     _, bundles_dict = _load_package_from_dir(pkg_dir)
@@ -721,6 +798,11 @@ def collect_directive_items(
     piped: bool = False,
     chain: list[str] | None = None,
     active_bundles: list[tuple[str, str]] | None = None,
+    cond_expr: str | None = None,
+    dynamic_vars: set[str] | None = None,
+    rule_invariance: dict[str, bool] | None = None,
+    upstream_rules: dict[str, str] | None = None,
+    claimed_upstream_rules: set[str] | None = None,
 ) -> list[tuple[str, str, str, list[str]]]:
     """Returns list of (rule_uid, provenance_comment, rendered_body, chain)."""
     prog = prog_name()
@@ -730,6 +812,7 @@ def collect_directive_items(
         raise SystemExit(f"{prog}: excludes are not supported: {excludes[0]!r}")
 
     effective_vars = {**builtin_vars(work_dir, piped=piped), **(cli_vars or {})}
+    raw_target_spec = target_spec
     target_spec = _render_rule_vars(target_spec, effective_vars)
     base_chain = list(chain) if chain else []
     cur_trace = list(trace_prefix or [f"{kind} {target_spec}"])
@@ -746,10 +829,13 @@ def collect_directive_items(
             target_spec,
             default_pkg=default_pkg or DEFAULT_RULES_PKG,
             allow_repo_shorthand=True,
+            work_dir=work_dir,
+            refresh=refresh,
+            kind="bundle",
         )
         bundle_spec = (
             target_spec
-            if (pkg_id in ("__file__", "__url__") or _is_repo_shorthand_spec(target_spec.strip()))
+            if (pkg_id in ("__file__", "__url__") or (_is_repo_shorthand_spec(target_spec.strip()) and pkg_id == target_spec.strip()))
             else f"{pkg_id}:{item_name}"
         )
         next_bundles: list[tuple[str, str]] = list(active_bundles) if active_bundles else []
@@ -766,10 +852,15 @@ def collect_directive_items(
         def exec_nodes(nodes: list[tuple[str, object]], cond_stack: list[str]) -> None:
             for n_kind, payload in nodes:
                 if n_kind == "if_chain":
+                    prior_conds: list[str] = []
                     for b_cond, b_trace, b_body in payload:  # type: ignore[misc]
                         if b_cond is None or eval_if_condition(b_cond, local_vars, prog):
-                            exec_nodes(b_body, [*cond_stack, b_trace])
+                            branch_conds = [*prior_conds, *([b_cond] if b_cond is not None else [])]
+                            branch_comb = " ".join(branch_conds) or "else"
+                            exec_nodes(b_body, [*cond_stack, branch_comb if b_cond is None else b_trace])
                             break
+                        if b_cond is not None:
+                            prior_conds.append(b_cond)
                     continue
                 raw_line = str(payload)
                 rendered_line = _render_rule_vars(raw_line, local_vars).strip()
@@ -801,6 +892,7 @@ def collect_directive_items(
                     sub_targets = [s_tgt]
                 merged_vars = {**local_vars, **sub_vars, **(cli_vars or {})}
                 cond_s = " ".join(c for c in cond_stack if c and c != "else")
+                full_cond = " ".join(c for c in (cond_expr, cond_s) if c) or None
                 for sub_target in sub_targets:
                     step_label = f"if {cond_s} {sub_kind} {sub_target}" if cond_s else f"{sub_kind} {sub_target}"
                     qual_target = (
@@ -820,13 +912,25 @@ def collect_directive_items(
                             piped=piped,
                             chain=bundle_chain,
                             active_bundles=next_bundles,
+                            cond_expr=full_cond,
+                            dynamic_vars=dynamic_vars,
+                            rule_invariance=rule_invariance,
+                            upstream_rules=upstream_rules,
+                            claimed_upstream_rules=claimed_upstream_rules,
                         )
                     )
 
         exec_nodes(parse_bundle_ast(body_text, prog), [])
         return items_out
 
-    pkg_id, item_name = _parse_target_spec(target_spec, default_pkg=default_pkg)
+    pkg_id, item_name = _parse_target_spec(
+        target_spec,
+        default_pkg=default_pkg,
+        allow_repo_shorthand=True,
+        work_dir=work_dir,
+        refresh=refresh,
+        kind="rule",
+    )
     if pkg_id in ("__file__", "__url__"):
         if pkg_id == "__url__":
             fpath = _fetch_url_file(item_name, refresh=refresh)
@@ -845,22 +949,30 @@ def collect_directive_items(
         rendered = _render_rule_vars(body, effective_vars).strip()
         if not rendered:
             return []
+        rule_uid = str(fpath)
+        if rule_invariance is not None and rule_uid not in rule_invariance:
+            rule_invariance[rule_uid] = (
+                _cond_is_invariant(cond_expr, dynamic_vars, prog)
+                and _rule_template_is_invariant(raw_target_spec, dynamic_vars)
+                and _rule_template_is_invariant(body, dynamic_vars)
+            )
         used_keys = {m.group(1) for m in RULE_VAR_RE.finditer(body)}
         active_vars = {k: v for k, v in effective_vars.items() if k in used_keys}
         vars_s = f" ({', '.join(f'{k}={v}' for k, v in active_vars.items())})" if active_vars else ""
         prov = f"# [{' -> '.join(cur_trace)}]{vars_s}"
-        return [(str(fpath), prov, rendered, list(base_chain))]
+        return [(rule_uid, prov, rendered, list(base_chain))]
 
     s_clean = target_spec.strip()
+    is_shorthand = _is_repo_shorthand_spec(s_clean) and pkg_id == s_clean
     raw_item = s_clean.split(":", 1)[1].strip() if ":" in s_clean else item_name
     pkg_dir = _resolve_package_dir(pkg_id, work_dir=work_dir, refresh=refresh)
     rules_dict, _ = _load_package_from_dir(pkg_dir)
 
-    rk = _match_rule_in_dict(item_name, rules_dict)
+    rk = _match_rule_in_dict(item_name, rules_dict, repo_shorthand=is_shorthand)
     if rk is not None:
         raw_body = rules_dict[rk][1].strip()
     else:
-        rel_match = _resolve_package_rel_file(pkg_dir, raw_item, (".md",))
+        rel_match = None if is_shorthand else _resolve_package_rel_file(pkg_dir, raw_item, (".md",))
         if rel_match is None:
             avail_r = sorted(rules_dict.keys())
             raise SystemExit(
@@ -868,10 +980,31 @@ def collect_directive_items(
             )
         rk, fpath = rel_match
         raw_body = _parse_md_text(fpath.read_text(encoding="utf-8", errors="replace"), rk)[1].strip()
-    rendered = _render_rule_vars(raw_body, effective_vars)
+
+    repo_base = _split_pkg_ref(pkg_id, prog)[0]
+    canonical_uid = f"{pkg_id}:{rk}"
+    unpinned_uid = f"{repo_base}:{rk}"
+    up_raw: str | None = None
+    if upstream_rules is not None:
+        if canonical_uid in upstream_rules:
+            up_raw = upstream_rules[canonical_uid]
+            if claimed_upstream_rules is not None:
+                claimed_upstream_rules.add(canonical_uid)
+        elif unpinned_uid in upstream_rules:
+            up_raw = upstream_rules[unpinned_uid]
+            if claimed_upstream_rules is not None:
+                claimed_upstream_rules.add(unpinned_uid)
+    body_for_render = _parse_md_text(up_raw, canonical_uid)[1].strip() if up_raw is not None else raw_body
+    rendered = _render_rule_vars(body_for_render, effective_vars).strip()
     if not rendered:
         return []
-    used_keys = {m.group(1) for m in RULE_VAR_RE.finditer(raw_body)}
+    if rule_invariance is not None and canonical_uid not in rule_invariance:
+        rule_invariance[canonical_uid] = (
+            _cond_is_invariant(cond_expr, dynamic_vars, prog)
+            and _rule_template_is_invariant(raw_target_spec, dynamic_vars)
+            and _rule_template_is_invariant(body_for_render, dynamic_vars)
+        )
+    used_keys = {m.group(1) for m in RULE_VAR_RE.finditer(body_for_render)}
     active_vars = {k: v for k, v in effective_vars.items() if k in used_keys}
     trace_chain = (
         [*cur_trace, f"agents/{rk}.md"]
@@ -880,7 +1013,7 @@ def collect_directive_items(
     )
     vars_s = f" ({', '.join(f'{k}={v}' for k, v in active_vars.items())})" if active_vars else ""
     prov = f"# [{' -> '.join(trace_chain)}]{vars_s}"
-    return [(f"{pkg_id}:{rk}", prov, rendered, list(base_chain))]
+    return [(canonical_uid, prov, rendered, list(base_chain))]
 
 
 def format_bundle_part_marker(nonce: str, meta: dict[str, object]) -> str:

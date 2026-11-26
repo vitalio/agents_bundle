@@ -23,14 +23,18 @@ rules are loaded via `.context.bundle`.
   directory collapsing, file list truncation, and total byte size summary.
 - `src/rules_engine.py` — resolves atomic rules (`.md`) and composite bundles
   (`.bundle`) from canonical `agents/` (including `<repo>.bundle` /
-  `default.bundle` for `<owner>/<repo>` and `agents/<domain>/<domain>.bundle` or
-  `agents/<domain>/default.bundle` for `<owner>/<repo>:<domain>`), explicit
-  package-relative paths (`<owner>/<repo>[@<ref>]:path/to/file`), local
-  relative paths (`./...`, `../...`), or direct URLs (`http://`, `https://`,
-  `file://`); fetches explicit `@<ref>` refs into the package cache even when
-  `CONTEXT_BUNDLE_LOCAL_PKG_DIR` is set; parses Python-indented `if <cond>`,
-  `else if <cond>` (`elif <cond>`), and `else` blocks; and evaluates conditions
-  against `os` (`linux`, `macos`), `vcs`, and dot-separated variables.
+  `default.bundle` for `bundle <owner>/<repo>`, `<repo>.md` / `default.md` /
+  sole `agents/*.md` rule for `rule <owner>/<repo>`, and
+  `agents/<domain>/<domain>.bundle` or `agents/<domain>/default.bundle` for
+  `<owner>/<repo>:<domain>`), explicit package-relative paths
+  (`<owner>/<repo>[@<ref>]:path/to/file`), local relative paths (`./...`,
+  `../...`), or direct URLs (`http://`, `https://`, `file://`); reuses piped
+  upstream rule bodies when a referenced package rule's canonical ID is already
+  present in `up_groups["rules"]`; fetches explicit `@<ref>` refs into the
+  package cache even when `CONTEXT_BUNDLE_LOCAL_PKG_DIR` is set; parses
+  Python-indented `if <cond>`, `else if <cond>` (`elif <cond>`), and `else`
+  blocks; and evaluates conditions against `os` (`linux`, `macos`), `vcs`, and
+  dot-separated variables.
 - `src/includes.py` — `file` item expansion (globs, `path:start-end`, `~`),
   repository-root boundary enforcement (`root_dir=spec_dir`) for all bundle
   `file` directives (root `.context.bundle` and external child bundles, while
@@ -44,9 +48,15 @@ rules are loaded via `.context.bundle`.
   `"file"`, `"cmd"`, `"prompt"` kinds) into `PipedInput`.
 - `src/bundle.py` — locates `.context.bundle`,
   parses the 9-keyword `.bundle` language (`bundle`, `rule`, `file`, `cmd`,
-  `prompt`, `let`, `export`, `if`/`else if`/`elif`/`else`, `allow`), enforces
-  lexical scoping on `let` and session/header promotion on `export`, allows
-  built-in read-only inspection commands (`context --tree`, read-only
+  `prompt`, `let`, `export`, `if`/`else if`/`elif`/`else`, `allow`) in two
+  passes (Pass 1 resolves session variables and `export` directives across
+  nested bundles with cached `let x=$(...)` subshells and precedence CLI > root
+  `let` / inline `bundle ... k=v` > child `export` first-non-empty-writer >
+  child-local `let`; Pass 2 collects rules, files, commands, and prompts in
+  declaration order), stratifies `===== Rules =====` into Layer 1 (invariant
+  rules + embedded `vitalio/context-bundle:context`) and Layer 2 (session/role
+  conditional rules + remaining unreferenced upstream rules), allows built-in
+  read-only inspection commands (`context --tree`, read-only
   `git status`/`branch`/`log`/`diff`/`rev-parse`, and read-only `todo` queries)
   in root `.context.bundle` by default while requiring explicit `(realpath,
   sha256)` trust in `${XDG_STATE_HOME:-~/.local/state}/context-bundle/trusted.json`

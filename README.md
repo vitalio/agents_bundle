@@ -99,7 +99,7 @@ context --tree -x bumps -x resolutions --max-lines 160 --max-tokens 1600
 | :--- | :--- |
 | `context [k=v ...] [-p TEXT] [FILE ...]` | Build context bundle from `.context.bundle` (or `.agents_bundle`) to `stdout` (`stdin`: `Key: Value` preamble, task ID, or prompt; sets `piped=1` on prompt; empty piped `stdin` exits `2`) |
 | `context bundle <pkg>[:<name>] [k=v]` | Render a bundle's rules, files, commands, and prompts from `agents/` in the regular bundle format without `.context.bundle` (reads no `stdin`; honors `-C`, `-p`, `--plain`, `-v`, `--refresh`, `allow=<cmd,...>`) |
-| `context rule <pkg>:<name...> [k=v]` | Render one or more rules from `agents/` (`<owner>/<repo>[@ref]:<name\|path>`, `./path`, or URL) to `stdout` |
+| `context rule <pkg>[:<name...>] [k=v]` | Render one or more rules from `agents/` (`<owner>/<repo>[@ref][:<name\|path>]`, `./path`, or URL) to `stdout` |
 | `context --list \| -l [pkg]` | List bundles, rules, and built-in variables (default: `vitalio/agents-rules`) |
 | `context --update-cache` | Refresh cached git packages and URL files in `~/.cache/context-bundle` |
 | `context --init [--force]` | Create a starter `.context.bundle` in the current directory |
@@ -145,11 +145,11 @@ context --tree -x bumps -x resolutions --max-lines 160 --max-tokens 1600
 Starter `.context.bundle` example:
 
 ```text
-bundle vitalio/agents-rules:adapters/todo-md
 bundle vitalio/agents-rules:core
 bundle vitalio/agents-rules:stack/python py_min=3.9
 bundle vitalio/agents-rules:stack/cli
 rule vitalio/agents-rules:release/semver
+bundle vitalio/agents-rules:adapters/todo-md
 
 file AGENTS.md
 if role=work
@@ -164,7 +164,9 @@ if mode=summary
 
 `.context.bundle` (legacy `.agents_bundle`) and package `.bundle` files share
 the same 9-keyword directive language; blank lines and `#` comments are
-ignored, and `file` and `cmd` fragments assemble in exact top-down declaration
+ignored, exported session variables resolve in a pre-pass (so `core` placed
+before a trailing `adapters/todo-md` bundle still sees `role`, `task`, and
+`title`), and `file` and `cmd` fragments assemble in exact top-down declaration
 order:
 
 - `bundle <owner>/<repo>[@<ref>][:<name|path>] [allow=<cmd,...>] [k=v ...]`
@@ -174,9 +176,11 @@ order:
   for `:<domain>`, or an explicit package-relative path); circular references
   fail fast. Pass `allow=<cmd,...>` to permit an external bundle to run
   specific executables.
-- `rule <target...> [k=v ...]` includes one or more atomic `.md` rule files
-  from a package's `agents/` directory, an explicit package-relative path, a
-  local relative path (`./...`, `../...`), or a URL.
+- `rule <owner>/<repo>[@<ref>][:<name|path>...] [k=v ...]` (or a local path
+  `./...`, `../...`, or URL) includes one or more atomic `.md` rule files from
+  `agents/` (`<repo>.md`, `default.md`, or the sole rule in `agents/*.md` for
+  package shorthand `<owner>/<repo>[@<ref>]`, or `<name>.md` / an explicit
+  package-relative path).
 - `file <path|glob|slice...>` includes space-separated repository files, globs
   (`*`, `?`, `[`, and recursive `**`; matches are sorted and `.git` and
   `__pycache__` are skipped), 1-based inclusive line-range slices
@@ -205,8 +209,11 @@ order:
   bundle-local variable (set-if-unset; passed down to child `rule` and `bundle`
   invocations, never leaking upward to parent/sibling bundles or output
   preamble headers).
-- `export <name...>` promotes variables to session scope (visible to subsequent
-  bundles) and emits them as capitalized `Key: Value` output preamble headers
+- `export <name...>` promotes variables to session scope in a pre-pass before
+  content collection (precedence: CLI `key=val` / `CONTEXT_BUNDLE_VARS` > root
+  `.context.bundle` `let` and inline `bundle ... key=val` > child bundle
+  `export` in top-down first-non-empty-writer order > child bundle-local `let`
+  defaults) and emits them as capitalized `Key: Value` output preamble headers
   when non-empty.
 - `if <cond>`, `else if <cond>` (synonym `elif <cond>`), `else` guard 4-space
   Python-style indented blocks without trailing colons or `endif`. Variable
@@ -278,11 +285,15 @@ the assembled body sections (`===== Rules =====`,
   (and nested bundles) carry `chain` starting with the root spec filename;
   piped upstream fragments keep their own chain, and CLI file and `-p`
   arguments use `[]`.
-- **Embedded rule:** A short built-in rule (`id`
-  `vitalio/context-bundle:context`, chain `["vitalio/context-bundle"]`)
-  describing `--tree` and session assembly is always added to the Rules
-  section. `--init` creates a starter `.context.bundle` that uses
-  `file AGENTS.md`.
+- **Two-layer rule cache stratification & embedded rule:** `===== Rules =====`
+  partitions collected rules into Layer 1 (role- and session-invariant rules
+  from `.context.bundle` in declaration order — including any package rule whose
+  canonical ID matches a piped upstream rule body — followed by the embedded
+  `vitalio/context-bundle:context` rule with chain
+  `["vitalio/context-bundle"]`) and Layer 2 (session- and role-conditional rules
+  from `.context.bundle` in declaration order, followed by any remaining
+  unreferenced upstream piped rules). `--init` creates a starter
+  `.context.bundle` that uses `file AGENTS.md`.
 
 ## Package Cache
 

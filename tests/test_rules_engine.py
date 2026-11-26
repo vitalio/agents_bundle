@@ -590,6 +590,66 @@ class TestRulesEngine(AgentsBundleTestCase):
         self._assert_ok(r_pinned_bundle)
         self.assertIn("PINNED_TAG_V1_0_BODY", r_pinned_bundle.stdout)
 
+        # Explicit @v1.0 on rule shorthand vitalio/ref_pkg@v1.0 (sole rule fallback)
+        r_pinned_rule_shorthand = self._run(
+            [str(SCRIPT), "rule", "vitalio/ref_pkg@v1.0"],
+            cwd=str(self.tmp),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self._assert_ok(r_pinned_rule_shorthand)
+        self.assertIn("PINNED_TAG_V1_0_BODY", r_pinned_rule_shorthand.stdout)
+
+    def test_package_rule_shorthand_resolution_order_and_ambiguity_rejection(self):
+        pkg_root = Path(os.environ["CONTEXT_BUNDLE_LOCAL_PKG_DIR"])
+
+        # 1. Sole rule in agents/*.md (e.g. vitalio/todo-md -> agents/todo.md -> vitalio/todo-md:todo)
+        todo_pkg = pkg_root / "vitalio" / "todo-md" / "agents"
+        todo_pkg.mkdir(parents=True)
+        (todo_pkg / "todo.md").write_text(
+            "# Description: Todo rule\n- SOLE_RULE_TODO_MD_BODY\n",
+            encoding="utf-8",
+        )
+        mod = self._load_bundle_module()
+        items_sole = mod.collect_directive_items("rule", "vitalio/todo-md", work_dir=self.tmp)
+        self.assertEqual(len(items_sole), 1)
+        self.assertEqual(items_sole[0][0], "vitalio/todo-md:todo")
+        self.assertIn("SOLE_RULE_TODO_MD_BODY", items_sole[0][2])
+
+        # 2. agents/default.md preferred when multiple rules exist and <repo>.md is absent
+        (todo_pkg / "extra.md").write_text(
+            "# Description: Extra rule\n- EXTRA_RULE_BODY\n",
+            encoding="utf-8",
+        )
+        r_ambig = self._run(
+            [str(SCRIPT), "rule", "vitalio/todo-md"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(r_ambig.returncode, 0)
+        self.assertIn("unknown rule", r_ambig.stderr)
+
+        (todo_pkg / "default.md").write_text(
+            "# Description: Default rule\n- DEFAULT_RULE_TODO_MD_BODY\n",
+            encoding="utf-8",
+        )
+        items_def = mod.collect_directive_items("rule", "vitalio/todo-md", work_dir=self.tmp)
+        self.assertEqual(items_def[0][0], "vitalio/todo-md:default")
+        self.assertIn("DEFAULT_RULE_TODO_MD_BODY", items_def[0][2])
+
+        # 3. agents/<repo>.md (with '-' / '_' normalization) preferred over agents/default.md
+        (todo_pkg / "todo-md.md").write_text(
+            "# Description: Repo-named rule\n- REPO_NAMED_TODO_MD_BODY\n",
+            encoding="utf-8",
+        )
+        items_repo = mod.collect_directive_items("rule", "vitalio/todo-md", work_dir=self.tmp)
+        self.assertEqual(items_repo[0][0], "vitalio/todo-md:todo-md")
+        self.assertIn("REPO_NAMED_TODO_MD_BODY", items_repo[0][2])
+
 
 if __name__ == "__main__":
     unittest.main()

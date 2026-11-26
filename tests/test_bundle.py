@@ -1573,6 +1573,236 @@ class TestBundle(AgentsBundleTestCase):
             self.assertIn("./local_child.bundle", r_c2.stderr)
             self.assertNotIn("child_tampered", r_c2.stdout)
 
+    def test_prepass_session_variables_precedence_and_subshell_caching(self):
+        pkg_dir = Path(os.environ["CONTEXT_BUNDLE_LOCAL_PKG_DIR"])
+        todo_pkg = pkg_dir / "vitalio" / "todo-md" / "agents"
+        todo_pkg.mkdir(parents=True, exist_ok=True)
+        (todo_pkg / "todo.md").write_text(
+            "# Description: Todo rule\n- Task management (`todo`): Manage `TODO.md`.\n",
+            encoding="utf-8",
+        )
+        adapters_dir = pkg_dir / "agents" / "adapters"
+        adapters_dir.mkdir(parents=True, exist_ok=True)
+        (adapters_dir / "todo-md.bundle").write_text(
+            "# Description: Todo-md adapter\n"
+            "rule vitalio/todo-md\n"
+            "if todo_md.role!=\n"
+            "    let role={todo_md.role:}\n"
+            "elif todo_md.status=WIP,NEXT\n"
+            "    let role=work\n"
+            "if todo_md.task!=\n"
+            "    let task={todo_md.task:}\n"
+            "if todo_md.title!=\n"
+            "    let title={todo_md.title:}\n"
+            "export role task title\n",
+            encoding="utf-8",
+        )
+        (pkg_dir / "agents" / "role" / "work.md").write_text(
+            "# Description: Universal Worker role\n- Role (Worker): Focus strictly on delivering the target task.\n",
+            encoding="utf-8",
+        )
+        (pkg_dir / "agents" / "core" / "core.bundle").write_text(
+            "# Description: Core axioms\n"
+            "rule core/start\n"
+            "rule core/ssot\n"
+            "rule core/lang lang=English\n"
+            "if role!=\n"
+            "    rule role/{role:}\n",
+            encoding="utf-8",
+        )
+
+        # 1. Trailing adapters/todo-md placed AFTER core still populates role/task/title for core in Pass 2
+        counter_file = self.tmp / "subshell_count.txt"
+        child_writer_1 = self.tmp / "writer1.bundle"
+        child_writer_1.write_text(
+            "let empty_export=\n"
+            "export empty_export\n"
+            "let shared_var=from_writer1\n"
+            "let local_var=writer1_local\n"
+            "export shared_var\n",
+            encoding="utf-8",
+        )
+        child_writer_2 = self.tmp / "writer2.bundle"
+        child_writer_2.write_text(
+            "let empty_export=claimed_by_writer2\n"
+            "let shared_var=from_writer2_ignored\n"
+            "let root_let_var=from_writer2_ignored\n"
+            "let cli_var=from_writer2_ignored\n"
+            "let local_var=writer2_local\n"
+            f"let dyn_var=$(\"{sys.executable}\" -c \"from pathlib import Path; p = Path({str(counter_file)!r}); n = int(p.read_text()) + 1 if p.exists() else 1; p.write_text(str(n)); print('dyn_val_' + str(n))\")\n"
+            "export empty_export shared_var root_let_var cli_var dyn_var\n"
+            "prompt Writer2 sees local={local_var:} shared={shared_var:} dyn={dyn_var:}\n",
+            encoding="utf-8",
+        )
+
+        (self.tmp / ".context.bundle").write_text(
+            "let root_let_var=from_root_let\n"
+            "bundle vitalio/agents-rules:core\n"
+            f"bundle {child_writer_1.as_posix()}\n"
+            f"bundle {child_writer_2.as_posix()}\n"
+            "bundle vitalio/agents-rules:adapters/todo-md\n"
+            "prompt Root sees role={role:} task={task:} title={title:} shared={shared_var:} empty={empty_export:} root_let={root_let_var:} cli={cli_var:}\n",
+            encoding="utf-8",
+        )
+        self._trust()
+
+        upstream_todo = (
+            "Bundle-Command: todo F39\n"
+            "Bundle-Name: vitalio/todo-md\n"
+            "Bundle-Boundary: todo123\n"
+            "Task: F39\n"
+            "Status: WIP\n"
+            "Title: Pre-pass and stratification\n\n"
+            "<!-- bundle:todo123:part {\"kind\": \"prompt\", \"id\": \"F39\", \"chain\": [\"vitalio/todo-md\"]} -->\n"
+            "===== Prompt =====\n# WIP F39\n"
+            "<!-- bundle:todo123:end -->\n"
+        )
+        r = self._run(
+            [str(SCRIPT), "cli_var=from_cli"],
+            cwd=str(self.tmp),
+            input=upstream_todo,
+        )
+        self._assert_ok(r)
+        # Dynamic let x=$(...) executed only once across Pass 1 and Pass 2
+        self.assertEqual(counter_file.read_text(encoding="utf-8").strip(), "1")
+        self.assertIn("Role: work\n", r.stdout)
+        self.assertIn("Task: F39\n", r.stdout)
+        self.assertIn("Title: Pre-pass and stratification\n", r.stdout)
+        self.assertIn("Shared-Var: from_writer1\n", r.stdout)
+        self.assertIn("Empty-Export: claimed_by_writer2\n", r.stdout)
+        self.assertIn("Root-Let-Var: from_root_let\n", r.stdout)
+        self.assertIn("Cli-Var: from_cli\n", r.stdout)
+        self.assertIn("Dyn-Var: dyn_val_1\n", r.stdout)
+        self.assertIn("Role (Worker): Focus strictly on delivering the target task.", r.stdout)
+        self.assertIn("Writer2 sees local=writer2_local shared=from_writer1 dyn=dyn_val_1", r.stdout)
+        self.assertIn(
+            "Root sees role=work task=F39 title=Pre-pass and stratification "
+            "shared=from_writer1 empty=claimed_by_writer2 root_let=from_root_let cli=from_cli",
+            r.stdout,
+        )
+
+    def test_two_layer_rule_cache_stratification_and_upstream_rule_reuse(self):
+        pkg_dir = Path(os.environ["CONTEXT_BUNDLE_LOCAL_PKG_DIR"])
+        todo_pkg = pkg_dir / "vitalio" / "todo-md" / "agents"
+        todo_pkg.mkdir(parents=True, exist_ok=True)
+        (todo_pkg / "todo.md").write_text(
+            "# Description: Todo rule\n- Task management (`todo`): Package fallback body.\n",
+            encoding="utf-8",
+        )
+        adapters_dir = pkg_dir / "agents" / "adapters"
+        adapters_dir.mkdir(parents=True, exist_ok=True)
+        (adapters_dir / "todo-md.bundle").write_text(
+            "# Description: Todo-md adapter\n"
+            "rule vitalio/todo-md\n"
+            "if todo_md.role!=\n"
+            "    let role={todo_md.role:}\n"
+            "elif todo_md.status=WIP,NEXT\n"
+            "    let role=work\n"
+            "if todo_md.task!=\n"
+            "    let task={todo_md.task:}\n"
+            "export role task\n",
+            encoding="utf-8",
+        )
+        (pkg_dir / "agents" / "role" / "work.md").write_text(
+            "# Description: Universal Worker role\n- Role (Worker): Deliver target task.\n",
+            encoding="utf-8",
+        )
+        (pkg_dir / "agents" / "collab").mkdir(parents=True, exist_ok=True)
+        (pkg_dir / "agents" / "collab" / "commits.md").write_text(
+            "# Description: Commits\n- Commit subject line: Imperative summary.\n",
+            encoding="utf-8",
+        )
+        (pkg_dir / "agents" / "core" / "core.bundle").write_text(
+            "# Description: Core axioms\n"
+            "rule core/start\n"
+            "rule core/ssot\n"
+            "rule core/lang lang=English\n"
+            "if os=linux\n"
+            "    rule os/linux\n"
+            "if os=macos\n"
+            "    rule os/macos\n"
+            "if vcs=git\n"
+            "    rule vcs/git\n"
+            "if role!=\n"
+            "    rule role/{role:}\n",
+            encoding="utf-8",
+        )
+
+        (self.tmp / ".context.bundle").write_text(
+            "bundle vitalio/agents-rules:adapters/todo-md\n"
+            "bundle vitalio/agents-rules:core\n"
+            "rule vitalio/agents-rules:release/single-file-build\n"
+            "rule vitalio/agents-rules:collab/commits\n",
+            encoding="utf-8",
+        )
+        cur_os = "macos" if sys.platform == "darwin" else "linux"
+        expected_layer1 = [
+            "vitalio/todo-md:todo",
+            "vitalio/agents-rules:core/start",
+            "vitalio/agents-rules:core/ssot",
+            "vitalio/agents-rules:core/lang",
+            f"vitalio/agents-rules:os/{cur_os}",
+            "vitalio/agents-rules:release/single-file-build",
+            "vitalio/agents-rules:collab/commits",
+            "vitalio/context-bundle:context",
+        ]
+
+        # 1. Non-piped run with role=work vs role=plan vs no role: Layer 1 prefix is identical
+        r_no_role = self._run([str(SCRIPT)], cwd=str(self.tmp))
+        self._assert_ok(r_no_role)
+        _, frags_no_role = self._extract_fragments(r_no_role.stdout)
+        rules_no_role = [m["id"] for m, _ in frags_no_role if m["kind"] == "rule"]
+        self.assertEqual(rules_no_role, expected_layer1)
+
+        r_work = self._run([str(SCRIPT), "role=work"], cwd=str(self.tmp))
+        self._assert_ok(r_work)
+        _, frags_work = self._extract_fragments(r_work.stdout)
+        rules_work = [m["id"] for m, _ in frags_work if m["kind"] == "rule"]
+        self.assertEqual(rules_work, [*expected_layer1, "vitalio/agents-rules:role/work"])
+
+        r_plan = self._run([str(SCRIPT), "role=plan"], cwd=str(self.tmp))
+        self._assert_ok(r_plan)
+        _, frags_plan = self._extract_fragments(r_plan.stdout)
+        rules_plan = [m["id"] for m, _ in frags_plan if m["kind"] == "rule"]
+        self.assertEqual(rules_plan, [*expected_layer1, "vitalio/agents-rules:role/plan"])
+
+        # 2. Piped run with upstream vitalio/todo-md:todo and an unreferenced upstream rule:
+        #    vitalio/todo-md:todo stays in its Layer 1 position reusing the piped upstream body,
+        #    while the unreferenced upstream rule is placed at the end of Layer 2.
+        piped_bundle = (
+            "Bundle-Command: todo F39\n"
+            "Bundle-Name: vitalio/todo-md\n"
+            "Bundle-Boundary: pipe999\n"
+            "Task: F39\n"
+            "Status: WIP\n\n"
+            "<!-- bundle:pipe999:part {\"kind\": \"rule\", \"id\": \"vitalio/todo-md:todo\", \"chain\": [\"vitalio/todo-md\"]} -->\n"
+            "# Description: Upstream todo rule\n- Task management (`todo`): UPSTREAM_PIPED_TODO_BODY.\n"
+            "<!-- bundle:pipe999:end -->\n"
+            "<!-- bundle:pipe999:part {\"kind\": \"rule\", \"id\": \"acme/custom:extra\", \"chain\": [\"acme/custom\"]} -->\n"
+            "- Unreferenced upstream rule body.\n"
+            "<!-- bundle:pipe999:end -->\n"
+        )
+        r_piped = self._run([str(SCRIPT)], cwd=str(self.tmp), input=piped_bundle)
+        self._assert_ok(r_piped)
+        _, frags_piped = self._extract_fragments(r_piped.stdout)
+        rule_frags_piped = [(m, b) for m, b in frags_piped if m["kind"] == "rule"]
+        rules_piped_ids = [m["id"] for m, _ in rule_frags_piped]
+        self.assertEqual(
+            rules_piped_ids,
+            [
+                *expected_layer1,
+                "vitalio/agents-rules:role/work",
+                "acme/custom:extra",
+            ],
+        )
+        by_id_piped = {m["id"]: (m, b) for m, b in rule_frags_piped}
+        self.assertIn("UPSTREAM_PIPED_TODO_BODY", by_id_piped["vitalio/todo-md:todo"][1])
+        self.assertNotIn("Package fallback body", by_id_piped["vitalio/todo-md:todo"][1])
+        self.assertEqual(
+            by_id_piped["vitalio/todo-md:todo"][0]["chain"],
+            [".context.bundle", "vitalio/agents-rules:adapters/todo-md"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

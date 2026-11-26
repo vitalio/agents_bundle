@@ -56,8 +56,8 @@ HELP_SECTIONS = (
                 "honors -C, -p, --plain, -v, --refresh, allow=<cmd,...>)",
             ),
             (
-                "{prog} rule <pkg>:<name...> [k=v]",
-                "Render one or more rules from agents/ (<owner>/<repo>[@ref]:<name|path>, "
+                "{prog} rule <pkg>[:<name...>] [k=v]",
+                "Render one or more rules from agents/ (<owner>/<repo>[@ref][:<name|path>], "
                 "./path, or URL) to stdout",
             ),
             (

@@ -30,8 +30,12 @@ from src.core import embedded_rule_text, prog_name, trust_file_path
 from src.tree import _tree_from_args
 from src.rules_engine import (
     VAR_NAME_RE,
+    _cond_is_invariant,
     _is_external_bundle_source,
     _is_local_path_spec,
+    _is_repo_shorthand_spec,
+    _rule_template_is_invariant,
+    _target_exists_in_pkg,
     _parse_directive_tokens,
     _parse_md_text,
     _parse_rule_directive_tokens,
@@ -63,7 +67,7 @@ def default_spec_template(prog: str | None = None) -> str:
         f"# {SPEC_FILE_NAME} — root context bundle for '{cmd}'",
         "# Directives:",
         "#   bundle <owner>/<repo>[:<name>] [allow=<cmd,...>] [key=val ...]",
-        "#   rule <owner>/<repo>:<name...> [key=val ...]",
+        "#   rule <owner>/<repo>[:<name...>] [key=val ...]",
         "#   file <path|glob|slice...>  (or file $(<shell command>))",
         "#   cmd <shell command>",
         "#   prompt <text>",
@@ -703,6 +707,8 @@ def _eval_dynamic_expr(
     allowed_cmds: set[str] | None = None,
     bundle_label: str | None = None,
     prog: str | None = None,
+    subshell_cache: dict[tuple[str, str], str] | None = None,
+    scope_key: str = "",
 ) -> str:
     s = expr.strip()
     if s.startswith("$(") and s.endswith(")") and len(s) >= 3:
@@ -711,11 +717,15 @@ def _eval_dynamic_expr(
             return ""
         if allowed_cmds is not None:
             _check_command_allowed(cmd, allowed_cmds, bundle_label or SPEC_FILE_NAME, prog or prog_name())
+        cache_key = (scope_key, cmd)
+        if subshell_cache is not None and cache_key in subshell_cache:
+            return subshell_cache[cache_key]
         cwd = (work_dir if work_dir is not None else Path.cwd()).resolve()
         rc, out, _ = _run_spec_command(cmd, cwd)
-        if rc != 0:
-            return ""
-        return out.strip()
+        val = out.strip() if rc == 0 else ""
+        if subshell_cache is not None:
+            subshell_cache[cache_key] = val
+        return val
     return s
 
 
@@ -737,6 +747,7 @@ def _qualify_nested_target(
     default_pkg: str | None,
     pkg_dir: Path | None,
     prog: str,
+    kind: str = "bundle",
 ) -> str:
     if _is_local_path_spec(target) and not Path(target).expanduser().is_absolute():
         if default_pkg is not None and pkg_dir is not None and bundle_dir is not None:
@@ -753,6 +764,11 @@ def _qualify_nested_target(
         and not target.startswith(("http://", "https://", "file://"))
         and default_pkg is not None
     ):
+        if _is_repo_shorthand_spec(target):
+            if "@" in target:
+                return target
+            if pkg_dir is not None and not _target_exists_in_pkg(pkg_dir, target, kind=kind):
+                return target
         return f"{default_pkg}:{target}"
     return target
 
@@ -875,7 +891,7 @@ def _static_inspect_root_trust_ast(
     walk(nodes)
 
 
-def parse_spec(
+def _parse_spec_pass(
     text: str,
     work_dir: Path | None = None,
     cli_vars: dict[str, str] | None = None,
@@ -894,10 +910,16 @@ def parse_spec(
     session_vars: dict[str, str] | None = None,
     root_spec_file: Path | None = None,
     root_trust_state: dict[str, bool] | None = None,
+    prepass_only: bool = False,
+    subshell_cache: dict[tuple[str, str], str] | None = None,
 ) -> list[tuple[str, str, str | None, list[str]]]:
     prog = prog_name()
-    caller_vars: dict[str, str] = dict(cli_vars) if cli_vars is not None else {}
+    caller_vars: dict[str, str] = {k: v for k, v in (cli_vars or {}).items() if v != ""}
     active_vars: dict[str, str] = dict(caller_vars)
+    if session_vars is not None:
+        for sk, sv in session_vars.items():
+            if sv and not active_vars.get(sk):
+                active_vars[sk] = sv
     bvars = {**builtin_vars(work_dir, piped=piped), **active_vars}
     cur_chain = list(chain) if chain else []
     cur_bdir = bundle_dir if bundle_dir is not None else work_dir
@@ -908,6 +930,7 @@ def parse_spec(
     )
     in_child_bundle = bool(cur_chain and cur_chain != [root_label])
     bundle_label = cur_chain[-1] if in_child_bundle else root_label
+    scope_key = " -> ".join(cur_chain) if cur_chain else root_label
     cur_allowed: set[str] = set(allowed_cmds) if allowed_cmds is not None else set()
     trust_state = root_trust_state if root_trust_state is not None else {}
     ast_nodes = parse_bundle_ast(text, prog)
@@ -934,18 +957,23 @@ def parse_spec(
             local_exports.append(var_key)
         val = active_vars.get(var_key, "")
         if val:
-            if session_vars is not None:
+            if session_vars is not None and not session_vars.get(var_key):
                 session_vars[var_key] = val
-            if resolved_vars is not None:
+            if resolved_vars is not None and not resolved_vars.get(var_key):
                 resolved_vars[var_key] = val
 
     def exec_nodes(nodes: list[tuple[str, object]], cond_stack: list[str]) -> None:
         for n_kind, payload in nodes:
             if n_kind == "if_chain":
+                prior_conds: list[str] = []
                 for b_cond, b_trace, b_body in payload:  # type: ignore[misc]
                     if b_cond is None or eval_if_condition(b_cond, bvars, prog):
-                        exec_nodes(b_body, [*cond_stack, b_trace])
+                        branch_conds = [*prior_conds, *([b_cond] if b_cond is not None else [])]
+                        branch_comb = " ".join(branch_conds) or "else"
+                        exec_nodes(b_body, [*cond_stack, branch_comb if b_cond is None else b_trace])
                         break
+                    if b_cond is not None:
+                        prior_conds.append(b_cond)
                 continue
             raw_line = str(payload)
             cond_expr = " ".join(c for c in cond_stack if c and c != "else") or None
@@ -973,7 +1001,12 @@ def parse_spec(
                 k_clean = k.strip()
                 if not VAR_NAME_RE.fullmatch(k_clean):
                     raise SystemExit(f"{prog}: invalid variable name {k_clean!r} in {line!r}")
-                if not active_vars.get(k_clean):
+                can_set = (
+                    (k_clean not in caller_vars)
+                    if not in_child_bundle
+                    else (not active_vars.get(k_clean))
+                )
+                if can_set:
                     s_expr = v_expr.strip()
                     if not is_external and s_expr.startswith("$(") and s_expr.endswith(")") and len(s_expr) >= 3:
                         inner_cmd = s_expr[2:-1].strip()
@@ -988,16 +1021,26 @@ def parse_spec(
                         allowed_cmds=effective_allow_set,
                         bundle_label=bundle_label,
                         prog=prog,
+                        subshell_cache=subshell_cache,
+                        scope_key=scope_key,
                     )
                     if val:
                         active_vars[k_clean] = val
                         bvars[k_clean] = val
-                        if k_clean in local_exports:
+                        if not in_child_bundle:
+                            caller_vars[k_clean] = val
                             if session_vars is not None:
                                 session_vars[k_clean] = val
-                            if resolved_vars is not None:
+                            if resolved_vars is not None and k_clean in local_exports:
+                                resolved_vars[k_clean] = val
+                        elif k_clean in local_exports:
+                            if session_vars is not None and not session_vars.get(k_clean):
+                                session_vars[k_clean] = val
+                            if resolved_vars is not None and not resolved_vars.get(k_clean):
                                 resolved_vars[k_clean] = val
             elif line == "file" or line.startswith("file "):
+                if prepass_only:
+                    continue
                 inc_expr = line[len("file") :].strip()
                 if not inc_expr:
                     continue
@@ -1015,6 +1058,8 @@ def parse_spec(
                     allowed_cmds=effective_allow_set,
                     bundle_label=bundle_label,
                     prog=prog,
+                    subshell_cache=subshell_cache,
+                    scope_key=scope_key,
                 )
                 for clean_item in _split_file_items(resolved_inc, is_dyn):
                     if work_dir is not None:
@@ -1033,14 +1078,17 @@ def parse_spec(
                     elif not is_external and not _is_safe_builtin_command(cmd_str, prog, work_dir=work_dir):
                         origin_s = f" in local bundle {bundle_label!r}" if in_child_bundle else ""
                         _ensure_root_spec_trusted(root_spec_file, trust_state, f"command {cmd_str!r}{origin_s}", prog)
-                    entries.append(("cmd", cmd_str, cond_expr, list(cur_chain)))
+                    if not prepass_only:
+                        entries.append(("cmd", cmd_str, cond_expr, list(cur_chain)))
             elif line == "rule" or line.startswith("rule "):
                 parts = shlex.split(line)
                 targets, vmap = _parse_rule_directive_tokens(parts[1:], prog)
+                if prepass_only:
+                    continue
                 eff_vmap = {**active_vars, **vmap, **caller_vars}
                 var_tokens = [f"{k}={v}" for k, v in eff_vmap.items()]
                 for tgt in targets:
-                    new_tgt = _qualify_nested_target(tgt, work_dir, cur_bdir, default_pkg, pkg_dir, prog)
+                    new_tgt = _qualify_nested_target(tgt, work_dir, cur_bdir, default_pkg, pkg_dir, prog, kind="rule")
                     single_line = shlex.join(["rule", new_tgt, *var_tokens])
                     entries.append(("directive", single_line, cond_expr, list(cur_chain)))
             elif line == "bundle" or line.startswith("bundle "):
@@ -1063,7 +1111,7 @@ def parse_spec(
                         _ensure_root_spec_trusted(root_spec_file, trust_state, f"allow grant in {line!r}", prog)
                         child_allowed.update(parsed_bins)
                         child_enforce = True
-                lookup_target = _qualify_nested_target(target, work_dir, cur_bdir, default_pkg, pkg_dir, prog)
+                lookup_target = _qualify_nested_target(target, work_dir, cur_bdir, default_pkg, pkg_dir, prog, kind="bundle")
                 canonical_bundle, inc_text, child_pkg, child_pkg_dir, child_bdir = _resolve_bundle_context(
                     lookup_target,
                     work_dir=cur_bdir,
@@ -1085,11 +1133,15 @@ def parse_spec(
                 sub_resolved: dict[str, str] = {}
                 child_chain_label = (
                     lookup_target
-                    if (default_pkg is not None and ":" not in target and not _is_local_path_spec(target))
+                    if (
+                        default_pkg is not None
+                        and ":" not in target
+                        and not _is_local_path_spec(target)
+                    )
                     else target
                 )
                 child_chain = [*cur_chain, child_chain_label]
-                for sub_kind, sub_val, sub_cond, sub_chain in parse_spec(
+                for sub_kind, sub_val, sub_cond, sub_chain in _parse_spec_pass(
                     inc_text,
                     work_dir=work_dir,
                     cli_vars=merged_cli,
@@ -1108,27 +1160,32 @@ def parse_spec(
                     session_vars=session_vars,
                     root_spec_file=root_spec_file,
                     root_trust_state=trust_state,
+                    prepass_only=prepass_only,
+                    subshell_cache=subshell_cache,
                 ):
                     comb_cond = " ".join(c for c in (cond_expr, sub_cond) if c) or None
                     entries.append((sub_kind, sub_val, comb_cond, sub_chain))
                 for rk, rv in sub_resolved.items():
+                    if not rv:
+                        continue
                     if not active_vars.get(rk):
                         active_vars[rk] = rv
                         bvars[rk] = rv
-                        if resolved_vars is not None:
-                            resolved_vars[rk] = rv
-                        if session_vars is not None:
-                            session_vars[rk] = rv
+                    if resolved_vars is not None and not resolved_vars.get(rk):
+                        resolved_vars[rk] = rv
+                    if session_vars is not None and not session_vars.get(rk):
+                        session_vars[rk] = rv
             elif line == "export" or line.startswith("export "):
                 exp_raw = line[len("export") :].strip()
                 if not exp_raw:
                     continue
                 for var_key in _parse_export_keys(exp_raw, bundle_label, prog):
                     promote_export(var_key)
-                    entries.append(("export", var_key, cond_expr, list(cur_chain)))
+                    if not prepass_only:
+                        entries.append(("export", var_key, cond_expr, list(cur_chain)))
             elif line == "prompt" or line.startswith("prompt "):
                 p_str = line[len("prompt") :].strip()
-                if p_str:
+                if p_str and not prepass_only:
                     entries.append(("prompt", p_str, cond_expr, list(cur_chain)))
             else:
                 raise SystemExit(
@@ -1138,6 +1195,84 @@ def parse_spec(
 
     exec_nodes(ast_nodes, [])
     return entries
+
+
+def parse_spec(
+    text: str,
+    work_dir: Path | None = None,
+    cli_vars: dict[str, str] | None = None,
+    refresh: bool = False,
+    resolved_vars: dict[str, str] | None = None,
+    piped: bool = False,
+    chain: list[str] | None = None,
+    active_bundles: list[tuple[str, str]] | None = None,
+    default_pkg: str | None = None,
+    pkg_dir: Path | None = None,
+    bundle_dir: Path | None = None,
+    is_external: bool = False,
+    allowed_cmds: set[str] | None = None,
+    enforce_allowlist: bool = True,
+    external_chains: dict[tuple[str, ...], tuple[str, set[str] | None]] | None = None,
+    session_vars: dict[str, str] | None = None,
+    root_spec_file: Path | None = None,
+    root_trust_state: dict[str, bool] | None = None,
+    subshell_cache: dict[tuple[str, str], str] | None = None,
+) -> list[tuple[str, str, str | None, list[str]]]:
+    eff_session: dict[str, str] = (
+        session_vars
+        if session_vars is not None
+        else {k: v for k, v in (cli_vars or {}).items() if v != ""}
+    )
+    eff_cache: dict[tuple[str, str], str] = subshell_cache if subshell_cache is not None else {}
+    eff_trust: dict[str, bool] = root_trust_state if root_trust_state is not None else {}
+
+    # Pass 1: session variable & export pre-pass (evaluates allow, let, export, if/elif/else, bundle)
+    _parse_spec_pass(
+        text,
+        work_dir=work_dir,
+        cli_vars=cli_vars,
+        refresh=refresh,
+        resolved_vars=resolved_vars,
+        piped=piped,
+        chain=chain,
+        active_bundles=active_bundles,
+        default_pkg=default_pkg,
+        pkg_dir=pkg_dir,
+        bundle_dir=bundle_dir,
+        is_external=is_external,
+        allowed_cmds=allowed_cmds,
+        enforce_allowlist=enforce_allowlist,
+        external_chains=external_chains,
+        session_vars=eff_session,
+        root_spec_file=root_spec_file,
+        root_trust_state=eff_trust,
+        prepass_only=True,
+        subshell_cache=eff_cache,
+    )
+
+    # Pass 2: declaration-order content collection with resolved session_vars from Pass 1
+    return _parse_spec_pass(
+        text,
+        work_dir=work_dir,
+        cli_vars=cli_vars,
+        refresh=refresh,
+        resolved_vars=resolved_vars,
+        piped=piped,
+        chain=chain,
+        active_bundles=active_bundles,
+        default_pkg=default_pkg,
+        pkg_dir=pkg_dir,
+        bundle_dir=bundle_dir,
+        is_external=is_external,
+        allowed_cmds=allowed_cmds,
+        enforce_allowlist=enforce_allowlist,
+        external_chains=external_chains,
+        session_vars=eff_session,
+        root_spec_file=root_spec_file,
+        root_trust_state=eff_trust,
+        prepass_only=False,
+        subshell_cache=eff_cache,
+    )
 
 
 def _run_spec_command(cmd_str: str, cwd: Path) -> tuple[int, str, int]:
@@ -1263,6 +1398,10 @@ def build_bundle(
     def normalize_rule_body(raw_body: str, name: str) -> str:
         return _render_rule_vars(_parse_md_text(raw_body, name)[1], rule_vars).strip()
 
+    upstream_rule_bodies: dict[str, str] = {}
+    upstream_rule_entries: list[tuple[str, str, str, list[str]]] = []
+    claimed_upstream_rules: set[str] = set()
+
     if upstream is not None:
         up_groups, unknown_kinds = group_fragments(upstream.fragments)
         for unknown in unknown_kinds:
@@ -1272,13 +1411,33 @@ def build_bundle(
             if not up_uid:
                 warnings.append("ignored upstream rule fragment without id")
                 continue
+            if up_uid not in upstream_rule_bodies:
+                upstream_rule_bodies[up_uid] = up_body
             up_rendered = normalize_rule_body(up_body, up_uid)
             if up_rendered:
-                pending_rules.append((up_uid, f"# [upstream rule {up_uid}]", up_rendered, meta_chain(up_meta)))
+                upstream_rule_entries.append((up_uid, f"# [upstream rule {up_uid}]", up_rendered, meta_chain(up_meta)))
         for up_meta, up_content in up_groups["cmds"]:
             middle_items.append(("up_cmd", (dict(up_meta), up_content)))
         for up_meta, up_content in up_groups["files"]:
             middle_items.append(("span", span_from_fragment(up_meta, up_content, wdir)))
+
+    for kind, val, _cond_expr, _entry_chain in entries:
+        if kind == "export" and val not in spec_exports:
+            spec_exports.append(val)
+
+    dynamic_vars: set[str] = {
+        "role",
+        "task",
+        "title",
+        "piped",
+        *effective_cli_vars.keys(),
+        *resolved_vars.keys(),
+        *spec_exports,
+        *(upstream.vars.keys() if upstream is not None else ()),
+    } - {"os", "vcs"}
+
+    spec_rules: list[tuple[str, str, str, list[str]]] = []
+    rule_invariance: dict[str, bool] = {}
 
     for kind, val, cond_expr, entry_chain in entries:
         if kind == "directive":
@@ -1289,7 +1448,7 @@ def build_bundle(
             trace_chain = [b for b in entry_chain if b not in (SPEC_FILE_NAME, LEGACY_SPEC_FILE_NAME)]
             trace_prefix = [*(f"bundle {b}" for b in trace_chain), base_trace]
             merged_vmap = {**vmap, **session_vars}
-            pending_rules.extend(
+            spec_rules.extend(
                 collect_directive_items(
                     d_kind,
                     target,
@@ -1300,6 +1459,11 @@ def build_bundle(
                     trace_prefix=trace_prefix,
                     piped=piped,
                     chain=entry_chain,
+                    cond_expr=cond_expr,
+                    dynamic_vars=dynamic_vars,
+                    rule_invariance=rule_invariance,
+                    upstream_rules=upstream_rule_bodies,
+                    claimed_upstream_rules=claimed_upstream_rules,
                 )
             )
         elif kind == "cmd":
@@ -1308,8 +1472,7 @@ def build_bundle(
                 _check_command_allowed(val, ext_policy[1], ext_policy[0], prog)
             middle_items.append(("cmd", (val, list(entry_chain))))
         elif kind == "export":
-            if val not in spec_exports:
-                spec_exports.append(val)
+            pass
         elif kind == "file":
             clean = val.strip()
             if not clean:
@@ -1337,15 +1500,38 @@ def build_bundle(
         for p, start, end in slices:
             middle_items.append(("span", read_span(p, display_path(p, spec_dir), start, end, [])))
 
-    pending_rules = [
-        r for r in pending_rules
+    spec_rules = [
+        r for r in spec_rules
         if r[0] not in (LEGACY_RULE_ID, EMBEDDED_RULE_ID, "agents_bundle", EMBEDDED_RULE_NAME)
     ]
+    layer1_rules: list[tuple[str, str, str, list[str]]] = []
+    layer2_rules: list[tuple[str, str, str, list[str]]] = []
+    seen_spec_uids: set[str] = set()
+    for r_item in spec_rules:
+        r_uid = r_item[0]
+        if r_uid in seen_spec_uids:
+            continue
+        seen_spec_uids.add(r_uid)
+        if rule_invariance.get(r_uid, True):
+            layer1_rules.append(r_item)
+        else:
+            layer2_rules.append(r_item)
+
     embedded = normalize_rule_body(embedded_rule_text(), EMBEDDED_RULE_ID)
     if embedded:
-        pending_rules.append(
+        layer1_rules.append(
             (EMBEDDED_RULE_ID, f"# [embedded rule {EMBEDDED_RULE_ID}]", embedded, [PRODUCER_NAME])
         )
+
+    for up_item in upstream_rule_entries:
+        up_uid = up_item[0]
+        if up_uid in (LEGACY_RULE_ID, EMBEDDED_RULE_ID, "agents_bundle", EMBEDDED_RULE_NAME):
+            continue
+        if up_uid in claimed_upstream_rules or up_uid in seen_spec_uids:
+            continue
+        layer2_rules.append(up_item)
+
+    pending_rules = [*layer1_rules, *layer2_rules]
 
     if pending_rules:
         formatted = format_collected_rules(pending_rules, verbose=verbose, boundary=fragment_boundary).strip()
