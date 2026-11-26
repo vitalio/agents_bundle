@@ -1,6 +1,15 @@
+# 🎯 [NEXT] F41: Require trusted.json for all commands including context --tree and deduplicate trust-tree walks
+
+- Depends on: F40
+- Bump: `PATCH`
+- Require `trusted.json` verification for every `cmd ...`, `let <k>=$(<cmd>)`, and `file $(<cmd>)` directive without exception (including `context --tree`), so untrusted `.context.bundle` specs remain strictly declarative (`rule`, `prompt`, static `let`/`export`/`if`, and `file` bounded to `spec_dir`).
+- Remove `_is_safe_builtin_command()` and `_is_safe_tree_args()` from `src/bundle.py`, keeping in-process `_tree_from_args()` in `_run_spec_command()` purely as a runtime performance fast path after trust verification.
+- Reuse the computed `(local_files, external_templates, pending_commands, digest)` trust snapshot across `is_spec_trusted()`, `_prompt_tty_trust()`, and `_ensure_root_spec_trusted()` within a single run instead of re-walking the bundle tree on disk multiple times, and qualify external command templates in the trust digest with their originating bundle identity.
+- Update `README.md`, `AGENTS.md`, and `tests/test_bundle.py`, and rebuild `./context` via `python3 build.py`.
+
 # 🎯 [NEXT] D1: Design local .context/ overlays, package lock/vendoring, and ephemeral task-scout bundles
 
-- Depends on: F39 -> F40
+- Depends on: F39 -> F40 -> F41
 - Evaluate separating repository-exported rules/bundles under root `agents/` from project-local context assembly assets under `.context/`:
   - `agents/` remains the public package export directory consumed by downstream projects (`<owner>/<repo>`).
   - `.context/rules/` (optional) stores project-local roles and rules that are not exported outside the repository.
