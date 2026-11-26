@@ -1,3 +1,11 @@
+# 🎯 [NEXT] F42: Separate Usage: templates from Commands: in context -h and compact left-column signatures
+
+- Update `src/header.py` and `src/core.py` (`HELP_USAGE`, `HELP_SECTIONS`, `usage_text()`) to match the refined `agents/cli/help.md` layout contract:
+  - Render top-level `Usage:` syntax lines (`{prog} [k=v ...] [-p TEXT] [FILE ...]`, `{prog} <command|flag> [args] [opts]`) as a compact usage block rather than a two-column table.
+  - Add a dedicated `Commands:` section for subcommands and mode flags (`bundle <pkg>[:<name>] [k=v]`, `rule <pkg>[:<name...>] [k=v]`, `--list | -l [pkg]`, `--update-cache`, `--init [--force]`, `--trust [opts]`, `--tree [DIR] [opts]`, `--update [--force]`, `--check-update`, `--uninstall`) without repeating `{prog} ` on every row, listing `--trust` sub-options (`--revoke`, `--list`, `-C DIR`) in the description column so the shared description column shifts left to ~34 columns.
+  - Move `-V, --version` and `-h, --help` to the end of `Options:`, and guard `render_help_section()` / `usage_text()` with a maximum left-column cap (`HELP_MAX_LEFT`) so long custom binary names wrap/break cleanly without squeezing the right-hand column.
+- Update `tests/test_cli.py` (`test_build_check_help_and_version`, `test_help_width_and_column_alignment`) to assert the `Usage:`, `Commands:`, `Options:`, `Bundle Output Protocol:`, and `Environment:` sections and a single shared description column across all tabular sections; keep `README.md` aligned, rebuild `./context` via `python3 build.py`, and run the test suite.
+
 # 🎯 [NEXT] L2: Remove session handoff and legacy run_block pipe from agents/context.md
 
 - Bump: `PATCH`
