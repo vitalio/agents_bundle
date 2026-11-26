@@ -1,3 +1,10 @@
+# ✅ [DONE] L2: Remove session handoff and legacy run_block pipe from agents/context.md — *2026-11-26, Renamed Session assembly and handoff to Bundle assembly and removed legacy | run_block pipe in agents/context.md*
+
+- Bump: `PATCH`
+- Clean up `agents/context.md` and sync `EMBEDDED_RULE_CONTEXT` in `context`:
+  - Rename `Session assembly and handoff:` to `Bundle assembly:` and remove `| run_block` from `[<upstream_cmd> | ]{cmd:context} [key=val ...] [-p "<prompt>"] [file ...]` so the embedded `context` rule describes only bundle assembly without instructing worker sessions to pipe into a runner for session handoff.
+- Update any affected tests in `tests/` and verify the test suite passes.
+
 # ✅ [DONE] F40: Replace allow directive and hardcoded git/todo command whitelists with unified trusted.json command-tree hashing — *2026-11-26*
 
 - Depends on: F39

@@ -1,18 +1,3 @@
-# 🎯 [NEXT] F42: Separate Usage: templates from Commands: in context -h and compact left-column signatures
-
-- Update `src/header.py` and `src/core.py` (`HELP_USAGE`, `HELP_SECTIONS`, `usage_text()`) to match the refined `agents/cli/help.md` layout contract:
-  - Render top-level `Usage:` syntax lines (`{prog} [k=v ...] [-p TEXT] [FILE ...]`, `{prog} <command|flag> [args] [opts]`) as a compact usage block rather than a two-column table.
-  - Add a dedicated `Commands:` section for subcommands and mode flags (`bundle <pkg>[:<name>] [k=v]`, `rule <pkg>[:<name...>] [k=v]`, `--list | -l [pkg]`, `--update-cache`, `--init [--force]`, `--trust [opts]`, `--tree [DIR] [opts]`, `--update [--force]`, `--check-update`, `--uninstall`) without repeating `{prog} ` on every row, listing `--trust` sub-options (`--revoke`, `--list`, `-C DIR`) in the description column so the shared description column shifts left to ~34 columns.
-  - Move `-V, --version` and `-h, --help` to the end of `Options:`, and guard `render_help_section()` / `usage_text()` with a maximum left-column cap (`HELP_MAX_LEFT`) so long custom binary names wrap/break cleanly without squeezing the right-hand column.
-- Update `tests/test_cli.py` (`test_build_check_help_and_version`, `test_help_width_and_column_alignment`) to assert the `Usage:`, `Commands:`, `Options:`, `Bundle Output Protocol:`, and `Environment:` sections and a single shared description column across all tabular sections; keep `README.md` aligned, rebuild `./context` via `python3 build.py`, and run the test suite.
-
-# 🎯 [NEXT] L2: Remove session handoff and legacy run_block pipe from agents/context.md
-
-- Bump: `PATCH`
-- Clean up `agents/context.md` and sync `EMBEDDED_RULE_CONTEXT` in `context`:
-  - Rename `Session assembly and handoff:` to `Bundle assembly:` and remove `| run_block` from `[<upstream_cmd> | ]{cmd:context} [key=val ...] [-p "<prompt>"] [file ...]` so the embedded `context` rule describes only bundle assembly without instructing worker sessions to pipe into a runner for session handoff.
-- Update any affected tests in `tests/` and verify the test suite passes.
-
 # 🎯 [NEXT] F35: Add --compile flag to compile baseline AGENTS.md from .context.bundle
 
 - Depends on: F36 -> F34
@@ -30,6 +15,14 @@
 - Remove `_is_safe_builtin_command()` and `_is_safe_tree_args()` from `src/bundle.py`, keeping in-process `_tree_from_args()` in `_run_spec_command()` purely as a runtime performance fast path after trust verification.
 - Reuse the computed `(local_files, external_templates, pending_commands, digest)` trust snapshot across `is_spec_trusted()`, `_prompt_tty_trust()`, and `_ensure_root_spec_trusted()` within a single run instead of re-walking the bundle tree on disk multiple times, and qualify external command templates in the trust digest with their originating bundle identity.
 - Update `README.md`, `AGENTS.md`, and `tests/test_bundle.py`, and rebuild `./context` via `python3 build.py`.
+
+# 🎯 [NEXT] F42: Separate Usage: templates from Commands: in context -h and compact left-column signatures
+
+- Update `src/header.py` and `src/core.py` (`HELP_USAGE`, `HELP_SECTIONS`, `usage_text()`) to match the refined `agents/cli/help.md` layout contract:
+  - Render top-level `Usage:` syntax lines (`{prog} [k=v ...] [-p TEXT] [FILE ...]`, `{prog} <command|flag> [args] [opts]`) as a compact usage block rather than a two-column table.
+  - Add a dedicated `Commands:` section for subcommands and mode flags (`bundle <pkg>[:<name>] [k=v]`, `rule <pkg>[:<name...>] [k=v]`, `--list | -l [pkg]`, `--update-cache`, `--init [--force]`, `--trust [opts]`, `--tree [DIR] [opts]`, `--update [--force]`, `--check-update`, `--uninstall`) without repeating `{prog} ` on every row, listing `--trust` sub-options (`--revoke`, `--list`, `-C DIR`) in the description column so the shared description column shifts left to ~34 columns.
+  - Move `-V, --version` and `-h, --help` to the end of `Options:`, and guard `render_help_section()` / `usage_text()` with a maximum left-column cap (`HELP_MAX_LEFT`) so long custom binary names wrap/break cleanly without squeezing the right-hand column.
+- Update `tests/test_cli.py` (`test_build_check_help_and_version`, `test_help_width_and_column_alignment`) to assert the `Usage:`, `Commands:`, `Options:`, `Bundle Output Protocol:`, and `Environment:` sections and a single shared description column across all tabular sections; keep `README.md` aligned, rebuild `./context` via `python3 build.py`, and run the test suite.
 
 # 🎯 [NEXT] D1: Design local .context/ overlays, package lock/vendoring, and ephemeral task-scout bundles
 

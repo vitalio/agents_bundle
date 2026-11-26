@@ -107,6 +107,13 @@ class TestBundle(AgentsBundleTestCase):
         r_none = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
         self._assert_ok(r_none)
         self.assertIn("Context bundler & rules engine", r_none.stdout)
+        self.assertIn("Bundle assembly:", r_none.stdout)
+        self.assertIn(
+            '[<upstream_cmd> | ]context [key=val ...] [-p "<prompt>"] [file ...]',
+            r_none.stdout,
+        )
+        self.assertNotIn("Session assembly", r_none.stdout)
+        self.assertNotIn("run_block", r_none.stdout)
         self.assertIn("Task management (`todo_md`)", r_none.stdout)
         self.assertNotIn("all_tasks", r_none.stdout)
         self.assertNotIn("focused_task_", r_none.stdout)
