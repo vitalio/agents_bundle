@@ -1,3 +1,13 @@
+# ✅ [DONE] F41: Require trusted.json for all commands including context --tree and deduplicate trust-tree walks — *2026-11-27, Required trusted.json for all commands including context --tree, deduplicated trust-tree walks via cached snapshot, qualified external templates with bundle identity, and added target dir hint and positional [DIR] to --trust.*
+
+- Depends on: F40
+- Bump: `PATCH`
+- Require `trusted.json` verification for every `cmd ...`, `let <k>=$(<cmd>)`, and `file $(<cmd>)` directive without exception (including `context --tree`), so untrusted `.context.bundle` specs remain strictly declarative (`rule`, `prompt`, static `let`/`export`/`if`, and `file` bounded to `spec_dir`).
+- Remove `_is_safe_builtin_command()` and `_is_safe_tree_args()` from `src/bundle.py`, keeping in-process `_tree_from_args()` in `_run_spec_command()` purely as a runtime performance fast path after trust verification.
+- Reuse the computed `(local_files, external_templates, pending_commands, digest)` trust snapshot across `is_spec_trusted()`, `_prompt_tty_trust()`, and `_ensure_root_spec_trusted()` within a single run instead of re-walking the bundle tree on disk multiple times, and qualify external command templates in the trust digest with their originating bundle identity.
+- Include the target directory in the untrusted error hint in `_ensure_root_spec_trusted()` when `spec_file.resolve().parent != Path.cwd().resolve()` (for example, when `Workdir` is piped from an orchestrator via `todo <project>:<ID> -B | context` or passed via `-C DIR`), suggesting `inspect <spec_path> and run 'context --trust -C <dir>' to trust this file` (and accept an optional positional `[DIR]` in `cmd_trust()` alongside `-C DIR`).
+- Update `README.md`, `AGENTS.md`, and `tests/test_bundle.py`, and rebuild `./context` via `python3 build.py`.
+
 # ✅ [DONE] B3: Fix context --tree hang on large/CVS repositories (.cvsignore pruning and O(D log D) tree collapse) — *2026-11-27*
 
 - Bump: `PATCH`

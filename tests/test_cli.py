@@ -243,6 +243,14 @@ class TestCLI(AgentsBundleTestCase):
             self._assert_ok(r_list2)
             self.assertNotIn(expected_sha, r_list2.stdout)
 
+        with self.subTest(case="--trust accepts optional positional [DIR] for trust and revoke"):
+            r_pos = self._run([str(SCRIPT), "--trust", str(repo)])
+            self._assert_ok(r_pos)
+            self.assertIn(expected_sha, r_pos.stdout)
+            r_pos_rev = self._run([str(SCRIPT), "--trust", "--revoke", str(repo)])
+            self._assert_ok(r_pos_rev)
+            self.assertIn("revoked trust", r_pos_rev.stdout)
+
         with self.subTest(case="conflicting flags fail with usage"):
             r_bad = self._run([str(SCRIPT), "--trust", "--revoke", "--list"])
             self.assertNotEqual(r_bad.returncode, 0)

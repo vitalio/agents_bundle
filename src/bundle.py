@@ -159,63 +159,12 @@ def _has_unsafe_shell_syntax(cmd_str: str) -> bool:
     return in_single or in_double or escaped
 
 
-def _is_safe_tree_args(args: list[str], work_dir: Path | None = None) -> bool:
-    if not args or args[0] != "--tree":
-        return False
-    wdir = (work_dir if work_dir is not None else Path.cwd()).resolve()
-    i = 1
-    seen_dir = False
-    while i < len(args):
-        a = args[i]
-        if a in ("-x", "--exclude", "--max-lines", "--max-tokens"):
-            if i + 1 >= len(args):
-                return False
-            i += 2
-            continue
-        if a.startswith(("--exclude=", "--max-lines=", "--max-tokens=")):
-            i += 1
-            continue
-        if a.startswith("-"):
-            return False
-        if seen_dir:
-            return False
-        seen_dir = True
-        p = Path(a).expanduser()
-        cand = p.resolve() if p.is_absolute() else (wdir / p).resolve()
-        if not _is_within_root(cand, wdir):
-            return False
-        i += 1
-    return True
-
-
-def _is_safe_builtin_command(
-    cmd_str: str,
-    prog: str | None = None,
-    work_dir: Path | None = None,
-) -> bool:
-    s = cmd_str.strip()
-    if not s or _has_unsafe_shell_syntax(s):
-        return False
-    try:
-        tokens = shlex.split(s, posix=True)
-    except ValueError:
-        return False
-    if not tokens:
-        return False
-    exe = tokens[0]
-    args = tokens[1:]
-    p = prog or prog_name()
-    if exe in (p, "context"):
-        return _is_safe_tree_args(args, work_dir=work_dir)
-    return False
-
-
-def _extract_directive_shell_template(raw_line: str) -> tuple[str, str] | None:
+def _extract_directive_shell_template(raw_line: str) -> str | None:
     stripped = raw_line.strip()
     if stripped.startswith("cmd "):
         cmd_str = stripped[4:].strip()
         if cmd_str:
-            return f"cmd {cmd_str}", cmd_str
+            return f"cmd {cmd_str}"
     elif stripped.startswith("let "):
         assign = stripped[4:].strip()
         if "=" in assign:
@@ -225,13 +174,13 @@ def _extract_directive_shell_template(raw_line: str) -> tuple[str, str] | None:
             if s.startswith("$(") and s.endswith(")") and len(s) >= 3:
                 cmd_str = s[2:-1].strip()
                 if cmd_str:
-                    return f"let {k_clean}=$({cmd_str})", cmd_str
+                    return f"let {k_clean}=$({cmd_str})"
     elif stripped.startswith("file "):
         inc_expr = stripped[5:].strip()
         if inc_expr.startswith("$(") and inc_expr.endswith(")") and len(inc_expr) >= 3:
             cmd_str = inc_expr[2:-1].strip()
             if cmd_str:
-                return f"file $({cmd_str})", cmd_str
+                return f"file $({cmd_str})"
     return None
 
 
@@ -269,19 +218,19 @@ def _collect_spec_trust_tree(
                 continue
             if stripped == "else" or stripped.startswith(("if ", "else if ", "elif ")):
                 continue
-            extracted = _extract_directive_shell_template(stripped)
-            if extracted is not None:
-                directive_tmpl, cmd_tmpl = extracted
-                if is_external and directive_tmpl not in seen_external_templates:
-                    seen_external_templates.add(directive_tmpl)
-                    external_templates.append(directive_tmpl)
-                if not _is_safe_builtin_command(cmd_tmpl, p, work_dir=root_dir):
-                    origin = (
-                        f" (external bundle {bundle_label})"
-                        if is_external
-                        else (f" (local bundle {bundle_label})" if in_child else "")
-                    )
-                    add_pending(f"{directive_tmpl}{origin}")
+            directive_tmpl = _extract_directive_shell_template(stripped)
+            if directive_tmpl is not None:
+                if is_external:
+                    qualified_tmpl = f"{bundle_label}\0{directive_tmpl}"
+                    if qualified_tmpl not in seen_external_templates:
+                        seen_external_templates.add(qualified_tmpl)
+                        external_templates.append(qualified_tmpl)
+                origin = (
+                    f" (external bundle {bundle_label})"
+                    if is_external
+                    else (f" (local bundle {bundle_label})" if in_child else "")
+                )
+                add_pending(f"{directive_tmpl}{origin}")
                 continue
             if not stripped.startswith("bundle "):
                 continue
@@ -349,10 +298,12 @@ def _collect_spec_trust_tree(
     return local_files, external_templates, pending_commands
 
 
-def _spec_sha256(spec_file: Path) -> str:
-    resolved_spec = spec_file.resolve()
+def _compute_trust_digest(
+    resolved_spec: Path,
+    local_files: set[Path],
+    external_templates: list[str],
+) -> str:
     root_dir = resolved_spec.parent
-    local_files, external_templates, _pending = _collect_spec_trust_tree(resolved_spec)
     extra_locals = sorted(local_files - {resolved_spec})
     if not extra_locals and not external_templates:
         return hashlib.sha256(resolved_spec.read_bytes()).hexdigest()
@@ -365,6 +316,35 @@ def _spec_sha256(spec_file: Path) -> str:
     for tmpl in external_templates:
         h.update(f"\0ext_cmd\0{tmpl}\0".encode("utf-8"))
     return h.hexdigest()
+
+
+def _get_spec_trust_snapshot(
+    spec_file: Path,
+    trust_state: dict[str, object] | None = None,
+    prog: str | None = None,
+) -> tuple[set[Path], list[str], list[str], str]:
+    if trust_state is not None:
+        cached = trust_state.get("snapshot")
+        if isinstance(cached, tuple) and len(cached) == 4:
+            return cached  # type: ignore[return-value]
+    resolved_spec = spec_file.resolve()
+    local_files, external_templates, pending_commands = _collect_spec_trust_tree(
+        resolved_spec, prog=prog
+    )
+    digest = _compute_trust_digest(resolved_spec, local_files, external_templates)
+    snapshot = (local_files, external_templates, pending_commands, digest)
+    if trust_state is not None:
+        trust_state["snapshot"] = snapshot
+    return snapshot
+
+
+def _spec_sha256(
+    spec_file: Path,
+    snapshot: tuple[set[Path], list[str], list[str], str] | None = None,
+) -> str:
+    if snapshot is not None:
+        return snapshot[3]
+    return _get_spec_trust_snapshot(spec_file)[3]
 
 
 def _load_trusted_store() -> dict[str, str]:
@@ -407,42 +387,66 @@ def _save_trusted_store(store: dict[str, str]) -> Path:
     return tpath
 
 
-def is_spec_trusted(spec_file: Path) -> bool:
+def is_spec_trusted(
+    spec_file: Path,
+    snapshot: tuple[set[Path], list[str], list[str], str] | None = None,
+    trust_state: dict[str, object] | None = None,
+) -> bool:
     resolved = str(spec_file.resolve())
     store = _load_trusted_store()
     recorded = store.get(resolved)
     if not recorded:
         return False
     try:
-        return recorded == _spec_sha256(spec_file)
+        snap = (
+            snapshot
+            if snapshot is not None
+            else _get_spec_trust_snapshot(spec_file, trust_state=trust_state)
+        )
+        return recorded == snap[3]
     except OSError:
         return False
 
 
-def trust_spec_file(spec_file: Path) -> tuple[str, str]:
+def trust_spec_file(
+    spec_file: Path,
+    snapshot: tuple[set[Path], list[str], list[str], str] | None = None,
+) -> tuple[str, str]:
     resolved = str(spec_file.resolve())
-    digest = _spec_sha256(spec_file)
+    digest = _spec_sha256(spec_file, snapshot=snapshot)
     store = _load_trusted_store()
     store[resolved] = digest
     _save_trusted_store(store)
     return resolved, digest
 
 
-def _format_pending_commands(spec_file: Path, fallback_reason: str, prog: str) -> list[str]:
-    _locals, _ext_tmpls, pending = _collect_spec_trust_tree(spec_file, prog=prog)
+def _format_pending_commands(
+    spec_file: Path,
+    fallback_reason: str,
+    prog: str,
+    snapshot: tuple[set[Path], list[str], list[str], str] | None = None,
+) -> list[str]:
+    snap = snapshot if snapshot is not None else _get_spec_trust_snapshot(spec_file, prog=prog)
+    pending = list(snap[2])
     if fallback_reason and fallback_reason not in pending:
         pending.append(fallback_reason)
     return pending
 
 
-def _prompt_tty_trust(spec_file: Path, reason: str, prog: str) -> bool:
+def _prompt_tty_trust(
+    spec_file: Path,
+    reason: str,
+    prog: str,
+    snapshot: tuple[set[Path], list[str], list[str], str] | None = None,
+) -> bool:
     tty_override = os.environ.get("CONTEXT_BUNDLE_TTY", "").strip()
     if not tty_override and not (sys.stdin.isatty() and sys.stdout.isatty()):
         return False
     tty_path = tty_override or "/dev/tty"
     try:
-        digest = _spec_sha256(spec_file)
-        pending = _format_pending_commands(spec_file, reason, prog)
+        snap = snapshot if snapshot is not None else _get_spec_trust_snapshot(spec_file, prog=prog)
+        digest = snap[3]
+        pending = _format_pending_commands(spec_file, reason, prog, snapshot=snap)
         cmd_lines = "\n".join(f"  - {item}" for item in pending)
         prompt_msg = (
             f"{prog}: untrusted {spec_file} requests permission to execute shell commands:\n"
@@ -460,28 +464,43 @@ def _prompt_tty_trust(spec_file: Path, reason: str, prog: str) -> bool:
     except (OSError, IndexError):
         return False
     if ans in ("y", "yes"):
-        trust_spec_file(spec_file)
+        trust_spec_file(spec_file, snapshot=snap)
         return True
     return False
 
 
 def _ensure_root_spec_trusted(
     spec_file: Path | None,
-    trust_state: dict[str, bool],
+    trust_state: dict[str, object],
     reason: str,
     prog: str,
 ) -> None:
-    if spec_file is None or trust_state.get("trusted"):
+    if spec_file is None or bool(trust_state.get("trusted")):
         return
-    if is_spec_trusted(spec_file) or _prompt_tty_trust(spec_file, reason, prog):
+    try:
+        snapshot: tuple[set[Path], list[str], list[str], str] | None = _get_spec_trust_snapshot(
+            spec_file, trust_state=trust_state, prog=prog
+        )
+    except OSError:
+        snapshot = None
+    if is_spec_trusted(spec_file, snapshot=snapshot) or _prompt_tty_trust(
+        spec_file, reason, prog, snapshot=snapshot
+    ):
         trust_state["trusted"] = True
         return
-    pending = _format_pending_commands(spec_file, reason, prog)
+    pending = _format_pending_commands(spec_file, reason, prog, snapshot=snapshot)
     pending_summary = "; ".join(pending)
+    resolved_spec = spec_file.resolve()
+    if resolved_spec.parent != Path.cwd().resolve():
+        inspect_target = str(resolved_spec)
+        trust_cmd = f"{prog} --trust -C {resolved_spec.parent}"
+    else:
+        inspect_target = spec_file.name
+        trust_cmd = f"{prog} --trust"
     raise SystemExit(
-        f"{prog}: untrusted {spec_file.name} ({spec_file.resolve()}): refusing to execute {reason} "
+        f"{prog}: untrusted {spec_file.name} ({resolved_spec}): refusing to execute {reason} "
         f"(pending shell commands: {pending_summary}); "
-        f"inspect {spec_file.name} and run '{prog} --trust' to trust this file"
+        f"inspect {inspect_target} and run '{trust_cmd}' to trust this file"
     )
 
 
@@ -491,6 +510,7 @@ def cmd_trust(argv: list[str] | None = None) -> int:
     revoke = False
     list_mode = False
     work_dir: Path | None = None
+    usage_msg = f"{prog}: usage: {prog} --trust [DIR] [--revoke | --list] [-C DIR]"
     i = 0
     while i < len(args):
         a = args[i]
@@ -505,10 +525,13 @@ def cmd_trust(argv: list[str] | None = None) -> int:
                 raise SystemExit(f"{prog}: {a} requires a directory path")
             work_dir = Path(args[i + 1]).expanduser()
             i += 2
+        elif not a.startswith("-") and work_dir is None:
+            work_dir = Path(a).expanduser()
+            i += 1
         else:
-            raise SystemExit(f"{prog}: usage: {prog} --trust [--revoke | --list] [-C DIR]")
+            raise SystemExit(usage_msg)
     if revoke and list_mode:
-        raise SystemExit(f"{prog}: usage: {prog} --trust [--revoke | --list] [-C DIR]")
+        raise SystemExit(usage_msg)
     if list_mode:
         store = _load_trusted_store()
         if not store:
@@ -615,14 +638,14 @@ def _static_inspect_root_trust_ast(
     nodes: list[tuple[str, object]],
     bvars: dict[str, str],
     spec_file: Path,
-    trust_state: dict[str, bool],
+    trust_state: dict[str, object],
     in_child_bundle: bool,
     is_external: bool,
     bundle_label: str,
     work_dir: Path | None,
     prog: str,
 ) -> None:
-    if trust_state.get("trusted"):
+    if bool(trust_state.get("trusted")):
         return
     sim_vars = dict(bvars)
     if is_external:
@@ -634,7 +657,7 @@ def _static_inspect_root_trust_ast(
 
     def walk(stmts: list[tuple[str, object]]) -> None:
         for n_kind, payload in stmts:
-            if trust_state.get("trusted"):
+            if bool(trust_state.get("trusted")):
                 return
             if n_kind == "if_chain":
                 for b_cond, _b_trace, b_body in payload:  # type: ignore[misc]
@@ -646,7 +669,7 @@ def _static_inspect_root_trust_ast(
             line = _render_rule_vars(raw_line, sim_vars).strip()
             if line.startswith("cmd "):
                 cmd_str = line[4:].strip()
-                if cmd_str and not _is_safe_builtin_command(cmd_str, prog, work_dir=work_dir):
+                if cmd_str:
                     _ensure_root_spec_trusted(spec_file, trust_state, f"command {cmd_str!r}{origin_suffix}", prog)
             elif line.startswith("let "):
                 assign = line[4:].strip()
@@ -656,7 +679,7 @@ def _static_inspect_root_trust_ast(
                     s = v_expr.strip()
                     if s.startswith("$(") and s.endswith(")") and len(s) >= 3:
                         cmd_str = s[2:-1].strip()
-                        if cmd_str and not _is_safe_builtin_command(cmd_str, prog, work_dir=work_dir):
+                        if cmd_str:
                             _ensure_root_spec_trusted(
                                 spec_file, trust_state, f"command substitution '$({cmd_str})'{origin_suffix}", prog
                             )
@@ -666,7 +689,7 @@ def _static_inspect_root_trust_ast(
                 inc_expr = line[5:].strip()
                 if inc_expr.startswith("$(") and inc_expr.endswith(")") and len(inc_expr) >= 3:
                     cmd_str = inc_expr[2:-1].strip()
-                    if cmd_str and not _is_safe_builtin_command(cmd_str, prog, work_dir=work_dir):
+                    if cmd_str:
                         _ensure_root_spec_trusted(
                             spec_file, trust_state, f"command substitution '$({cmd_str})'{origin_suffix}", prog
                         )
@@ -690,7 +713,7 @@ def _parse_spec_pass(
     external_chains: dict[tuple[str, ...], str] | None = None,
     session_vars: dict[str, str] | None = None,
     root_spec_file: Path | None = None,
-    root_trust_state: dict[str, bool] | None = None,
+    root_trust_state: dict[str, object] | None = None,
     prepass_only: bool = False,
     subshell_cache: dict[tuple[str, str], str] | None = None,
 ) -> list[tuple[str, str, str | None, list[str]]]:
@@ -788,7 +811,7 @@ def _parse_spec_pass(
                     s_expr = v_expr.strip()
                     if s_expr.startswith("$(") and s_expr.endswith(")") and len(s_expr) >= 3:
                         inner_cmd = s_expr[2:-1].strip()
-                        if inner_cmd and not _is_safe_builtin_command(inner_cmd, prog, work_dir=work_dir):
+                        if inner_cmd:
                             _ensure_root_spec_trusted(
                                 root_spec_file, trust_state, f"command substitution '$({inner_cmd})'{origin_s}", prog
                             )
@@ -821,7 +844,7 @@ def _parse_spec_pass(
                 is_dyn = inc_expr.startswith("$(") and inc_expr.endswith(")") and len(inc_expr) >= 3
                 if is_dyn:
                     inner_cmd = inc_expr[2:-1].strip()
-                    if inner_cmd and not _is_safe_builtin_command(inner_cmd, prog, work_dir=work_dir):
+                    if inner_cmd:
                         _ensure_root_spec_trusted(
                             root_spec_file, trust_state, f"command substitution '$({inner_cmd})'{origin_s}", prog
                         )
@@ -843,8 +866,7 @@ def _parse_spec_pass(
             elif line == "cmd" or line.startswith("cmd "):
                 cmd_str = line[len("cmd") :].strip()
                 if cmd_str:
-                    if not _is_safe_builtin_command(cmd_str, prog, work_dir=work_dir):
-                        _ensure_root_spec_trusted(root_spec_file, trust_state, f"command {cmd_str!r}{origin_s}", prog)
+                    _ensure_root_spec_trusted(root_spec_file, trust_state, f"command {cmd_str!r}{origin_s}", prog)
                     if not prepass_only:
                         entries.append(("cmd", cmd_str, cond_expr, list(cur_chain)))
             elif line == "rule" or line.startswith("rule "):
@@ -961,7 +983,7 @@ def parse_spec(
     external_chains: dict[tuple[str, ...], str] | None = None,
     session_vars: dict[str, str] | None = None,
     root_spec_file: Path | None = None,
-    root_trust_state: dict[str, bool] | None = None,
+    root_trust_state: dict[str, object] | None = None,
     subshell_cache: dict[tuple[str, str], str] | None = None,
 ) -> list[tuple[str, str, str | None, list[str]]]:
     eff_session: dict[str, str] = (
@@ -970,7 +992,7 @@ def parse_spec(
         else {k: v for k, v in (cli_vars or {}).items() if v != ""}
     )
     eff_cache: dict[tuple[str, str], str] = subshell_cache if subshell_cache is not None else {}
-    eff_trust: dict[str, bool] = root_trust_state if root_trust_state is not None else {}
+    eff_trust: dict[str, object] = root_trust_state if root_trust_state is not None else {}
 
     # Pass 1: session variable & export pre-pass (evaluates let, export, if/elif/else, bundle)
     _parse_spec_pass(
@@ -1098,7 +1120,7 @@ def build_bundle(
     external_chains: dict[tuple[str, ...], str] = {}
     session_vars: dict[str, str] = dict(effective_cli_vars)
     resolved_vars: dict[str, str] = {}
-    root_trust_state: dict[str, bool] = {"trusted": is_spec_trusted(spec_file) if spec_file is not None else True}
+    root_trust_state: dict[str, object] = {"trusted": spec_file is None}
     entries = parse_spec(
         spec_source,
         work_dir=spec_dir,

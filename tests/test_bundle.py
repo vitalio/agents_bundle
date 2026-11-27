@@ -1218,6 +1218,25 @@ class TestBundle(AgentsBundleTestCase):
         self.assertIn("cmd printf ext_cmd_tampered (external bundle vitalio/agents-rules:ext_cmd)", r_tampered.stderr)
         self.assertNotIn("ext_cmd_tampered", r_tampered.stdout)
 
+        # Qualifying external command templates with bundle identity:
+        # adding an identical command template to another referenced external bundle invalidates trust
+        (ext_bundles / "ext_cmd.bundle").write_text(
+            "rule vitalio/agents-rules:core/start\n"
+            "cmd printf ext_cmd_ok\n",
+            encoding="utf-8",
+        )
+        self._trust()
+        (ext_bundles / "ext_var_only.bundle").write_text(
+            "let dyn=$(printf dyn_val)\n"
+            "cmd printf ext_cmd_ok\n"
+            "prompt Dynamic: {dyn:none}\n",
+            encoding="utf-8",
+        )
+        r_dup_ext = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+        self.assertNotEqual(r_dup_ext.returncode, 0)
+        self.assertIn("untrusted .context.bundle", r_dup_ext.stderr)
+        self.assertIn("cmd printf ext_cmd_ok (external bundle vitalio/agents-rules:ext_var_only)", r_dup_ext.stderr)
+
         # 4. 'allow' directive is rejected as an invalid directive in both root and child bundles
         for bad_spec in ("allow printf\n", "bundle vitalio/agents-rules:ext_self_allow\n"):
             with self.subTest(rejected_allow=bad_spec.strip()):
@@ -1428,40 +1447,12 @@ class TestBundle(AgentsBundleTestCase):
             self.assertIn("API_KEY=secret123", r_ok.stdout)
 
     def test_root_bundle_builtin_readonly_commands_and_trust_enforcement(self):
+        from unittest import mock
+
         mod = self._load_bundle_module()
-        for safe_cmd in [
-            "context --tree",
-            "context --tree -x build --max-lines 50 --max-tokens 800",
-            "context --tree --exclude=dist --max-lines=50 --max-tokens=800",
-        ]:
-            with self.subTest(safe_builtin=safe_cmd):
-                self.assertTrue(mod._is_safe_builtin_command(safe_cmd, "context"), msg=safe_cmd)
-
-        for unsafe_cmd in [
-            "agents_bundle --tree",
-            "echo hello",
-            "cat AGENTS.md",
-            "git status -sb",
-            "git branch -vv",
-            "git log --oneline -10",
-            "git diff --stat",
-            "git rev-parse --short HEAD",
-            "todo",
-            "todo overview --full",
-            "todo list --ready -l 5",
-            "context --tree; id",
-            "context --tree | cat",
-            "context --tree $(id)",
-            "context --tree `id`",
-            "context --tree /etc",
-            "context --tree ~/.ssh",
-            "context --tree ../outside",
-            "context --update",
-        ]:
-            with self.subTest(unsafe_cmd=unsafe_cmd):
-                self.assertFalse(mod._is_safe_builtin_command(unsafe_cmd, "context"), msg=unsafe_cmd)
-
         for removed_attr in (
+            "_is_safe_builtin_command",
+            "_is_safe_tree_args",
             "_GIT_READONLY_SUBCMDS",
             "_GIT_BRANCH_VALUE_FLAGS",
             "_GIT_BRANCH_SAFE_BOOL_FLAGS",
@@ -1482,21 +1473,36 @@ class TestBundle(AgentsBundleTestCase):
         repo.mkdir()
         (repo / "AGENTS.md").write_text("# Repo Rules\n", encoding="utf-8")
 
-        with self.subTest(case="in-process context --tree runs without trust"):
+        with self.subTest(case="strictly declarative untrusted spec runs without trusted.json"):
             (repo / ".context.bundle").write_text(
-                "file AGENTS.md\n"
-                "cmd context --tree\n",
+                "bundle vitalio/agents-rules:core\n"
+                "let role=work\n"
+                "export role\n"
+                "if role=work\n"
+                "    file AGENTS.md\n"
+                "    prompt Declarative prompt\n",
                 encoding="utf-8",
             )
-            r_safe = self._run([str(SCRIPT)], cwd=str(repo))
-            self._assert_ok(r_safe)
-            self.assertIn("===== $ context --tree =====", r_safe.stdout)
+            with mock.patch.object(mod, "_collect_spec_trust_tree", wraps=mod._collect_spec_trust_tree) as spy_walk:
+                r_decl = self._run([str(SCRIPT)], cwd=str(repo))
+            self._assert_ok(r_decl)
+            self.assertEqual(spy_walk.call_count, 0)
+            self.assertIn("===== $ cat AGENTS.md =====", r_decl.stdout)
+            self.assertIn("Declarative prompt", r_decl.stdout)
 
         marker = self.tmp / "untrusted_ran.txt"
         for label, untrusted_spec, expected_cmd in [
+            ("context_tree_cmd", "cmd context --tree\n", "cmd context --tree"),
+            (
+                "context_tree_opts_cmd",
+                "cmd context --tree -x build --max-lines 50 --max-tokens 800\n",
+                "cmd context --tree -x build --max-lines 50 --max-tokens 800",
+            ),
+            ("context_tree_let_subshell", "let tree=$(context --tree)\n", "let tree=$(context --tree)"),
+            ("context_tree_file_subshell", "file $(context --tree)\n", "file $(context --tree)"),
             (
                 "arbitrary_cmd",
-                f"cmd \x22{sys.executable}\x22 -c \x22import pathlib; pathlib.Path({str(marker)!r}).write_text('pwn')\x22\n",
+                f"cmd \"{sys.executable}\" -c \"import pathlib; pathlib.Path({str(marker)!r}).write_text('pwn')\"\n",
                 "pathlib.Path",
             ),
             ("git_status_cmd", "cmd git status -sb\n", "cmd git status -sb"),
@@ -1506,14 +1512,55 @@ class TestBundle(AgentsBundleTestCase):
         ]:
             with self.subTest(blocked_without_trust=label):
                 (repo / ".context.bundle").write_text(untrusted_spec, encoding="utf-8")
-                r_blk = self._run([str(SCRIPT)], cwd=str(repo))
+                with mock.patch.object(
+                    mod, "_collect_spec_trust_tree", wraps=mod._collect_spec_trust_tree
+                ) as spy_walk:
+                    r_blk = self._run([str(SCRIPT)], cwd=str(repo))
                 self.assertNotEqual(r_blk.returncode, 0, msg=r_blk.stdout)
                 self.assertEqual(r_blk.stdout, "")
+                self.assertEqual(spy_walk.call_count, 1)
                 self.assertIn("untrusted .context.bundle", r_blk.stderr)
                 self.assertIn("pending shell commands:", r_blk.stderr)
                 self.assertIn(expected_cmd, r_blk.stderr)
-                self.assertIn("context --trust", r_blk.stderr)
+                self.assertIn(
+                    "inspect .context.bundle and run 'context --trust' to trust this file",
+                    r_blk.stderr,
+                )
                 self.assertFalse(marker.exists())
+
+        with self.subTest(case="untrusted error hint includes target directory when Workdir differs from cwd"):
+            (repo / ".context.bundle").write_text("cmd context --tree\n", encoding="utf-8")
+            expected_hint = (
+                f"inspect {repo.resolve() / '.context.bundle'} and run "
+                f"'context --trust -C {repo.resolve()}' to trust this file"
+            )
+            r_dash_c = self._run([str(SCRIPT), "-C", str(repo)], cwd=str(self.tmp))
+            self.assertNotEqual(r_dash_c.returncode, 0)
+            self.assertIn(expected_hint, r_dash_c.stderr)
+
+            r_piped_wdir = self._run(
+                [str(SCRIPT)],
+                cwd=str(self.tmp),
+                input=f"Workdir: {repo}\nTask: F41\n\n# Prompt\n",
+            )
+            self.assertNotEqual(r_piped_wdir.returncode, 0)
+            self.assertIn(expected_hint, r_piped_wdir.stderr)
+
+        with self.subTest(case="trusted context --tree executes via in-process fast path with a single trust-tree walk"):
+            (repo / ".context.bundle").write_text(
+                "file AGENTS.md\n"
+                "cmd context --tree\n",
+                encoding="utf-8",
+            )
+            r_pos_trust = self._run([str(SCRIPT), "--trust", str(repo)], cwd=str(self.tmp))
+            self._assert_ok(r_pos_trust)
+            with mock.patch.object(mod, "_collect_spec_trust_tree", wraps=mod._collect_spec_trust_tree) as spy_walk:
+                r_tree = self._run([str(SCRIPT), "-C", str(repo)], cwd=str(self.tmp))
+            self._assert_ok(r_tree)
+            self.assertEqual(spy_walk.call_count, 1)
+            self.assertIn("===== $ context --tree =====", r_tree.stdout)
+            r_pos_revoke = self._run([str(SCRIPT), "--trust", "--revoke", str(repo)], cwd=str(self.tmp))
+            self._assert_ok(r_pos_revoke)
 
         with self.subTest(case="trust allows execution and file edit invalidates sha256 trust"):
             (repo / ".context.bundle").write_text("cmd printf trusted_ok\n", encoding="utf-8")
@@ -1534,13 +1581,17 @@ class TestBundle(AgentsBundleTestCase):
             tty_file = self.tmp / "fake_tty.txt"
             tty_file.write_text("n\n", encoding="utf-8")
             env_tty = {**os.environ, "CONTEXT_BUNDLE_TTY": str(tty_file)}
-            r_no = self._run([str(SCRIPT)], cwd=str(repo), env=env_tty)
+            with mock.patch.object(mod, "_collect_spec_trust_tree", wraps=mod._collect_spec_trust_tree) as spy_no:
+                r_no = self._run([str(SCRIPT)], cwd=str(repo), env=env_tty)
             self.assertNotEqual(r_no.returncode, 0)
+            self.assertEqual(spy_no.call_count, 1)
             self.assertIn("untrusted .context.bundle", r_no.stderr)
 
             tty_file.write_text("y\n", encoding="utf-8")
-            r_yes = self._run([str(SCRIPT)], cwd=str(repo), env=env_tty)
+            with mock.patch.object(mod, "_collect_spec_trust_tree", wraps=mod._collect_spec_trust_tree) as spy_yes:
+                r_yes = self._run([str(SCRIPT)], cwd=str(repo), env=env_tty)
             self._assert_ok(r_yes)
+            self.assertEqual(spy_yes.call_count, 1)
             self.assertIn("===== $ printf modified_untrusted =====\nmodified_untrusted", r_yes.stdout)
             self.assertTrue(mod.is_spec_trusted(repo / ".context.bundle"))
 

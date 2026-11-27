@@ -103,7 +103,7 @@ context --tree -x bumps -x resolutions --max-lines 160 --max-tokens 1600
 | `context --list \| -l [pkg]` | List bundles, rules, and built-in variables (default: `vitalio/agents-rules`) |
 | `context --update-cache` | Refresh cached git packages and URL files in `~/.cache/context-bundle` |
 | `context --init [--force]` | Create a starter `.context.bundle` in the current directory |
-| `context --trust [--revoke \| --list] [-C DIR]` | Trust current `.context.bundle` (or revoke/list entries in `${XDG_STATE_HOME:-~/.local/state}/context-bundle/trusted.json`) |
+| `context --trust [DIR] [--revoke \| --list] [-C DIR]` | Trust `.context.bundle` in current or target directory (or revoke/list entries in `${XDG_STATE_HOME:-~/.local/state}/context-bundle/trusted.json`) |
 | `context --tree [DIR] [opts]` | Print token-budgeted repository file tree to `stdout` |
 | `context --update [--force]` | Self-update `context` from GitHub (`vitalio/context-bundle`) |
 | `context --check-update` | Check if a newer version is available |
@@ -194,15 +194,14 @@ order:
   occurrence. Empty `file` after variable expansion (such as
   `file {todo_md.files:}` when unset) is a no-op.
 - `cmd <shell command>` runs a command in `Workdir` and includes its output.
-  The in-process `context --tree` fast path is exempt from external shell
-  execution trust; all external shell commands in `cmd`, `let <k>=$(<cmd>)`, or
-  `file $(<cmd>)` (across the root spec, local child bundles, and referenced
-  external bundles) require the root `.context.bundle` `(realpath, sha256)`
+  Every command in `cmd`, `let <k>=$(<cmd>)`, or `file $(<cmd>)` (including
+  `context --tree`, across the root spec, local child bundles, and referenced
+  external bundles) requires the root `.context.bundle` `(realpath, sha256)`
   command-tree digest to be trusted in
   `${XDG_STATE_HOME:-~/.local/state}/context-bundle/trusted.json` (`0600`) via
   `context --trust`, `context --init`, or interactive `/dev/tty` `[y/N]`
   confirmation displaying the pending shell commands (failing closed in
-  non-interactive runs).
+  non-interactive runs while keeping untrusted specs strictly declarative).
 - `prompt <text>` appends text to the Prompt section.
 - `let <name>=<value>` or `let <name>=$(<cmd>)` sets a lexically scoped
   bundle-local variable (set-if-unset; passed down to child `rule` and `bundle`

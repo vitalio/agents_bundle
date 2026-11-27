@@ -58,16 +58,18 @@ rules are loaded via `.context.bundle`.
   Pass 2 collects rules, files, commands, and prompts in declaration order),
   stratifies `===== Rules =====` into Layer 1 (invariant rules + embedded
   `vitalio/context-bundle:context`) and Layer 2 (session/role conditional rules
-  + remaining unreferenced upstream rules), keeps only the in-process
-  `context --tree` fast path exempt from external shell execution trust while
-  requiring unified `(realpath, sha256)` trust in
+  + remaining unreferenced upstream rules), requires unified
+  `(realpath, sha256)` trust for every `cmd ...`, `let x=$(...)`, and
+  `file $(...)` directive without exception (including `context --tree`, keeping
+  in-process `_tree_from_args()` purely as a runtime fast path after trust
+  verification) in
   `${XDG_STATE_HOME:-~/.local/state}/context-bundle/trusted.json` (`0600`,
-  computed over root `.context.bundle`, local child bundles, and the ordered
-  set of shell command templates `cmd ...`, `let x=$(...)`, `file $(...)`
-  collected across referenced external bundles; recorded via
-  `context --trust [--revoke | --list]`, `context --init`, or `/dev/tty`
-  prompt displaying pending shell commands), assembles `file` and `cmd` in
-  declaration order, and writes the bundle to `stdout`.
+  computed in a single cached trust-tree walk over root `.context.bundle`, local
+  child bundles, and the ordered set of shell command templates qualified with
+  their originating external bundle identity; recorded via
+  `context --trust [DIR] [--revoke | --list] [-C DIR]`, `context --init`, or
+  `/dev/tty` prompt displaying pending shell commands), assembles `file` and
+  `cmd` in declaration order, and writes the bundle to `stdout`.
 - `agents/context.md` — embedded agent rule (`id: "vitalio/context-bundle:context"`,
   `chain: ["vitalio/context-bundle"]`). `build.py` embeds it into `src/header.py`
   as `EMBEDDED_RULE_CONTEXT`; source-tree runs fall back to the file via
