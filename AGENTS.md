@@ -19,8 +19,11 @@ rules are loaded via `.context.bundle`.
   `HELP_SECTIONS`, aligns the description column at a shared column across all
   sections, and wraps lines to at most `HELP_MAX_WIDTH` columns.
 - `src/tree.py` — `context --tree` token-budgeted repository file tree
-  with `-x/--exclude`, `AGENTS.md` pinning, large/dense file byte sizes, deep
-  directory collapsing, file list truncation, and total byte size summary.
+  with `-x/--exclude`, `CVS`/`.svn`/`.hg` and root `.cvsignore`/`.gitignore`
+  pruning during `os.walk()` fallback (preserving `AGENTS.md`), `AGENTS.md`
+  pinning, large/dense file byte sizes, `O(D log D)` incremental line-count
+  and binary-searched deep directory collapsing / file list truncation, and
+  total byte size summary.
 - `src/rules_engine.py` — resolves atomic rules (`.md`) and composite bundles
   (`.bundle`) from canonical `agents/` (including `<repo>.bundle` /
   `default.bundle` for `bundle <owner>/<repo>`, `<repo>.md` / `default.md` /
