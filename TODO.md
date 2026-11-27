@@ -1,3 +1,14 @@
+# 🎯 [NEXT] B3: Fix context --tree hang on large/CVS repositories (.cvsignore pruning and O(D log D) tree collapse)
+
+- Bump: `PATCH`
+- In `src/tree.py` (`_TREE_SKIP_DIRS`, `_collect_repo_files()`):
+  - Add `"CVS"`, `".svn"`, and `".hg"` to `_TREE_SKIP_DIRS` so VCS metadata directories are never walked during non-Git `os.walk()` fallback.
+  - When falling back to `os.walk(root)` (e.g., in CVS repositories or plain directories where `git ls-files` exits non-zero), load ignore patterns from root `.cvsignore` and `.gitignore` (supporting basename/path globs via `fnmatch`, while preserving `AGENTS.md` files even if listed in `.cvsignore` / `.gitignore`) and prune matching directories in `dirnames[:]` and files in `filenames` before inspecting file metadata.
+- In `src/tree.py` (`build_repo_tree()`):
+  - Eliminate the `O(D^2)` bottleneck where Stage 1 (`deep_candidates`), Stage 2 (`trunc_candidates`), and Stage 3 (`top_candidates`) re-render the entire tree (`render_dir("")`) and rescan `all_dirs` on every single-directory collapse iteration (which hangs on repositories with thousands of nested directories such as `~/zon1`).
+  - Maintain visible line counts incrementally as directories are collapsed / file lists truncated (or batch/binary-search ordered collapse candidates) so `render_dir()` only runs when checking the final token budget (`approx_tokens <= max_tokens`), keeping tree rendering sub-second on repositories with 10,000+ directories and 50,000+ files.
+- Add unit tests in `tests/test_tree.py` covering `CVS/` and `.cvsignore` (`build.*`, glob patterns, and `AGENTS.md` preservation) during `os.walk` fallback as well as fast tree generation on deep multi-thousand-directory trees; update `AGENTS.md` and rebuild `./context` via `python3 build.py`.
+
 # 🎯 [NEXT] F35: Add --compile flag to compile baseline AGENTS.md from .context.bundle
 
 - Depends on: F36 -> F34
@@ -27,7 +38,7 @@
 
 # 🎯 [NEXT] D1: Design local .context/ overlays, package lock/vendoring, and ephemeral task-scout bundles
 
-- Depends on: F39 -> F40 -> F41
+- Depends on: F39 -> F40 -> F41, B3
 - Evaluate separating repository-exported rules/bundles under root `agents/` from project-local context assembly assets under `.context/`:
   - `agents/` remains the public package export directory consumed by downstream projects (`<owner>/<repo>`).
   - `.context/rules/` (optional) stores project-local roles and rules that are not exported outside the repository.
