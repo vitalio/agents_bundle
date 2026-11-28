@@ -728,28 +728,71 @@ class TestRulesEngine(AgentsBundleTestCase):
             self._assert_ok(r_local_bundle)
             self.assertIn("LOCAL_AGENTS_RULE_BODY", r_local_bundle.stdout)
 
-        with self.subTest(case="intra-package two-segment typo fails in default_pkg without git clone fallback"):
+        with self.subTest(case="nested bundle resolves sibling-owner repo shorthand but fails fast on intra-package typos"):
             mod = self._load_bundle_module()
-            with mock.patch.object(mod, "_ensure_remote_package", wraps=mod._ensure_remote_package) as spy_remote:
-                r_typo_cli = self._run(
-                    [str(SCRIPT), "bundle", "vitalio/agents-rules:default", "role=reivew"],
-                    cwd=str(repo),
-                )
-                self.assertNotEqual(r_typo_cli.returncode, 0)
-                self.assertIn("unknown rule 'role/reivew' in package 'vitalio/agents-rules'", r_typo_cli.stderr)
-                for call in spy_remote.call_args_list:
-                    self.assertNotEqual(call.args[0], "role/reivew")
+            pkg_root = Path(os.environ["CONTEXT_BUNDLE_LOCAL_PKG_DIR"])
+            todo_pkg = pkg_root / "vitalio" / "todo-md" / "agents"
+            todo_pkg.mkdir(parents=True, exist_ok=True)
+            (todo_pkg / "todo.md").write_text(
+                "# Description: Todo rule\n- NESTED_REPO_SHORTHAND_TODO_BODY\n",
+                encoding="utf-8",
+            )
+            adapters_dir = pkg_root / "agents" / "adapters"
+            adapters_dir.mkdir(parents=True, exist_ok=True)
+            (adapters_dir / "todo-md.bundle").write_text(
+                "# Description: Todo-md adapter\n"
+                "rule vitalio/todo-md\n"
+                "if role!=\n"
+                "    rule role/{role:}\n",
+                encoding="utf-8",
+            )
 
-                with self.assertRaises(SystemExit) as ctx:
-                    mod.collect_directive_items(
-                        "bundle",
-                        "vitalio/agents-rules:default",
-                        cli_vars={"role": "reivew"},
-                        work_dir=repo,
+            # 1. rule vitalio/todo-md inside vitalio/agents-rules:adapters/todo-md resolves to vitalio/todo-md:todo
+            items_ok = mod.collect_directive_items(
+                "bundle",
+                "vitalio/agents-rules:adapters/todo-md",
+                work_dir=repo,
+            )
+            self.assertEqual([it[0] for it in items_ok], ["vitalio/todo-md:todo"])
+            self.assertIn("NESTED_REPO_SHORTHAND_TODO_BODY", items_ok[0][2])
+
+            r_adapter_ok = self._run(
+                [str(SCRIPT), "bundle", "vitalio/agents-rules:adapters/todo-md", "--plain"],
+                cwd=str(repo),
+            )
+            self._assert_ok(r_adapter_ok)
+            self.assertIn("NESTED_REPO_SHORTHAND_TODO_BODY", r_adapter_ok.stdout)
+
+            # 2. Intra-package typos (role/reivew, core/isolatoin) fail in default_pkg without git clone fallback
+            (adapters_dir / "typo_core.bundle").write_text(
+                "rule core/isolatoin\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(mod, "_ensure_remote_package", wraps=mod._ensure_remote_package) as spy_remote:
+                for b_target, cli_extra, bad_rule in (
+                    ("vitalio/agents-rules:adapters/todo-md", ["role=reivew"], "role/reivew"),
+                    ("vitalio/agents-rules:default", ["role=reivew"], "role/reivew"),
+                    ("vitalio/agents-rules:adapters/typo_core", [], "core/isolatoin"),
+                ):
+                    r_typo_cli = self._run(
+                        [str(SCRIPT), "bundle", b_target, *cli_extra],
+                        cwd=str(repo),
                     )
-                self.assertIn("unknown rule 'role/reivew' in package 'vitalio/agents-rules'", str(ctx.exception))
-                for call in spy_remote.call_args_list:
-                    self.assertNotEqual(call.args[0], "role/reivew")
+                    self.assertNotEqual(r_typo_cli.returncode, 0)
+                    self.assertIn(f"unknown rule {bad_rule!r} in package 'vitalio/agents-rules'", r_typo_cli.stderr)
+                    for call in spy_remote.call_args_list:
+                        self.assertNotEqual(call.args[0], bad_rule)
+
+                    with self.assertRaises(SystemExit) as ctx:
+                        mod.collect_directive_items(
+                            "bundle",
+                            b_target,
+                            cli_vars={"role": "reivew"} if cli_extra else None,
+                            work_dir=repo,
+                        )
+                    self.assertIn(f"unknown rule {bad_rule!r} in package 'vitalio/agents-rules'", str(ctx.exception))
+                    for call in spy_remote.call_args_list:
+                        self.assertNotEqual(call.args[0], bad_rule)
 
         with self.subTest(case="_ensure_remote_package disables interactive git terminal prompts"):
             import subprocess as sp

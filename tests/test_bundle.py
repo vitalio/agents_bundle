@@ -1688,7 +1688,7 @@ class TestBundle(AgentsBundleTestCase):
         adapters_dir.mkdir(parents=True, exist_ok=True)
         (adapters_dir / "todo-md.bundle").write_text(
             "# Description: Todo-md adapter\n"
-            "rule vitalio/todo-md:todo\n"
+            "rule vitalio/todo-md\n"
             "if todo_md.role!=\n"
             "    let role={todo_md.role:}\n"
             "elif todo_md.status=WIP,NEXT\n"
@@ -1796,7 +1796,7 @@ class TestBundle(AgentsBundleTestCase):
         adapters_dir.mkdir(parents=True, exist_ok=True)
         (adapters_dir / "todo-md.bundle").write_text(
             "# Description: Todo-md adapter\n"
-            "rule vitalio/todo-md:todo\n"
+            "rule vitalio/todo-md\n"
             "if todo_md.role!=\n"
             "    let role={todo_md.role:}\n"
             "elif todo_md.status=WIP,NEXT\n"
@@ -1905,6 +1905,11 @@ class TestBundle(AgentsBundleTestCase):
             by_id_piped["vitalio/todo-md:todo"][0]["chain"],
             [".context.bundle", "vitalio/agents-rules:adapters/todo-md"],
         )
+
+        # 3. Typo in intra-package rule inside vitalio/agents-rules (role=reivew) fails immediately in vitalio/agents-rules
+        r_typo = self._run([str(SCRIPT), "role=reivew"], cwd=str(self.tmp))
+        self.assertNotEqual(r_typo.returncode, 0)
+        self.assertIn("unknown rule 'role/reivew' in package 'vitalio/agents-rules'", r_typo.stderr)
 
 
 if __name__ == "__main__":

@@ -462,6 +462,64 @@ def _is_repo_shorthand_spec(spec: str) -> bool:
     return re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:@[A-Za-z0-9_./-]+)?", s) is not None
 
 
+def _target_exists_in_pkg(
+    pkg_dir: Path,
+    target: str,
+    kind: str = "rule",
+) -> bool:
+    rules_dict, bundles_dict = _load_package_from_dir(pkg_dir)
+    if kind == "bundle":
+        if _match_bundle_in_dict(target, bundles_dict, repo_shorthand=False) is not None:
+            return True
+        return _resolve_package_rel_file(pkg_dir, target, (".bundle",)) is not None
+    if _match_rule_in_dict(target, rules_dict, repo_shorthand=False) is not None:
+        return True
+    return _resolve_package_rel_file(pkg_dir, target, (".md",)) is not None
+
+
+def _is_nested_repo_shorthand(
+    target: str,
+    default_pkg: str,
+    pkg_dir: Path | None = None,
+    work_dir: Path | None = None,
+    refresh: bool = False,
+    kind: str = "rule",
+    upstream_rules: dict[str, str] | None = None,
+) -> bool:
+    s_clean = target.strip()
+    if not _is_repo_shorthand_spec(s_clean):
+        return False
+    if "@" in s_clean:
+        return True
+    repo_base = s_clean.split("@", 1)[0].lower()
+    seg1 = repo_base.split("/", 1)[0]
+    in_upstream = bool(
+        upstream_rules
+        and any(
+            uid.lower() == repo_base or uid.lower().startswith(f"{repo_base}:")
+            for uid in upstream_rules
+        )
+    )
+    def_base = _split_pkg_ref(default_pkg.strip(), prog_name())[0]
+    def_owner = (
+        def_base.split("/", 1)[0].lower()
+        if ("/" in def_base and not _is_local_path_spec(def_base) and not Path(def_base).is_absolute())
+        else ""
+    )
+    if not in_upstream and (not def_owner or seg1 != def_owner):
+        return False
+    def_dir = pkg_dir
+    if def_dir is None:
+        try:
+            def_dir = _resolve_package_dir(default_pkg, work_dir=work_dir, refresh=refresh)
+        except SystemExit:
+            def_dir = None
+    if def_dir is not None:
+        if (def_dir / "agents" / seg1).is_dir() or _target_exists_in_pkg(def_dir, s_clean, kind=kind):
+            return False
+    return True
+
+
 def _parse_target_spec(
     spec: str,
     default_pkg: str | None = None,
@@ -469,6 +527,7 @@ def _parse_target_spec(
     work_dir: Path | None = None,
     refresh: bool = False,
     kind: str = "bundle",
+    upstream_rules: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     prog = prog_name()
     if ":" not in spec and _is_local_path_spec(spec):
@@ -482,6 +541,16 @@ def _parse_target_spec(
     if ":" not in spec:
         s_clean = spec.strip()
         if default_pkg:
+            if allow_repo_shorthand and _is_nested_repo_shorthand(
+                s_clean,
+                default_pkg,
+                work_dir=work_dir,
+                refresh=refresh,
+                kind=kind,
+                upstream_rules=upstream_rules,
+            ):
+                repo_leaf = s_clean.split("@", 1)[0].rsplit("/", 1)[-1].lower()
+                return s_clean, repo_leaf
             return default_pkg, s_clean.lower()
         base_dir = (work_dir if work_dir is not None else Path.cwd()).resolve()
         if (base_dir / "agents").is_dir():
@@ -943,6 +1012,7 @@ def collect_directive_items(
         work_dir=work_dir,
         refresh=refresh,
         kind="rule",
+        upstream_rules=upstream_rules,
     )
     if pkg_id in ("__file__", "__url__"):
         if pkg_id == "__url__":

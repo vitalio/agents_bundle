@@ -31,6 +31,7 @@ from src.rules_engine import (
     _find_bundle_file_in_pkg,
     _is_external_bundle_source,
     _is_local_path_spec,
+    _is_nested_repo_shorthand,
     _rule_template_is_invariant,
     _parse_directive_tokens,
     _parse_md_text,
@@ -623,6 +624,14 @@ def _qualify_nested_target(
         and not target.startswith(("http://", "https://", "file://"))
         and default_pkg is not None
     ):
+        if _is_nested_repo_shorthand(
+            target,
+            default_pkg,
+            pkg_dir=pkg_dir,
+            work_dir=work_dir,
+            kind=kind,
+        ):
+            return target
         return f"{default_pkg}:{target}"
     return target
 
