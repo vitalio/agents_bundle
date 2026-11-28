@@ -1,7 +1,18 @@
+# 🎯 [NEXT] F45: Replace bare bundle/rule subcommands with --bundle/--rule and show '{prog} [k=v ...] [FILE ...]' in Commands:
+
+- Depends on: F42, F44
+- Bump: `MINOR`
+- Replace bare positional `bundle` and `rule` subcommands with `--bundle` and `--rule` in `src/cli.py` and `src/header.py`:
+  - Route `args[0] == "--bundle"` (usage: `{prog} --bundle <pkg>[:<name>] [k=v] [-C DIR] [-p TEXT] [--plain] [-v] [--refresh]`) and `args[0] == "--rule"` in `main()` (`src/cli.py`).
+  - When `args[0]` is bare `"bundle"` or `"rule"`, fail with exit code `2` and `f"{prog}: unknown bare command '{args[0]}'; did you mean '--{args[0]}'?"` so every non-default command uses the `--<command>` flag contract.
+- Update `HELP_USAGE` and `HELP_SECTIONS` in `src/header.py`:
+  - In `Commands:`, prefix the bare default invocation row with `{prog}` (`"{prog} [k=v ...] [FILE ...]"`) per `agents/cli/help.md`, and update the subcommand rows to `"--bundle <pkg>[:<name>] [k=v]"` and `"--rule <pkg>[:<name...>] [k=v]"`.
+- Update `README.md`, `AGENTS.md`, and unit tests in `tests/test_cli.py`, `tests/test_core.py`, `tests/test_rules_engine.py`, and `tests/test_bundle.py`, rebuild `./context` via `python3 build.py`, and verify `python3 build.py --check`.
+
 # 🎯 [NEXT] F35: Compile self-contained AGENTS.md (--compile) and load compiled context with -f/--file override
 
 - Depends on: F36 -> F34
-- Depends on: F39, D1 -> F44
+- Depends on: F39, D1 -> F44 -> F45
 - Bump: `MINOR`
 - Add `context --compile [-f SPEC] [-C DIR]` and `-f, --file FILE` source selection across `src/cli.py`, `src/bundle.py`, `src/includes.py`, and `src/header.py`:
   - `context --compile [-f SPEC] [-C DIR]`: compile `.context.bundle` (or `SPEC`) into an in-place delimited `<!-- context:compiled ... -->...<!-- /context:compiled -->` block in `AGENTS.md`, preserving all user-authored project instructions outside the block across repeated compilations and recording trust for the compiled spec in `trusted.json`.
