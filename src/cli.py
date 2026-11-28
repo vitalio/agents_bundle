@@ -86,8 +86,13 @@ def cmd_check_update(url: str | None = None) -> int:
     return 0
 
 
-def cmd_update(force: bool = False, url: str | None = None) -> int:
+def cmd_update(force: bool = False, url: str | None = None, check: bool = False) -> int:
     prog = prog_name()
+    if check and force:
+        sys.stderr.write(f"{prog}: usage: {prog} --update [--check | --force]\n")
+        return 2
+    if check:
+        return cmd_check_update(url=url)
     self_file = Path(sys.argv[0]).resolve() if sys.argv and sys.argv[0] else Path(__file__).resolve()
     if not self_file.is_file():
         self_file = Path(__file__).resolve()
@@ -230,10 +235,21 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_trust(args[1:])
     if args and args[0] == "--tree":
         return cmd_tree(args[1:])
-    if args and args[0] == "--check-update":
-        return cmd_check_update()
-    if args and args[0] in ("--update", "--self-update"):
-        return cmd_update(force="--force" in args[1:])
+    if args and args[0] == "--update":
+        check = False
+        force = False
+        for a in args[1:]:
+            if a == "--check":
+                check = True
+            elif a == "--force":
+                force = True
+            else:
+                sys.stderr.write(f"{prog}: usage: {prog} --update [--check | --force]\n")
+                return 2
+        if check and force:
+            sys.stderr.write(f"{prog}: usage: {prog} --update [--check | --force]\n")
+            return 2
+        return cmd_update(force=force, check=check)
     if args and args[0] == "--uninstall":
         if len(args) > 1:
             raise SystemExit(f"{prog}: usage: {prog} --uninstall")

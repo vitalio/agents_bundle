@@ -16,12 +16,16 @@ class TestCLI(AgentsBundleTestCase):
         rh = self._run_subprocess([str(SCRIPT), "-h"], capture_output=True, text=True, check=False)
         self._assert_ok(rh)
         self.assertIn("Usage:", rh.stdout)
+        self.assertIn("Commands:", rh.stdout)
         self.assertIn("--plain", rh.stdout)
+        self.assertIn("--update [--check | --force]", rh.stdout)
         self.assertIn("--uninstall", rh.stdout)
         self.assertIn("CONTEXT_BUNDLE_PLAIN", rh.stdout)
         self.assertIn("Bundle Output Protocol:", rh.stdout)
         self.assertIn("-x, --exclude DIR", rh.stdout)
         self.assertIn("bundle <pkg>[:<name>] [k=v]", rh.stdout)
+        self.assertNotIn("--check-update", rh.stdout)
+        self.assertNotIn("--self-update", rh.stdout)
         self.assertNotIn("--agents", rh.stdout)
         rv = self._run_subprocess([str(SCRIPT), "--version"], capture_output=True, text=True, check=False)
         self._assert_ok(rv)
@@ -38,13 +42,19 @@ class TestCLI(AgentsBundleTestCase):
                 for line in lines:
                     self.assertLessEqual(len(line), 100, msg=line)
                 sections = {}
+                current_title = None
                 current = None
                 for line in lines:
                     if not line.strip():
+                        current_title = None
                         current = None
                     elif not line.startswith(" "):
-                        current = sections.setdefault(line, {"entries": set(), "conts": set()})
+                        current_title = line
+                        current = sections.setdefault(line, {"lines": [], "entries": set(), "conts": set()})
                     elif current is not None:
+                        current["lines"].append(line)
+                        if current_title == "Usage:":
+                            continue
                         indent = len(line) - len(line.lstrip())
                         if indent == 2:
                             m = re.match(r"^ {2}\S.*?\S( {2,})\S", line)
@@ -52,11 +62,26 @@ class TestCLI(AgentsBundleTestCase):
                             current["entries"].add(m.end() - 1)
                         else:
                             current["conts"].add(indent)
-                for title in ("Usage:", "Options:", "Bundle Output Protocol:", "Environment:"):
+                self.assertIn("Usage:", sections)
+                self.assertEqual(
+                    sections["Usage:"]["lines"],
+                    [
+                        "  context [k=v ...] [-p TEXT] [FILE ...]",
+                        "  context <command|flag> [args] [opts]",
+                    ],
+                )
+                shared_cols = set()
+                for title in ("Commands:", "Options:", "Bundle Output Protocol:", "Environment:"):
                     with self.subTest(section=title):
                         self.assertIn(title, sections)
                         self.assertEqual(len(sections[title]["entries"]), 1)
                         self.assertLessEqual(sections[title]["conts"], sections[title]["entries"])
+                        shared_cols.update(sections[title]["entries"])
+                self.assertEqual(len(shared_cols), 1)
+                self.assertLessEqual(next(iter(shared_cols)), 36)
+                opts_lines = [ln for ln in sections["Options:"]["lines"] if ln.startswith("  -")]
+                self.assertTrue(opts_lines[-2].startswith("  -V, --version "))
+                self.assertTrue(opts_lines[-1].startswith("  -h, --help "))
 
     def test_build_strips_internal_imports(self):
         spec = importlib.util.spec_from_file_location("build_mod", BUILD_PY)
@@ -262,6 +287,73 @@ class TestCLI(AgentsBundleTestCase):
             r_prompt = self._run([str(SCRIPT), "-p", "--trust", "--plain"], cwd=str(repo))
             self._assert_ok(r_prompt)
             self.assertIn("===== Prompt =====\n--trust", r_prompt.stdout)
+
+    def test_update_check_force_and_flag_validation(self):
+        remote_script = self.tmp / "remote_context"
+        installed_bin = self.tmp / "bin_update" / "context"
+        installed_bin.parent.mkdir(parents=True, exist_ok=True)
+        installed_bin.write_text(
+            "#!/usr/bin/env python3\n# context-bundle-repo: vitalio/context-bundle\nVERSION = '0.1.0'\n",
+            encoding="utf-8",
+        )
+        installed_bin.chmod(0o755)
+        remote_url = remote_script.resolve().as_uri()
+        env = {**os.environ, "CONTEXT_BUNDLE_UPDATE_URL": remote_url}
+
+        with self.subTest(case="rejects mutually exclusive --check and --force with exit code 2"):
+            r_both = self._run_in_process([str(installed_bin), "--update", "--check", "--force"], env=env)
+            self.assertEqual(r_both.returncode, 2)
+            self.assertIn("usage: context --update [--check | --force]", r_both.stderr)
+
+        with self.subTest(case="rejects unknown flag under --update with exit code 2"):
+            r_unk = self._run_in_process([str(installed_bin), "--update", "--bogus"], env=env)
+            self.assertEqual(r_unk.returncode, 2)
+            self.assertIn("usage: context --update [--check | --force]", r_unk.stderr)
+
+        with self.subTest(case="removed --check-update and --self-update flags are rejected"):
+            for old_flag in ("--check-update", "--self-update"):
+                r_old = self._run_in_process([str(installed_bin), old_flag], env=env)
+                self.assertNotEqual(r_old.returncode, 0)
+                self.assertIn(f"unknown option: {old_flag}", r_old.stderr)
+
+        remote_script.write_text(
+            "#!/usr/bin/env python3\n# context-bundle-repo: vitalio/context-bundle\nVERSION = '0.0.1'\n",
+            encoding="utf-8",
+        )
+        with self.subTest(case="--update --check reports up to date without modifying binary"):
+            r_chk_old = self._run_in_process([str(installed_bin), "--update", "--check"], env=env)
+            self._assert_ok(r_chk_old)
+            self.assertIn("is up to date (remote: 0.0.1)", r_chk_old.stdout)
+            self.assertIn("VERSION = '0.1.0'", installed_bin.read_text(encoding="utf-8"))
+
+        with self.subTest(case="--update skips reinstall when already up to date"):
+            r_up_noop = self._run_in_process([str(installed_bin), "--update"], env=env)
+            self._assert_ok(r_up_noop)
+            self.assertIn("is already up to date", r_up_noop.stdout)
+            self.assertIn("VERSION = '0.1.0'", installed_bin.read_text(encoding="utf-8"))
+
+        with self.subTest(case="--update --force reinstalls even when remote is older"):
+            r_up_force = self._run_in_process([str(installed_bin), "--update", "--force"], env=env)
+            self._assert_ok(r_up_force)
+            self.assertIn("updated", r_up_force.stdout)
+            self.assertIn("VERSION = '0.0.1'", installed_bin.read_text(encoding="utf-8"))
+
+        remote_script.write_text(
+            "#!/usr/bin/env python3\n# context-bundle-repo: vitalio/context-bundle\nVERSION = '99.0.0'\n",
+            encoding="utf-8",
+        )
+        with self.subTest(case="--update --check detects newer remote version without modifying binary"):
+            r_chk_new = self._run_in_process([str(installed_bin), "--update", "--check"], env=env)
+            self._assert_ok(r_chk_new)
+            self.assertIn("update available:", r_chk_new.stdout)
+            self.assertIn("-> 99.0.0", r_chk_new.stdout)
+            self.assertIn("VERSION = '0.0.1'", installed_bin.read_text(encoding="utf-8"))
+
+        with self.subTest(case="--update installs newer remote version atomically"):
+            r_up_new = self._run_in_process([str(installed_bin), "--update"], env=env)
+            self._assert_ok(r_up_new)
+            self.assertIn("-> 99.0.0", r_up_new.stdout)
+            self.assertIn("VERSION = '99.0.0'", installed_bin.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

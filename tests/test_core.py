@@ -52,28 +52,39 @@ class TestCoreHelpers(unittest.TestCase):
             os.environ, {"CONTEXT_BUNDLE_CACHE_DIR": "/tmp/ctx-cache"}
         ):
             text = self.core.usage_text()
+        self.assertIn("Usage:", text)
         for title, _rows in header.HELP_SECTIONS:
             self.assertIn(title, text)
         self.assertIn(header.DEFAULT_RULES_PKG, text)
         self.assertNotIn("{prog}", text)
         self.assertNotIn("{cache_dir}", text)
+        self.assertNotIn("{trust_file}", text)
         fields = {
             "prog": "context",
             "default_pkg": header.DEFAULT_RULES_PKG,
             "cache_dir": "/tmp/ctx-cache",
+            "trust_file": "/tmp/trusted.json",
         }
         expected_col = (
             header.HELP_INDENT
             + max(
-                len(left.format(**fields))
+                min(len(left.format(**fields)), header.HELP_MAX_LEFT)
                 for _, rows in header.HELP_SECTIONS
                 for left, _ in rows
             )
             + header.HELP_GAP
         )
+        self.assertLessEqual(expected_col, 36)
+        in_usage = False
         for line in text.splitlines():
             self.assertLessEqual(len(line), header.HELP_MAX_WIDTH, msg=line)
-            if not line or not line.startswith(" " * header.HELP_INDENT):
+            if not line:
+                in_usage = False
+                continue
+            if not line.startswith(" "):
+                in_usage = line == "Usage:"
+                continue
+            if in_usage or not line.startswith(" " * header.HELP_INDENT):
                 continue
             if line.startswith(" " * expected_col):
                 self.assertNotEqual(line[expected_col], " ", msg=line)
@@ -81,6 +92,22 @@ class TestCoreHelpers(unittest.TestCase):
                 self.assertGreater(len(line), expected_col, msg=line)
                 self.assertEqual(line[expected_col - 1], " ", msg=line)
                 self.assertNotEqual(line[expected_col], " ", msg=line)
+
+        with self.subTest(case="overlong left label caps left column via HELP_MAX_LEFT"):
+            overlong_left = "custom-overlong-command-signature [k=v ...] [FILE ...]"
+            custom_sections = (
+                ("Commands:", ((overlong_left, "Build context bundle"),)),
+                *header.HELP_SECTIONS,
+            )
+            with mock.patch.object(self.core, "HELP_SECTIONS", custom_sections), mock.patch.dict(
+                os.environ, {"CONTEXT_BUNDLE_CACHE_DIR": "/tmp/ctx-cache"}
+            ):
+                long_text = self.core.usage_text()
+            max_col = header.HELP_INDENT + header.HELP_MAX_LEFT + header.HELP_GAP
+            for line in long_text.splitlines():
+                self.assertLessEqual(len(line), header.HELP_MAX_WIDTH, msg=line)
+            expected_wrapped = f"  {overlong_left}\n" + (" " * max_col) + "Build context bundle"
+            self.assertEqual(long_text.count(expected_wrapped), 1)
 
 
 class TestStandaloneModules(unittest.TestCase):

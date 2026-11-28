@@ -39,44 +39,50 @@ PROMPT_HEADER = "===== Prompt ====="
 VAR_NAME_PATTERN = r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*"
 HELP_MAX_WIDTH = 100
 HELP_PROSE_WIDTH = 80
+HELP_MAX_LEFT = 32
 HELP_INDENT = 2
 HELP_GAP = 2
+HELP_USAGE = (
+    "{prog} [k=v ...] [-p TEXT] [FILE ...]",
+    "{prog} <command|flag> [args] [opts]",
+)
 HELP_SECTIONS = (
     (
-        "Usage:",
+        "Commands:",
         (
             (
-                "{prog} [k=v ...] [-p TEXT] [FILE ...]",
+                "[k=v ...] [FILE ...]",
                 "Build context bundle from .context.bundle (or .agents_bundle) to stdout (stdin: "
                 "Key: Value preamble, task ID, or prompt; sets piped=1 on prompt; empty piped "
                 "stdin exits 2)",
             ),
             (
-                "{prog} bundle <pkg>[:<name>] [k=v]",
+                "bundle <pkg>[:<name>] [k=v]",
                 "Render a bundle from agents/ without .context.bundle (reads no stdin; "
                 "honors -C, -p, --plain, -v, --refresh)",
             ),
             (
-                "{prog} rule <pkg>[:<name...>] [k=v]",
+                "rule <pkg>[:<name...>] [k=v]",
                 "Render one or more rules from agents/ (<owner>/<repo>[@ref][:<name|path>], "
                 "./path, or URL) to stdout",
             ),
             (
-                "{prog} --list | -l [pkg]",
+                "--list | -l [pkg]",
                 "List bundles, rules, and built-in variables (default: {default_pkg})",
             ),
-            ("{prog} --update-cache", "Refresh cached git packages and URL files in {cache_dir}"),
-            ("{prog} --init [--force]", "Create a starter .context.bundle in the current directory"),
+            ("--update-cache", "Refresh cached git packages and URL files in {cache_dir}"),
+            ("--init [--force]", "Create a starter .context.bundle in the current directory"),
             (
-                "{prog} --trust [--revoke | --list] [-C DIR]",
-                "Trust current .context.bundle (or revoke/list entries in {trust_file})",
+                "--trust [opts]",
+                "Trust current .context.bundle or revoke/list entries in {trust_file} "
+                "(options: [DIR], --revoke, --list, -C DIR)",
             ),
-            ("{prog} --tree [DIR] [opts]", "Print token-budgeted repository file tree to stdout"),
-            ("{prog} --update [--force]", "Self-update {prog} from GitHub (vitalio/context-bundle)"),
-            ("{prog} --check-update", "Check if a newer version is available"),
-            ("{prog} --uninstall", "Remove installed {prog} binary and package cache ({cache_dir})"),
-            ("{prog} -V | --version", "Print version and exit 0"),
-            ("{prog} -h | --help", "Print this usage and exit 0"),
+            ("--tree [DIR] [opts]", "Print token-budgeted repository file tree to stdout"),
+            (
+                "--update [--check | --force]",
+                "Self-update {prog} from GitHub (vitalio/context-bundle) or check for updates",
+            ),
+            ("--uninstall", "Remove installed {prog} binary and package cache ({cache_dir})"),
         ),
     ),
     (
@@ -95,12 +101,15 @@ HELP_SECTIONS = (
             ("-x, --exclude DIR", "Exclude directory name in --tree (repeatable)"),
             ("--max-lines N", "Maximum output lines for --tree (default: 160)"),
             ("--max-tokens N", "Approximate token budget for --tree (default: 1600)"),
+            ("--check", "Check if a newer version is available without installing (with --update)"),
             (
                 "--force",
                 "Overwrite existing .context.bundle (--init) or force reinstall (--update)",
             ),
             ("--revoke", "Revoke trust for current .context.bundle (with --trust)"),
             ("-l, --list", "List bundles/rules, or list trusted specs (with --trust)"),
+            ("-V, --version", "Print version and exit 0"),
+            ("-h, --help", "Print this usage and exit 0"),
         ),
     ),
     (

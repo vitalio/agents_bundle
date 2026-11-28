@@ -1,3 +1,14 @@
+# ✅ [DONE] F42: Fold --check-update into --update [--check | --force], separate Usage: from Commands: in context -h, and compact left-column signatures — *2026-11-28, Folded --check-update and --self-update into --update [--check | --force], separated Usage: from Commands: in context -h, compacted left-column signatures, and added HELP_MAX_LEFT guard.*
+
+- Bump: `MINOR`
+- Fold `--check-update` and `--self-update` into `context --update [--check | --force]` in `src/cli.py` and `src/header.py` per `agents/cli/lifecycle.md`:
+  - Replace the top-level `--check-update` flag and `--self-update` alias with `context --update [--check | --force]` (`cmd_update(check=..., force=...)` or routing `--update --check` to `cmd_check_update()`), rejecting unknown flags or mutually exclusive `--check` + `--force` with exit status `2`.
+- Update `src/header.py` and `src/core.py` (`HELP_USAGE`, `HELP_SECTIONS`, `usage_text()`) to match the refined `agents/cli/help.md` layout contract:
+  - Render top-level `Usage:` syntax lines (`{prog} [k=v ...] [-p TEXT] [FILE ...]`, `{prog} <command|flag> [args] [opts]`) as a compact usage block rather than a two-column table.
+  - Add a dedicated `Commands:` section for subcommands and mode flags (`bundle <pkg>[:<name>] [k=v]`, `rule <pkg>[:<name...>] [k=v]`, `--list | -l [pkg]`, `--update-cache`, `--init [--force]`, `--trust [opts]`, `--tree [DIR] [opts]`, `--update [--check | --force]`, `--uninstall`) without repeating `{prog} ` on every row, listing `--trust` sub-options (`--revoke`, `--list`, `-C DIR`) in the description column so the shared description column shifts left to ~34 columns.
+  - Move `-V, --version` and `-h, --help` to the end of `Options:`, and guard `render_help_section()` / `usage_text()` with a maximum left-column cap (`HELP_MAX_LEFT`) so long custom binary names wrap/break cleanly without squeezing the right-hand column.
+- Update `tests/test_cli.py`, `README.md`, and `AGENTS.md` to reflect `context --update [--check | --force]` and the grouped `-h`/`--help` sections, rebuild `./context` via `python3 build.py`, and run the test suite.
+
 # ✅ [DONE] D1: Design local .context/ overlays, package lock/vendoring, and ephemeral task-scout bundles — *2026-11-28, Rejected dedicated .context/, lock.json, vendor/, and tasks/ engine abstractions in favor of removing hardcoded DEFAULT_RULES_PKG (F44), compiling self-contained AGENTS.md with in-place <!-- context:compiled --> blocks and -f/--file selection (F35), and using standard conditional bundle directives for preload slices.*
 
 - Depends on: F39 -> F40 -> F41, B3

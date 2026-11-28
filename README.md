@@ -43,7 +43,7 @@ curl -fsSL https://raw.githubusercontent.com/vitalio/context-bundle/main/install
 Check for updates, self-update in place, or uninstall:
 
 ```bash
-context --check-update
+context --update --check
 context --update
 context --uninstall
 ```
@@ -103,13 +103,10 @@ context --tree -x bumps -x resolutions --max-lines 160 --max-tokens 1600
 | `context --list \| -l [pkg]` | List bundles, rules, and built-in variables (default: `vitalio/agents-rules`) |
 | `context --update-cache` | Refresh cached git packages and URL files in `~/.cache/context-bundle` |
 | `context --init [--force]` | Create a starter `.context.bundle` in the current directory |
-| `context --trust [DIR] [--revoke \| --list] [-C DIR]` | Trust `.context.bundle` in current or target directory (or revoke/list entries in `${XDG_STATE_HOME:-~/.local/state}/context-bundle/trusted.json`) |
+| `context --trust [opts]` | Trust current `.context.bundle` or revoke/list entries in `${XDG_STATE_HOME:-~/.local/state}/context-bundle/trusted.json` (options: `[DIR]`, `--revoke`, `--list`, `-C DIR`) |
 | `context --tree [DIR] [opts]` | Print token-budgeted repository file tree to `stdout` |
-| `context --update [--force]` | Self-update `context` from GitHub (`vitalio/context-bundle`) |
-| `context --check-update` | Check if a newer version is available |
+| `context --update [--check \| --force]` | Self-update `context` from GitHub (`vitalio/context-bundle`) or check for updates |
 | `context --uninstall` | Remove installed `context` binary and package cache (`~/.cache/context-bundle`) |
-| `context -V \| --version` | Print version and exit `0` |
-| `context -h \| --help` | Print usage and exit `0` |
 
 ### Options
 
@@ -124,9 +121,12 @@ context --tree -x bumps -x resolutions --max-lines 160 --max-tokens 1600
 | `-x, --exclude DIR` | Exclude directory name in `--tree` (repeatable) |
 | `--max-lines N` | Maximum output lines for `--tree` (default: `160`) |
 | `--max-tokens N` | Approximate token budget for `--tree` (default: `1600`) |
+| `--check` | Check if a newer version is available without installing (with `--update`) |
 | `--force` | Overwrite existing `.context.bundle` (`--init`) or force reinstall (`--update`) |
 | `--revoke` | Revoke trust for current `.context.bundle` (with `--trust`) |
 | `-l, --list` | List bundles/rules, or list trusted specs (with `--trust`) |
+| `-V, --version` | Print version and exit `0` |
+| `-h, --help` | Print usage and exit `0` |
 
 ### Environment
 

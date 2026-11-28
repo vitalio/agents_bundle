@@ -5,10 +5,10 @@ rules are loaded via `.context.bundle`.
 
 ## Architecture & Module Boundaries
 
-- `src/header.py` — table-driven help data (`HELP_SECTIONS` and the `HELP_*`
-  width constants), the standard library imports shared by the assembled
-  executable, and version/protocol constants (`SPEC_FILE_NAME = ".context.bundle"`,
-  `PRODUCER_NAME = "vitalio/context-bundle"`,
+- `src/header.py` — table-driven help data (`HELP_USAGE`, `HELP_SECTIONS`, and
+  the `HELP_*` width constants including `HELP_MAX_LEFT`), the standard library
+  imports shared by the assembled executable, and version/protocol constants
+  (`SPEC_FILE_NAME = ".context.bundle"`, `PRODUCER_NAME = "vitalio/context-bundle"`,
   `EMBEDDED_RULE_ID = "vitalio/context-bundle:context"`, `VAR_NAME_PATTERN`).
 - `src/core.py` — `prog_name()`, `cache_dir_path()`, `state_dir_path()`,
   `trust_file_path()`, and `usage_text()` helpers shared by all modules;
@@ -16,8 +16,10 @@ rules are loaded via `.context.bundle`.
   `~/.cache/context-bundle` and prunes obsolete
   `packages/vitalio/{agents_bundle,run_block,todo_md}` clones; `usage_text()`
   expands `{prog}`, `{default_pkg}`, `{cache_dir}`, and `{trust_file}` in
-  `HELP_SECTIONS`, aligns the description column at a shared column across all
-  sections, and wraps lines to at most `HELP_MAX_WIDTH` columns.
+  `HELP_USAGE` and `HELP_SECTIONS`, renders top-level `Usage:` lines as a
+  compact syntax block, aligns the description column at a shared column
+  (capped by `HELP_MAX_LEFT`) across all tabular sections, and wraps lines to
+  at most `HELP_MAX_WIDTH` columns.
 - `src/tree.py` — `context --tree` token-budgeted repository file tree
   with `-x/--exclude`, `CVS`/`.svn`/`.hg` and root `.cvsignore`/`.gitignore`
   pruning during `os.walk()` fallback (preserving `AGENTS.md`), `AGENTS.md`
@@ -75,7 +77,7 @@ rules are loaded via `.context.bundle`.
   as `EMBEDDED_RULE_CONTEXT`; source-tree runs fall back to the file via
   `embedded_rule_text()` in `src/core.py`. Keep it about 10 lines.
 - `src/cli.py` — CLI entrypoint, subcommand routing, self-update
-  (`--update`, `--check-update`), and `--uninstall`.
+  (`--update [--check | --force]`), and `--uninstall`.
 - `tests/` — offline test suite split to mirror `src/`: `tests/helpers.py`
   (`AgentsBundleTestCase` in-process CLI runner and offline package fixtures),
   `tests/test_cli.py`, `tests/test_core.py`, `tests/test_tree.py`,

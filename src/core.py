@@ -11,9 +11,11 @@ from src.header import (
     EMBEDDED_RULE_CONTEXT,
     HELP_GAP,
     HELP_INDENT,
+    HELP_MAX_LEFT,
     HELP_MAX_WIDTH,
     HELP_PROSE_WIDTH,
     HELP_SECTIONS,
+    HELP_USAGE,
 )
 
 _OBSOLETE_VITALIO_PKGS = ("agents_bundle", "run_block", "todo_md")
@@ -74,14 +76,30 @@ def trust_file_path() -> Path:
 
 
 def render_help_section(title: str, rows, col: int | None = None) -> str:
+    max_col = HELP_INDENT + HELP_MAX_LEFT + HELP_GAP
     if col is None:
-        col = HELP_INDENT + max(len(left) for left, _ in rows) + HELP_GAP
+        max_left = max((min(len(left), HELP_MAX_LEFT) for left, _ in rows), default=0)
+        col = HELP_INDENT + max_left + HELP_GAP
+    else:
+        col = min(col, max_col)
     width = max(min(HELP_PROSE_WIDTH, HELP_MAX_WIDTH - col), 20)
+    max_inline_left = col - HELP_INDENT - HELP_GAP
+    left_wrap_width = max(HELP_MAX_WIDTH - HELP_INDENT, 20)
     lines = [title]
     for left, right in rows:
-        wrapped = textwrap.wrap(right, width=width, break_long_words=True, break_on_hyphens=False)
-        lines.append(" " * HELP_INDENT + left.ljust(col - HELP_INDENT) + wrapped[0])
-        lines.extend(" " * col + part for part in wrapped[1:])
+        wrapped = textwrap.wrap(right, width=width, break_long_words=True, break_on_hyphens=False) or [""]
+        if len(left) <= max_inline_left:
+            lines.append(" " * HELP_INDENT + left.ljust(col - HELP_INDENT) + wrapped[0])
+            lines.extend(" " * col + part for part in wrapped[1:])
+        else:
+            left_lines = textwrap.wrap(
+                left,
+                width=left_wrap_width,
+                break_long_words=True,
+                break_on_hyphens=False,
+            ) or [left]
+            lines.extend(" " * HELP_INDENT + lpart for lpart in left_lines)
+            lines.extend(" " * col + part for part in wrapped)
     return "\n".join(lines)
 
 
@@ -92,16 +110,32 @@ def usage_text() -> str:
         "cache_dir": cache_dir_path(),
         "trust_file": trust_file_path(),
     }
+    usage_wrap_width = max(HELP_MAX_WIDTH - HELP_INDENT, 20)
+    usage_lines = ["Usage:"]
+    for tmpl in HELP_USAGE:
+        rendered = tmpl.format(**fields)
+        if len(rendered) <= usage_wrap_width:
+            usage_lines.append(" " * HELP_INDENT + rendered)
+        else:
+            wrapped_u = textwrap.wrap(
+                rendered,
+                width=usage_wrap_width,
+                subsequent_indent=" " * HELP_INDENT,
+                break_long_words=True,
+                break_on_hyphens=False,
+            )
+            usage_lines.extend(" " * HELP_INDENT + part for part in wrapped_u)
     sections = [
         (title, [(left.format(**fields), right.format(**fields)) for left, right in rows])
         for title, rows in HELP_SECTIONS
     ]
     shared_col = (
         HELP_INDENT
-        + max(len(left) for _, rows in sections for left, _ in rows)
+        + max(min(len(left), HELP_MAX_LEFT) for _, rows in sections for left, _ in rows)
         + HELP_GAP
     )
-    blocks = [render_help_section(title, rows, col=shared_col) for title, rows in sections]
+    blocks = ["\n".join(usage_lines)]
+    blocks.extend(render_help_section(title, rows, col=shared_col) for title, rows in sections)
     return "\n\n".join(blocks) + "\n"
 
 
