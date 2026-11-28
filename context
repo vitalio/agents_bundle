@@ -21,7 +21,7 @@ import textwrap
 import time
 from pathlib import Path
 
-VERSION = "0.25.1"
+VERSION = "0.26.0"
 REPO_MARKER = "context-bundle-repo: vitalio/context-bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/context-bundle/main/context"
 SPEC_FILE_NAME = ".context.bundle"
@@ -47,18 +47,18 @@ HELP_SECTIONS = (
         "Commands:",
         (
             (
-                "[k=v ...] [FILE ...]",
+                "{prog} [k=v ...] [FILE ...]",
                 "Build context bundle from .context.bundle to stdout (stdin: "
                 "Key: Value preamble, task ID, or prompt; sets piped=1 on prompt; empty piped "
                 "stdin exits 2)",
             ),
             (
-                "bundle <pkg>[:<name>] [k=v]",
+                "--bundle <pkg>[:<name>] [k=v]",
                 "Render a bundle from agents/ without .context.bundle (reads no stdin; "
                 "honors -C, -p, --plain, -v, --refresh)",
             ),
             (
-                "rule <pkg>[:<name...>] [k=v]",
+                "--rule <pkg>[:<name...>] [k=v]",
                 "Render one or more rules from agents/ (<owner>/<repo>[@ref][:<name|path>], "
                 "./path, or URL) to stdout",
             ),
@@ -4211,13 +4211,16 @@ def main(argv: list[str] | None = None) -> int:
     if "-V" in args or "--version" in args:
         sys.stdout.write(f"{prog} {VERSION}\n")
         return 0
-    if args and args[0] == "bundle":
+    if args and args[0] in ("bundle", "rule"):
+        sys.stderr.write(f"{prog}: unknown bare command '{args[0]}'; did you mean '--{args[0]}'?\n")
+        return 2
+    if args and args[0] == "--bundle":
         if len(args) < 2 or args[1].startswith("-"):
             raise SystemExit(
-                f"{prog}: usage: {prog} bundle <pkg>[:<name>] [k=v] [-C DIR] [-p TEXT] [--plain] [-v] [--refresh]"
+                f"{prog}: usage: {prog} --bundle <pkg>[:<name>] [k=v] [-C DIR] [-p TEXT] [--plain] [-v] [--refresh]"
             )
         return cmd_bundle(args[2:], bundle_target=args[1], raw_argv=args)
-    if args and args[0] == "rule":
+    if args and args[0] == "--rule":
         refresh = "--refresh" in args[1:]
         verbose = "-v" in args[1:] or "--verbose" in args[1:]
         rest_tokens = [a for a in args[1:] if a not in ("--refresh", "-v", "--verbose")]

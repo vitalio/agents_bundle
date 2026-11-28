@@ -79,8 +79,8 @@ Render standalone bundles or rules and inspect available package catalogs:
 
 ```bash
 context --list
-context bundle vitalio/agents-rules:default os=macos --plain
-context rule vitalio/agents-rules:release/single-file-build
+context --bundle vitalio/agents-rules:default os=macos --plain
+context --rule vitalio/agents-rules:release/single-file-build
 context --update-cache
 ```
 
@@ -98,8 +98,8 @@ context --tree -x bumps -x resolutions --max-lines 160 --max-tokens 1600
 | Command | Description |
 | :--- | :--- |
 | `context [k=v ...] [-p TEXT] [FILE ...]` | Build context bundle from `.context.bundle` to `stdout` (`stdin`: `Key: Value` preamble, task ID, or prompt; sets `piped=1` on prompt; empty piped `stdin` exits `2`) |
-| `context bundle <pkg>[:<name>] [k=v]` | Render a bundle's rules, files, commands, and prompts from `agents/` in the regular bundle format without `.context.bundle` (reads no `stdin`; honors `-C`, `-p`, `--plain`, `-v`, `--refresh`) |
-| `context rule <pkg>[:<name...>] [k=v]` | Render one or more rules from `agents/` (`<owner>/<repo>[@ref][:<name\|path>]`, `./path`, or URL) to `stdout` |
+| `context --bundle <pkg>[:<name>] [k=v]` | Render a bundle's rules, files, commands, and prompts from `agents/` in the regular bundle format without `.context.bundle` (reads no `stdin`; honors `-C`, `-p`, `--plain`, `-v`, `--refresh`) |
+| `context --rule <pkg>[:<name...>] [k=v]` | Render one or more rules from `agents/` (`<owner>/<repo>[@ref][:<name\|path>]`, `./path`, or URL) to `stdout` |
 | `context --list \| -l [pkg]` | List bundles, rules, and built-in variables (default: local `agents/` and `.context.bundle`) |
 | `context --update-cache` | Refresh cached git packages and URL files in `~/.cache/context-bundle` |
 | `context --init [--force]` | Create a starter `.context.bundle` in the current directory |

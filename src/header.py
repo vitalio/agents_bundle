@@ -47,18 +47,18 @@ HELP_SECTIONS = (
         "Commands:",
         (
             (
-                "[k=v ...] [FILE ...]",
+                "{prog} [k=v ...] [FILE ...]",
                 "Build context bundle from .context.bundle to stdout (stdin: "
                 "Key: Value preamble, task ID, or prompt; sets piped=1 on prompt; empty piped "
                 "stdin exits 2)",
             ),
             (
-                "bundle <pkg>[:<name>] [k=v]",
+                "--bundle <pkg>[:<name>] [k=v]",
                 "Render a bundle from agents/ without .context.bundle (reads no stdin; "
                 "honors -C, -p, --plain, -v, --refresh)",
             ),
             (
-                "rule <pkg>[:<name...>] [k=v]",
+                "--rule <pkg>[:<name...>] [k=v]",
                 "Render one or more rules from agents/ (<owner>/<repo>[@ref][:<name|path>], "
                 "./path, or URL) to stdout",
             ),

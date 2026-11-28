@@ -12,7 +12,7 @@ from tests.helpers import AgentsBundleTestCase, SCRIPT
 class TestRulesEngine(AgentsBundleTestCase):
     def test_builtin_vars_override_in_bundle(self):
         rp = self._run(
-            [str(SCRIPT), "bundle", "vitalio/agents-rules:default", "os=macos", "vcs=cvs", "-v", "--plain"],
+            [str(SCRIPT), "--bundle", "vitalio/agents-rules:default", "os=macos", "vcs=cvs", "-v", "--plain"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -26,7 +26,7 @@ class TestRulesEngine(AgentsBundleTestCase):
 
         # Multi-target rule CLI and exclude rejection
         rm = self._run(
-            [str(SCRIPT), "rule", "vitalio/agents-rules:core/start", "vitalio/agents-rules:core/ssot"],
+            [str(SCRIPT), "--rule", "vitalio/agents-rules:core/start", "vitalio/agents-rules:core/ssot"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -37,7 +37,7 @@ class TestRulesEngine(AgentsBundleTestCase):
         self.assertIn("Single source of truth", rm.stdout)
 
         rex = self._run(
-            [str(SCRIPT), "rule", "vitalio/agents-rules:core/start", "-core/ssot"],
+            [str(SCRIPT), "--rule", "vitalio/agents-rules:core/start", "-core/ssot"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -96,7 +96,7 @@ class TestRulesEngine(AgentsBundleTestCase):
             self.assertIn("Bundles in 'vitalio/agents-rules'", rl_proj.stdout)
 
         rr = self._run(
-            [str(SCRIPT), "rule", "vitalio/agents-rules:release/single-file-build"],
+            [str(SCRIPT), "--rule", "vitalio/agents-rules:release/single-file-build"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -135,7 +135,7 @@ class TestRulesEngine(AgentsBundleTestCase):
     def test_update_cache_refreshes_url_files(self):
         url_rule = self.tmp / "remote_rule.md"
         url_rule.write_text("# Description: R\n- Remote rule body one.\n", encoding="utf-8")
-        cmd = [str(SCRIPT), "rule", url_rule.as_uri()]
+        cmd = [str(SCRIPT), "--rule", url_rule.as_uri()]
         r1 = self._run(cmd, cwd=str(self.tmp), capture_output=True, text=True, check=False)
         self._assert_ok(r1)
         self.assertIn("Remote rule body one.", r1.stdout)
@@ -197,7 +197,7 @@ class TestRulesEngine(AgentsBundleTestCase):
             }
         )
         r = self._run(
-            [str(SCRIPT), "rule", "vitalio/agents-rules:core/ssot"],
+            [str(SCRIPT), "--rule", "vitalio/agents-rules:core/ssot"],
             cwd=str(self.tmp),
             env=env,
             capture_output=True,
@@ -234,7 +234,7 @@ class TestRulesEngine(AgentsBundleTestCase):
 
         # 1. Self-referential bundle fails fast with cycle path
         r_rs_self = self._run(
-            [str(SCRIPT), "bundle", "vitalio/agents-rules:self_loop"],
+            [str(SCRIPT), "--bundle", "vitalio/agents-rules:self_loop"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -454,7 +454,7 @@ class TestRulesEngine(AgentsBundleTestCase):
 
         # 2. owner/repo resolves agents/default.bundle when agents/<repo>.bundle is absent
         r_def = self._run(
-            [str(SCRIPT), "bundle", "vitalio/modern_pkg", "--plain"],
+            [str(SCRIPT), "--bundle", "vitalio/modern_pkg", "--plain"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -471,7 +471,7 @@ class TestRulesEngine(AgentsBundleTestCase):
             encoding="utf-8",
         )
         r_repo = self._run(
-            [str(SCRIPT), "bundle", "vitalio/modern_pkg", "--plain"],
+            [str(SCRIPT), "--bundle", "vitalio/modern_pkg", "--plain"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -483,7 +483,7 @@ class TestRulesEngine(AgentsBundleTestCase):
 
         # 4. owner/repo:domain -> agents/domain/domain.bundle and nested stack/python -> agents/stack/python/python.bundle
         r_dom = self._run(
-            [str(SCRIPT), "bundle", "vitalio/modern_pkg:coding", "--plain"],
+            [str(SCRIPT), "--bundle", "vitalio/modern_pkg:coding", "--plain"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -494,7 +494,7 @@ class TestRulesEngine(AgentsBundleTestCase):
         self.assertIn("Relative rule inside coding domain.", r_dom.stdout)
 
         r_nested = self._run(
-            [str(SCRIPT), "bundle", "vitalio/modern_pkg:stack/python", "--plain"],
+            [str(SCRIPT), "--bundle", "vitalio/modern_pkg:stack/python", "--plain"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -505,7 +505,7 @@ class TestRulesEngine(AgentsBundleTestCase):
 
         # 5. Explicit relative file paths inside a package (owner/repo:path/to/file)
         r_rel_rule = self._run(
-            [str(SCRIPT), "rule", "vitalio/modern_pkg:custom/sub/extra.md"],
+            [str(SCRIPT), "--rule", "vitalio/modern_pkg:custom/sub/extra.md"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -515,7 +515,7 @@ class TestRulesEngine(AgentsBundleTestCase):
         self.assertIn("Explicit package-relative rule body.", r_rel_rule.stdout)
 
         r_rel_bundle = self._run(
-            [str(SCRIPT), "bundle", "vitalio/modern_pkg:custom/sub/extra.bundle", "--plain"],
+            [str(SCRIPT), "--bundle", "vitalio/modern_pkg:custom/sub/extra.bundle", "--plain"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -526,7 +526,7 @@ class TestRulesEngine(AgentsBundleTestCase):
 
         # Path traversal escaping package root fails fast
         r_escape = self._run(
-            [str(SCRIPT), "rule", "vitalio/modern_pkg:../../outside.md"],
+            [str(SCRIPT), "--rule", "vitalio/modern_pkg:../../outside.md"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -587,7 +587,7 @@ class TestRulesEngine(AgentsBundleTestCase):
 
         # Unpinned vitalio/ref_pkg uses CONTEXT_BUNDLE_LOCAL_PKG_DIR
         r_unpinned = self._run(
-            [str(SCRIPT), "rule", "vitalio/ref_pkg:info"],
+            [str(SCRIPT), "--rule", "vitalio/ref_pkg:info"],
             cwd=str(self.tmp),
             env=env,
             capture_output=True,
@@ -599,7 +599,7 @@ class TestRulesEngine(AgentsBundleTestCase):
 
         # Explicit @v1.0 fetches the requested ref into cache instead of returning unpinned local tree
         r_pinned = self._run(
-            [str(SCRIPT), "rule", "vitalio/ref_pkg@v1.0:info"],
+            [str(SCRIPT), "--rule", "vitalio/ref_pkg@v1.0:info"],
             cwd=str(self.tmp),
             env=env,
             capture_output=True,
@@ -613,7 +613,7 @@ class TestRulesEngine(AgentsBundleTestCase):
 
         # Explicit @v1.0 with explicit relative file path inside package
         r_pinned_rel = self._run(
-            [str(SCRIPT), "rule", "vitalio/ref_pkg@v1.0:custom/pinned.md"],
+            [str(SCRIPT), "--rule", "vitalio/ref_pkg@v1.0:custom/pinned.md"],
             cwd=str(self.tmp),
             env=env,
             capture_output=True,
@@ -625,7 +625,7 @@ class TestRulesEngine(AgentsBundleTestCase):
 
         # Explicit @v1.0 on bundle shorthand vitalio/ref_pkg@v1.0
         r_pinned_bundle = self._run(
-            [str(SCRIPT), "bundle", "vitalio/ref_pkg@v1.0", "--plain"],
+            [str(SCRIPT), "--bundle", "vitalio/ref_pkg@v1.0", "--plain"],
             cwd=str(self.tmp),
             env=env,
             capture_output=True,
@@ -637,7 +637,7 @@ class TestRulesEngine(AgentsBundleTestCase):
 
         # Explicit @v1.0 on rule shorthand vitalio/ref_pkg@v1.0 (sole rule fallback)
         r_pinned_rule_shorthand = self._run(
-            [str(SCRIPT), "rule", "vitalio/ref_pkg@v1.0"],
+            [str(SCRIPT), "--rule", "vitalio/ref_pkg@v1.0"],
             cwd=str(self.tmp),
             env=env,
             capture_output=True,
@@ -669,7 +669,7 @@ class TestRulesEngine(AgentsBundleTestCase):
             encoding="utf-8",
         )
         r_ambig = self._run(
-            [str(SCRIPT), "rule", "vitalio/todo-md"],
+            [str(SCRIPT), "--rule", "vitalio/todo-md"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -703,8 +703,8 @@ class TestRulesEngine(AgentsBundleTestCase):
 
         with self.subTest(case="unprefixed root rule or bundle without local agents/ fails fast"):
             for cmd_args, target in (
-                (["rule", "core"], "core"),
-                (["bundle", "core"], "core"),
+                (["--rule", "core"], "core"),
+                (["--bundle", "core"], "core"),
             ):
                 r_unpref = self._run([str(SCRIPT), *cmd_args], cwd=str(repo))
                 self.assertNotEqual(r_unpref.returncode, 0)
@@ -720,11 +720,11 @@ class TestRulesEngine(AgentsBundleTestCase):
                 "# Description: Local bundle\nrule my_rule\n",
                 encoding="utf-8",
             )
-            r_local_rule = self._run([str(SCRIPT), "rule", "my_rule"], cwd=str(repo))
+            r_local_rule = self._run([str(SCRIPT), "--rule", "my_rule"], cwd=str(repo))
             self._assert_ok(r_local_rule)
             self.assertIn("LOCAL_AGENTS_RULE_BODY", r_local_rule.stdout)
 
-            r_local_bundle = self._run([str(SCRIPT), "bundle", "my_bundle", "--plain"], cwd=str(repo))
+            r_local_bundle = self._run([str(SCRIPT), "--bundle", "my_bundle", "--plain"], cwd=str(repo))
             self._assert_ok(r_local_bundle)
             self.assertIn("LOCAL_AGENTS_RULE_BODY", r_local_bundle.stdout)
 
@@ -757,7 +757,7 @@ class TestRulesEngine(AgentsBundleTestCase):
             self.assertIn("NESTED_REPO_SHORTHAND_TODO_BODY", items_ok[0][2])
 
             r_adapter_ok = self._run(
-                [str(SCRIPT), "bundle", "vitalio/agents-rules:adapters/todo-md", "--plain"],
+                [str(SCRIPT), "--bundle", "vitalio/agents-rules:adapters/todo-md", "--plain"],
                 cwd=str(repo),
             )
             self._assert_ok(r_adapter_ok)
@@ -775,7 +775,7 @@ class TestRulesEngine(AgentsBundleTestCase):
                     ("vitalio/agents-rules:adapters/typo_core", [], "core/isolatoin"),
                 ):
                     r_typo_cli = self._run(
-                        [str(SCRIPT), "bundle", b_target, *cli_extra],
+                        [str(SCRIPT), "--bundle", b_target, *cli_extra],
                         cwd=str(repo),
                     )
                     self.assertNotEqual(r_typo_cli.returncode, 0)

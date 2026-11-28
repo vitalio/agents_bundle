@@ -23,7 +23,9 @@ class TestCLI(AgentsBundleTestCase):
         self.assertIn("CONTEXT_BUNDLE_PLAIN", rh.stdout)
         self.assertIn("Bundle Output Protocol:", rh.stdout)
         self.assertIn("-x, --exclude DIR", rh.stdout)
-        self.assertIn("bundle <pkg>[:<name>] [k=v]", rh.stdout)
+        self.assertIn("context [k=v ...] [FILE ...]", rh.stdout)
+        self.assertIn("--bundle <pkg>[:<name>] [k=v]", rh.stdout)
+        self.assertIn("--rule <pkg>[:<name...>] [k=v]", rh.stdout)
         self.assertIn("local agents/ and .context.bundle", " ".join(rh.stdout.split()))
         self.assertNotIn("vitalio/agents-rules", rh.stdout)
         self.assertNotIn("--check-update", rh.stdout)
@@ -118,7 +120,7 @@ class TestCLI(AgentsBundleTestCase):
         target = "vitalio/context-bundle:context"
         with self.subTest(case="plain output without .context.bundle"):
             r = self._run(
-                [str(SCRIPT), "bundle", target, "role=design", "--plain"],
+                [str(SCRIPT), "--bundle", target, "role=design", "--plain"],
                 cwd=str(self.tmp),
                 capture_output=True,
                 text=True,
@@ -131,24 +133,28 @@ class TestCLI(AgentsBundleTestCase):
             self.assertIn("===== $ context --list =====", r.stdout)
         with self.subTest(case="transport headers and fragment markers"):
             r = self._run(
-                [str(SCRIPT), "bundle", "vitalio/todo-md"],
+                [str(SCRIPT), "--bundle", "vitalio/todo-md"],
                 cwd=str(self.tmp),
                 capture_output=True,
                 text=True,
                 check=False,
             )
             self._assert_ok(r)
-            self.assertIn("Bundle-Command: context bundle vitalio/todo-md", r.stdout)
+            self.assertIn("Bundle-Command: context --bundle vitalio/todo-md", r.stdout)
             _nonce, fragments = self._extract_fragments(r.stdout)
             self.assertEqual(fragments[0][0]["kind"], "rule")
             self.assertEqual(fragments[0][0]["chain"], ["vitalio/todo-md"])
         with self.subTest(case="missing target"):
-            r = self._run([str(SCRIPT), "bundle"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+            r = self._run([str(SCRIPT), "--bundle"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
             self.assertNotEqual(r.returncode, 0)
-            self.assertIn("usage: context bundle", r.stderr)
+            self.assertIn("usage: context --bundle", r.stderr)
+        with self.subTest(case="flag as target rejected with usage"):
+            r = self._run([str(SCRIPT), "--bundle", "--plain"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("usage: context --bundle", r.stderr)
         with self.subTest(case="unknown bundle"):
             r = self._run(
-                [str(SCRIPT), "bundle", "vitalio/context-bundle:nope"],
+                [str(SCRIPT), "--bundle", "vitalio/context-bundle:nope"],
                 cwd=str(self.tmp),
                 capture_output=True,
                 text=True,
@@ -156,6 +162,21 @@ class TestCLI(AgentsBundleTestCase):
             )
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("unknown bundle 'nope'", r.stderr)
+        with self.subTest(case="bare bundle and rule commands fail with exit code 2 and did-you-mean hint"):
+            for bare in ("bundle", "rule"):
+                r_bare = self._run(
+                    [str(SCRIPT), bare, target],
+                    cwd=str(self.tmp),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(r_bare.returncode, 2, msg=r_bare.stderr)
+                self.assertEqual(r_bare.stdout, "")
+                self.assertIn(
+                    f"context: unknown bare command '{bare}'; did you mean '--{bare}'?",
+                    r_bare.stderr,
+                )
 
     def test_install_sh_installs_and_uninstalls(self):
         bin_dir = self.tmp / "bin"

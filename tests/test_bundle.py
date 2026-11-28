@@ -67,7 +67,7 @@ class TestBundle(AgentsBundleTestCase):
         url_bundle = self.tmp / "custom_url.bundle"
         url_bundle.write_text(f"# Description: Direct URL bundle\nrule {url_rule.as_uri()} val=99\n", encoding="utf-8")
         r_url = self._run(
-            [str(SCRIPT), "bundle", url_bundle.as_uri(), "--plain"],
+            [str(SCRIPT), "--bundle", url_bundle.as_uri(), "--plain"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -231,7 +231,7 @@ class TestBundle(AgentsBundleTestCase):
 
         # Subcommand rule also respects CONTEXT_BUNDLE_VARS and CLI override
         r_sub = self._run(
-            [str(SCRIPT), "rule", "vitalio/agents-rules:core/lang"],
+            [str(SCRIPT), "--rule", "vitalio/agents-rules:core/lang"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -242,7 +242,7 @@ class TestBundle(AgentsBundleTestCase):
         self.assertIn("in Spanish", r_sub.stdout)
 
         r_sub_cli = self._run(
-            [str(SCRIPT), "rule", "vitalio/agents-rules:core/lang", "lang=Japanese"],
+            [str(SCRIPT), "--rule", "vitalio/agents-rules:core/lang", "lang=Japanese"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,
@@ -1013,7 +1013,7 @@ class TestBundle(AgentsBundleTestCase):
 
         # Verify standalone rule subcommand does not emit bundle fragment markers
         rs = self._run(
-            [str(SCRIPT), "rule", "vitalio/agents-rules:core/start"],
+            [str(SCRIPT), "--rule", "vitalio/agents-rules:core/start"],
             cwd=str(self.tmp),
             capture_output=True,
             text=True,

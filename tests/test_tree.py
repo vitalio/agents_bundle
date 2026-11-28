@@ -57,7 +57,7 @@ class TestTree(AgentsBundleTestCase):
         )
         env = {**os.environ, "CONTEXT_BUNDLE_LOCAL_PKG_DIR": str(self.tmp / "pkg_repo")}
         r_role = self._run(
-            [str(SCRIPT), "bundle", "vitalio/agents-rules:default", "role=audit", "--plain"],
+            [str(SCRIPT), "--bundle", "vitalio/agents-rules:default", "role=audit", "--plain"],
             capture_output=True,
             text=True,
             env=env,

@@ -179,13 +179,16 @@ def main(argv: list[str] | None = None) -> int:
     if "-V" in args or "--version" in args:
         sys.stdout.write(f"{prog} {VERSION}\n")
         return 0
-    if args and args[0] == "bundle":
+    if args and args[0] in ("bundle", "rule"):
+        sys.stderr.write(f"{prog}: unknown bare command '{args[0]}'; did you mean '--{args[0]}'?\n")
+        return 2
+    if args and args[0] == "--bundle":
         if len(args) < 2 or args[1].startswith("-"):
             raise SystemExit(
-                f"{prog}: usage: {prog} bundle <pkg>[:<name>] [k=v] [-C DIR] [-p TEXT] [--plain] [-v] [--refresh]"
+                f"{prog}: usage: {prog} --bundle <pkg>[:<name>] [k=v] [-C DIR] [-p TEXT] [--plain] [-v] [--refresh]"
             )
         return cmd_bundle(args[2:], bundle_target=args[1], raw_argv=args)
-    if args and args[0] == "rule":
+    if args and args[0] == "--rule":
         refresh = "--refresh" in args[1:]
         verbose = "-v" in args[1:] or "--verbose" in args[1:]
         rest_tokens = [a for a in args[1:] if a not in ("--refresh", "-v", "--verbose")]

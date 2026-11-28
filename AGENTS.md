@@ -122,8 +122,8 @@ rules are loaded via `.context.bundle`.
   `{name:default}` substitution apply; `if` conditions belong to `.bundle`
   specs, never to rule bodies.
 - Chain provenance: `build_bundle()` passes `chain=[spec_file.name]` to
-  `parse_spec()` only when `.context.bundle` is read; `bundle`
-  subcommand, piped, CLI, and embedded fragments stay outside it. Keep the
+  `parse_spec()` only when `.context.bundle` is read; `--bundle`,
+  piped, CLI, and embedded fragments stay outside it. Keep the
   `.bundle` directive reference in `README.md`.
 
 ## Package Independence, Compiled `AGENTS.md` & Preload Invariants
