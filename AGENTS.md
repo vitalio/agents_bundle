@@ -125,3 +125,36 @@ rules are loaded via `.context.bundle`.
   `parse_spec()` only when `.context.bundle` is read; `bundle`
   subcommand, piped, CLI, and embedded fragments stay outside it. Keep the
   `.bundle` directive reference in `README.md`.
+
+## Package Independence, Compiled `AGENTS.md` & Preload Invariants
+
+- No hardcoded external rules library: Keep `context` independent of any
+  specific external rules repository (`vitalio/agents-rules` must not be
+  hardcoded as a fallback package in `src/`). Root-level `bundle` and `rule`
+  directives require an explicit `<owner>/<repo>[@<ref>][:<item>]` package
+  specifier, a URL, or a local path (`./...`, `../...`, or local `agents/`).
+  Keep `agents/` as the sole directory scanned for package exports.
+- Self-contained compiled `AGENTS.md` (`context --compile` and `-f/--file`):
+  `context --compile [-f SPEC] [-C DIR]` compiles `.context.bundle` into a
+  delimited `<!-- context:compiled ... -->...<!-- /context:compiled -->` block
+  inside `AGENTS.md` while preserving all user-authored project instructions
+  outside that block across re-compilations. The compiled block embeds
+  resolved Layer 1 and conditional Layer 2 (`if role=...`) rules and bundle
+  directives so `context` can assemble dynamic role-filtered bundles directly
+  from `AGENTS.md` offline without reading `.context.bundle` or external
+  packages. By default, `context` auto-selects the compiled block in
+  `AGENTS.md` when present and falls back to `.context.bundle`; `-f, --file
+  FILE` explicitly selects `.context.bundle`, `AGENTS.md`, or a custom bundle
+  file. When `file AGENTS.md` is expanded in `read_span()`, strip the
+  `<!-- context:compiled ... -->...<!-- /context:compiled -->` block so only
+  the user-authored section of `AGENTS.md` is emitted under
+  `===== $ cat AGENTS.md =====` (omitting the file span when the remaining
+  user section is empty).
+- Ephemeral preload bundles via existing `.bundle` protocol: Do not hardcode
+  `.context/` subdirectories, `lock.json`, `vendor/`, or task-tracker
+  `tasks/<ID>.bundle` paths in `context`. Projects that use pre-flight scout
+  slices wire them through standard conditional bundle directives (e.g.
+  `if preload` -> `bundle ./<path>/{preload}.bundle` containing only `file`
+  and `prompt` directives) or upstream `context-bundle-protocol` v1 pipes,
+  preserving Layer 1 and Layer 2 `[system]` prompt-cache stability and
+  `trusted.json` digests.
