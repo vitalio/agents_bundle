@@ -9,7 +9,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from src.header import DEFAULT_RULES_PKG, DEFAULT_UPDATE_URL, LEGACY_REPO_MARKER, REPO_MARKER, VERSION
+from src.header import DEFAULT_RULES_PKG, DEFAULT_UPDATE_URL, REPO_MARKER, VERSION
 from src.core import cache_dir_path, prog_name, usage_text
 from src.tree import cmd_tree
 from src.rules_engine import (
@@ -39,18 +39,7 @@ def _is_our_binary(path: Path) -> bool:
         head = path.read_text(encoding="utf-8", errors="ignore")[:2048]
     except OSError:
         return False
-    return REPO_MARKER in head or LEGACY_REPO_MARKER in head
-
-
-def _remove_legacy_binary(install_dir: Path, keep_path: Path | None = None) -> None:
-    legacy = install_dir / "agents_bundle"
-    if keep_path is not None and legacy.resolve() == keep_path.resolve():
-        return
-    if _is_our_binary(legacy):
-        try:
-            legacy.unlink()
-        except OSError:
-            pass
+    return REPO_MARKER in head
 
 
 def fetch_remote_script(url: str | None = None) -> str:
@@ -65,7 +54,7 @@ def fetch_remote_script(url: str | None = None) -> str:
     )
     with urllib.request.urlopen(req, timeout=15) as resp:
         data = resp.read().decode("utf-8")
-    if REPO_MARKER not in data and LEGACY_REPO_MARKER not in data:
+    if REPO_MARKER not in data:
         raise ValueError("downloaded file does not contain expected repository marker")
     ast.parse(data)
     return data
@@ -96,15 +85,14 @@ def cmd_update(force: bool = False, url: str | None = None, check: bool = False)
     self_file = Path(sys.argv[0]).resolve() if sys.argv and sys.argv[0] else Path(__file__).resolve()
     if not self_file.is_file():
         self_file = Path(__file__).resolve()
-    dest = (self_file.parent / "context") if self_file.name == "agents_bundle" else self_file
+    dest = self_file
     try:
         remote_src = fetch_remote_script(url)
     except Exception as exc:
         sys.stderr.write(f"{prog}: update failed: {exc}\n")
         return 1
     remote_ver = parse_version_from_source(remote_src) or "unknown"
-    if not force and dest == self_file and version_tuple(remote_ver) <= version_tuple(VERSION):
-        _remove_legacy_binary(dest.parent, keep_path=dest)
+    if not force and version_tuple(remote_ver) <= version_tuple(VERSION):
         sys.stdout.write(f"{prog} {VERSION} is already up to date.\n")
         return 0
     try:
@@ -121,7 +109,6 @@ def cmd_update(force: bool = False, url: str | None = None, check: bool = False)
     except Exception as exc:
         sys.stderr.write(f"{prog}: could not write updated binary to {dest}: {exc}\n")
         return 1
-    _remove_legacy_binary(dest.parent, keep_path=dest)
     sys.stdout.write(f"{prog}: updated {VERSION} -> {remote_ver} ({dest})\n")
     return 0
 
@@ -142,7 +129,7 @@ def cmd_uninstall() -> int:
 
     cmd_name = os.environ.get("CONTEXT_BUNDLE_NAME") or "context"
     names = []
-    for n in (cmd_name, self_path.name if not is_repo_checkout else "", "context", "agents_bundle"):
+    for n in (cmd_name, self_path.name if not is_repo_checkout else "", "context"):
         if n and n not in names:
             names.append(n)
 
@@ -174,10 +161,9 @@ def cmd_uninstall() -> int:
 
     cdir = cache_dir_path()
     removed_caches: list[str] = []
-    for cache_target in (cdir, cdir.parent / "agents_bundle"):
-        if cache_target.exists():
-            shutil.rmtree(cache_target, ignore_errors=True)
-            removed_caches.append(str(cache_target))
+    if cdir.exists():
+        shutil.rmtree(cdir, ignore_errors=True)
+        removed_caches.append(str(cdir))
 
     details = ", ".join([*removed_bins, *removed_caches]) or "nothing to remove"
     sys.stdout.write(f"{prog}: uninstalled ({details})\n")

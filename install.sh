@@ -3,14 +3,12 @@
 #
 # Installs, updates, or uninstalls context (https://github.com/vitalio/context-bundle).
 # Checks for command name conflicts in PATH, offers an alternative name if
-# 'context' is already taken by another program, installs into ~/.local/bin
-# (or --dir), migrates ~/.cache/agents_bundle -> ~/.cache/context-bundle, and
-# removes any legacy 'agents_bundle' binary from the install directory.
+# 'context' is already taken by another program, and installs into ~/.local/bin
+# (or --dir).
 # -h / --help prints this usage and exits 0 doing nothing.
 set -eu
 
 REPO_MARKER="context-bundle-repo: vitalio/context-bundle"
-LEGACY_REPO_MARKER="agents_bundle-repo: vitalio/agents_bundle"
 RAW_URL="${CONTEXT_BUNDLE_UPDATE_URL:-https://raw.githubusercontent.com/vitalio/context-bundle/main/context}"
 CMD_NAME="${CONTEXT_BUNDLE_NAME:-}"
 INSTALL_DIR="${CONTEXT_BUNDLE_INSTALL_DIR:-}"
@@ -18,7 +16,7 @@ ASSUME_YES=0
 UNINSTALL=0
 
 usage() {
-    sed -n '2,9s/^# \?//p' "$0"
+    sed -n '2,8s/^# \?//p' "$0"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -60,14 +58,11 @@ while [ "$#" -gt 0 ]; do
 done
 
 is_our_binary() {
-    [ -f "$1" ] && {
-        grep -q "$REPO_MARKER" "$1" 2>/dev/null || grep -q "$LEGACY_REPO_MARKER" "$1" 2>/dev/null
-    }
+    [ -f "$1" ] && grep -q "$REPO_MARKER" "$1" 2>/dev/null
 }
 
 CACHE_BASE="${XDG_CACHE_HOME:-$HOME/.cache}"
 CACHE_DIR="${CONTEXT_BUNDLE_CACHE_DIR:-$CACHE_BASE/context-bundle}"
-LEGACY_CACHE_DIR="$CACHE_BASE/agents_bundle"
 
 if [ "$UNINSTALL" -eq 1 ]; then
     if [ -z "$CMD_NAME" ]; then
@@ -75,16 +70,13 @@ if [ "$UNINSTALL" -eq 1 ]; then
     fi
     if [ -z "$INSTALL_DIR" ]; then
         EXISTING_OUR="$(command -v "$CMD_NAME" 2>/dev/null || true)"
-        EXISTING_LEGACY="$(command -v agents_bundle 2>/dev/null || true)"
         if [ -n "$EXISTING_OUR" ] && is_our_binary "$EXISTING_OUR"; then
             INSTALL_DIR="$(dirname "$EXISTING_OUR")"
-        elif [ -n "$EXISTING_LEGACY" ] && is_our_binary "$EXISTING_LEGACY"; then
-            INSTALL_DIR="$(dirname "$EXISTING_LEGACY")"
         else
             INSTALL_DIR="$HOME/.local/bin"
         fi
     fi
-    for bin_name in "$CMD_NAME" context agents_bundle; do
+    for bin_name in "$CMD_NAME" context; do
         CANDIDATE="$INSTALL_DIR/$bin_name"
         if [ -f "$CANDIDATE" ]; then
             if is_our_binary "$CANDIDATE"; then
@@ -95,7 +87,7 @@ if [ "$UNINSTALL" -eq 1 ]; then
             fi
         fi
     done
-    rm -rf "$CACHE_DIR" "$LEGACY_CACHE_DIR"
+    rm -rf "$CACHE_DIR"
     echo "Uninstalled $CMD_NAME from $INSTALL_DIR and removed cache $CACHE_DIR"
     exit 0
 fi
@@ -132,11 +124,8 @@ fi
 
 if [ -z "$INSTALL_DIR" ]; then
     EXISTING_OUR="$(command -v "$CMD_NAME" 2>/dev/null || true)"
-    EXISTING_LEGACY="$(command -v agents_bundle 2>/dev/null || true)"
     if [ -n "$EXISTING_OUR" ] && is_our_binary "$EXISTING_OUR"; then
         INSTALL_DIR="$(dirname "$EXISTING_OUR")"
-    elif [ -n "$EXISTING_LEGACY" ] && is_our_binary "$EXISTING_LEGACY"; then
-        INSTALL_DIR="$(dirname "$EXISTING_LEGACY")"
     else
         INSTALL_DIR="$HOME/.local/bin"
     fi
@@ -171,25 +160,6 @@ fi
 
 chmod 0755 "$TMP_FILE"
 mv "$TMP_FILE" "$TARGET"
-
-# Remove legacy agents_bundle binary if present
-if [ "$CMD_NAME" != "agents_bundle" ] && [ -f "$INSTALL_DIR/agents_bundle" ] && is_our_binary "$INSTALL_DIR/agents_bundle"; then
-    rm -f "$INSTALL_DIR/agents_bundle"
-fi
-EXISTING_LEGACY_PATH="$(command -v agents_bundle 2>/dev/null || true)"
-if [ -n "$EXISTING_LEGACY_PATH" ] && [ "$EXISTING_LEGACY_PATH" != "$TARGET" ] && is_our_binary "$EXISTING_LEGACY_PATH"; then
-    rm -f "$EXISTING_LEGACY_PATH"
-fi
-
-# Migrate ~/.cache/agents_bundle -> ~/.cache/context-bundle and prune obsolete clones
-if [ ! -e "$CACHE_BASE/context-bundle" ] && [ -d "$LEGACY_CACHE_DIR" ]; then
-    mv "$LEGACY_CACHE_DIR" "$CACHE_BASE/context-bundle" 2>/dev/null || true
-fi
-if [ -d "$CACHE_DIR/packages/vitalio" ]; then
-    for obs_pkg in agents_bundle run_block todo_md; do
-        rm -rf "$CACHE_DIR/packages/vitalio/$obs_pkg"
-    done
-fi
 
 VER="$("$TARGET" --version 2>/dev/null || echo "$CMD_NAME")"
 echo "============================================================"

@@ -109,7 +109,7 @@ class TestCLI(AgentsBundleTestCase):
         r = self._run([str(SCRIPT)], cwd=str(self.tmp), capture_output=True, text=True, check=False)
         self.assertEqual(r.returncode, 2, msg=f"stdout:\n{r.stdout}\nstderr:\n{r.stderr}")
         self.assertEqual(r.stdout, "")
-        self.assertIn(".context.bundle or .agents_bundle not found", r.stderr)
+        self.assertIn(".context.bundle not found", r.stderr)
         self.assertIn("context --init", r.stderr)
 
     def test_bundle_subcommand_renders_bundle(self):
@@ -129,17 +129,17 @@ class TestCLI(AgentsBundleTestCase):
             self.assertIn("===== $ context --list =====", r.stdout)
         with self.subTest(case="transport headers and fragment markers"):
             r = self._run(
-                [str(SCRIPT), "bundle", "vitalio/todo_md"],
+                [str(SCRIPT), "bundle", "vitalio/todo-md"],
                 cwd=str(self.tmp),
                 capture_output=True,
                 text=True,
                 check=False,
             )
             self._assert_ok(r)
-            self.assertIn("Bundle-Command: context bundle vitalio/todo_md", r.stdout)
+            self.assertIn("Bundle-Command: context bundle vitalio/todo-md", r.stdout)
             _nonce, fragments = self._extract_fragments(r.stdout)
             self.assertEqual(fragments[0][0]["kind"], "rule")
-            self.assertEqual(fragments[0][0]["chain"], ["vitalio/todo_md"])
+            self.assertEqual(fragments[0][0]["chain"], ["vitalio/todo-md"])
         with self.subTest(case="missing target"):
             r = self._run([str(SCRIPT), "bundle"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
             self.assertNotEqual(r.returncode, 0)
@@ -155,19 +155,12 @@ class TestCLI(AgentsBundleTestCase):
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("unknown bundle 'nope'", r.stderr)
 
-    def test_install_sh_replaces_legacy_binary_migrates_cache_and_uninstalls(self):
+    def test_install_sh_installs_and_uninstalls(self):
         bin_dir = self.tmp / "bin"
         bin_dir.mkdir()
         xdg_cache = self.tmp / "xdg_cache"
-        legacy_cache = xdg_cache / "agents_bundle"
-        (legacy_cache / "packages" / "vitalio" / "agents-rules").mkdir(parents=True)
-        (legacy_cache / "packages" / "vitalio" / "agents_bundle").mkdir(parents=True)
-        (legacy_cache / "packages" / "vitalio" / "todo_md").mkdir(parents=True)
-        (legacy_cache / "packages" / "vitalio" / "run_block").mkdir(parents=True)
-
-        legacy_bin = bin_dir / "agents_bundle"
-        legacy_bin.write_text("#!/usr/bin/env python3\n# agents_bundle-repo: vitalio/agents_bundle\n", encoding="utf-8")
-        legacy_bin.chmod(0o755)
+        new_cache = xdg_cache / "context-bundle"
+        (new_cache / "packages" / "vitalio" / "agents-rules").mkdir(parents=True)
 
         env = {k: v for k, v in os.environ.items() if k != "CONTEXT_BUNDLE_CACHE_DIR"}
         env["XDG_CACHE_HOME"] = str(xdg_cache)
@@ -181,12 +174,8 @@ class TestCLI(AgentsBundleTestCase):
         self._assert_ok(ri)
         installed_context = bin_dir / "context"
         self.assertTrue(installed_context.is_file())
-        self.assertFalse(legacy_bin.exists())
-        new_cache = xdg_cache / "context-bundle"
         self.assertTrue(new_cache.is_dir())
-        self.assertFalse(legacy_cache.exists())
         self.assertTrue((new_cache / "packages" / "vitalio" / "agents-rules").is_dir())
-        self.assertFalse((new_cache / "packages" / "vitalio" / "agents_bundle").exists())
 
         with self.subTest(case="cli --uninstall removes binary and cache"):
             ru = self._run_subprocess(
@@ -233,7 +222,7 @@ class TestCLI(AgentsBundleTestCase):
         with self.subTest(case="missing spec fails with exit code 2"):
             r_miss = self._run([str(SCRIPT), "--trust", "-C", str(repo)])
             self.assertEqual(r_miss.returncode, 2, msg=r_miss.stderr)
-            self.assertIn(".context.bundle or .agents_bundle not found", r_miss.stderr)
+            self.assertIn(".context.bundle not found", r_miss.stderr)
 
         with self.subTest(case="empty trust list before trusting"):
             r_empty = self._run([str(SCRIPT), "--trust", "--list"])

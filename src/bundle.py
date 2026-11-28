@@ -17,8 +17,6 @@ from src.header import (
     DEFAULT_RULES_PKG,
     EMBEDDED_RULE_ID,
     EMBEDDED_RULE_NAME,
-    LEGACY_RULE_ID,
-    LEGACY_SPEC_FILE_NAME,
     PRODUCER_NAME,
     PROMPT_HEADER,
     PROTOCOL_VERSION,
@@ -128,11 +126,8 @@ def env_plain() -> bool:
 
 def find_spec_file(start_dir: Path | None = None) -> Path | None:
     cur = (start_dir if start_dir is not None else Path.cwd()).resolve()
-    for name in (SPEC_FILE_NAME, LEGACY_SPEC_FILE_NAME):
-        candidate = cur / name
-        if candidate.is_file():
-            return candidate
-    return None
+    candidate = cur / SPEC_FILE_NAME
+    return candidate if candidate.is_file() else None
 
 
 def _has_unsafe_shell_syntax(cmd_str: str) -> bool:
@@ -547,11 +542,11 @@ def cmd_trust(argv: list[str] | None = None) -> int:
         candidates = (
             [str(spec_file.resolve())]
             if spec_file is not None
-            else [str((wdir / SPEC_FILE_NAME).resolve()), str((wdir / LEGACY_SPEC_FILE_NAME).resolve())]
+            else [str((wdir / SPEC_FILE_NAME).resolve())]
         )
         removed = [c for c in candidates if c in store]
         if not removed and spec_file is None:
-            sys.stderr.write(f"{prog}: {SPEC_FILE_NAME} or {LEGACY_SPEC_FILE_NAME} not found in {wdir}\n")
+            sys.stderr.write(f"{prog}: {SPEC_FILE_NAME} not found in {wdir}\n")
             return 2
         for c in removed:
             store.pop(c, None)
@@ -560,7 +555,7 @@ def cmd_trust(argv: list[str] | None = None) -> int:
         sys.stdout.write(f"{prog}: revoked trust for {target_label}\n")
         return 0
     if spec_file is None:
-        sys.stderr.write(f"{prog}: {SPEC_FILE_NAME} or {LEGACY_SPEC_FILE_NAME} not found in {wdir}\n")
+        sys.stderr.write(f"{prog}: {SPEC_FILE_NAME} not found in {wdir}\n")
         return 2
     resolved, digest = trust_spec_file(spec_file)
     sys.stdout.write(f"{prog}: trusted {resolved} (sha256:{digest})\n")
@@ -729,7 +724,7 @@ def _parse_spec_pass(
     cur_bdir = bundle_dir if bundle_dir is not None else work_dir
     root_label = (
         cur_chain[0]
-        if (cur_chain and cur_chain[0] in (SPEC_FILE_NAME, LEGACY_SPEC_FILE_NAME))
+        if (cur_chain and cur_chain[0] == SPEC_FILE_NAME)
         else SPEC_FILE_NAME
     )
     in_child_bundle = bool(cur_chain and cur_chain != [root_label])
@@ -1101,7 +1096,7 @@ def build_bundle(
     spec_file = find_spec_file(wdir) if spec_text is None else None
     if spec_text is None and spec_file is None:
         sys.stderr.write(
-            f"{prog}: {SPEC_FILE_NAME} or {LEGACY_SPEC_FILE_NAME} not found in {wdir} "
+            f"{prog}: {SPEC_FILE_NAME} not found in {wdir} "
             f"(run '{prog} --init' to create a starter template)\n"
         )
         raise SystemExit(2)
@@ -1202,7 +1197,7 @@ def build_bundle(
             d_kind = parts[0]
             target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
             base_trace = f"if {cond_expr} {d_kind} {target}" if cond_expr else f"{d_kind} {target}"
-            trace_chain = [b for b in entry_chain if b not in (SPEC_FILE_NAME, LEGACY_SPEC_FILE_NAME)]
+            trace_chain = [b for b in entry_chain if b != SPEC_FILE_NAME]
             trace_prefix = [*(f"bundle {b}" for b in trace_chain), base_trace]
             merged_vmap = {**vmap, **session_vars}
             spec_rules.extend(
@@ -1256,7 +1251,7 @@ def build_bundle(
 
     spec_rules = [
         r for r in spec_rules
-        if r[0] not in (LEGACY_RULE_ID, EMBEDDED_RULE_ID, "agents_bundle", EMBEDDED_RULE_NAME)
+        if r[0] not in (EMBEDDED_RULE_ID, EMBEDDED_RULE_NAME)
     ]
     layer1_rules: list[tuple[str, str, str, list[str]]] = []
     layer2_rules: list[tuple[str, str, str, list[str]]] = []
@@ -1279,7 +1274,7 @@ def build_bundle(
 
     for up_item in upstream_rule_entries:
         up_uid = up_item[0]
-        if up_uid in (LEGACY_RULE_ID, EMBEDDED_RULE_ID, "agents_bundle", EMBEDDED_RULE_NAME):
+        if up_uid in (EMBEDDED_RULE_ID, EMBEDDED_RULE_NAME):
             continue
         if up_uid in claimed_upstream_rules or up_uid in seen_spec_uids:
             continue

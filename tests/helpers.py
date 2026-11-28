@@ -65,8 +65,8 @@ def _seed_offline_rules_pkg(pkg_dir: Path) -> None:
         "agents/release/single-file-build.md": "# Description: Single-file build\n- Single-file build from modular `src/`: Edit source modules under `src/`.\n",
         "agents/context.md": "# Description: Bundler rule\n- Context bundler & rules engine (`context`): Use `--tree` and `--list`.\n",
         "agents/context.bundle": "# Description: On-demand context instructions\nrule vitalio/context-bundle:context\nif role!=\n    export role\nif role=design\n    cmd context --list\n",
-        "agents/todo_md.md": "# Description: Task tracker rule\n- Task management (`todo_md`): Manage `TODO.md`.\n",
-        "agents/todo_md.bundle": "# Description: On-demand todo_md bundle\nrule vitalio/todo_md:todo_md\n",
+        "agents/todo-md.md": "# Description: Task tracker rule\n- Task management (`todo`): Manage `TODO.md`.\n",
+        "agents/todo-md.bundle": "# Description: On-demand todo-md bundle\nrule vitalio/todo-md:todo-md\n",
     }
     for rel, content in files.items():
         p = pkg_dir / rel
@@ -80,8 +80,8 @@ class AgentsBundleTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         super().setUpClass()
-        loader = importlib.machinery.SourceFileLoader("agents_bundle_mod", str(SCRIPT))
-        spec = importlib.util.spec_from_loader("agents_bundle_mod", loader)
+        loader = importlib.machinery.SourceFileLoader("context_bundle_mod", str(SCRIPT))
+        spec = importlib.util.spec_from_loader("context_bundle_mod", loader)
         assert spec is not None
         mod = importlib.util.module_from_spec(spec)
         loader.exec_module(mod)

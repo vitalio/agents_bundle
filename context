@@ -21,18 +21,15 @@ import textwrap
 import time
 from pathlib import Path
 
-VERSION = "0.24.0"
+VERSION = "0.24.1"
 REPO_MARKER = "context-bundle-repo: vitalio/context-bundle"
-LEGACY_REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/context-bundle/main/context"
 SPEC_FILE_NAME = ".context.bundle"
-LEGACY_SPEC_FILE_NAME = ".agents_bundle"
 PRODUCER_NAME = "vitalio/context-bundle"
 DEFAULT_RULES_PKG = "vitalio/agents-rules"
 EMBEDDED_RULE_CONTEXT = '# Description: Context bundler file tree, bundle assembly, and catalog inspection\n- Context bundler & rules engine (`{cmd:context}`):\n  - Repository file tree: `{cmd:context} --tree [DIR] [-x DIR] [--max-lines N] [--max-tokens N]`\n    (use instead of `find`/`ls` for directory structure; pins `AGENTS.md`).\n  - Bundle assembly:\n    `[<upstream_cmd> | ]{cmd:context} [key=val ...] [-p "<prompt>"] [file ...]`\n    (extra `file` arguments accept globs and `path:start-end` slices).\n  - Bundle authoring & catalog inspection: run `{cmd:context} --list [pkg]` to\n    inspect available bundles, rules, and `let` parameters under `agents/`, and\n    `{cmd:context} -h` for the `.bundle` directive reference.\n'
 EMBEDDED_RULE_NAME = "context"
 EMBEDDED_RULE_ID = "vitalio/context-bundle:context"
-LEGACY_RULE_ID = "vitalio/agents_bundle:agents_bundle"
 PROTOCOL_VERSION = "1"
 RULES_HEADER = "===== Rules ====="
 PROMPT_HEADER = "===== Prompt ====="
@@ -52,7 +49,7 @@ HELP_SECTIONS = (
         (
             (
                 "[k=v ...] [FILE ...]",
-                "Build context bundle from .context.bundle (or .agents_bundle) to stdout (stdin: "
+                "Build context bundle from .context.bundle to stdout (stdin: "
                 "Key: Value preamble, task ID, or prompt; sets piped=1 on prompt; empty piped "
                 "stdin exits 2)",
             ),
@@ -162,9 +159,6 @@ HELP_SECTIONS = (
 )
 
 
-_OBSOLETE_VITALIO_PKGS = ("agents_bundle", "run_block", "todo_md")
-
-
 def prog_name() -> str:
     raw = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "context"
     for suf in (".py",):
@@ -174,39 +168,13 @@ def prog_name() -> str:
     return raw or "context"
 
 
-def _migrate_and_prune_cache(base: Path) -> Path:
-    target = base / "context-bundle"
-    legacy = base / "agents_bundle"
-    if not target.exists() and legacy.is_dir():
-        try:
-            os.replace(legacy, target)
-        except OSError:
-            pass
-    if target.is_dir():
-        vitalio_dir = target / "packages" / "vitalio"
-        if vitalio_dir.is_dir():
-            for name in _OBSOLETE_VITALIO_PKGS:
-                obs = vitalio_dir / name
-                if obs.exists():
-                    shutil.rmtree(obs, ignore_errors=True)
-    return target
-
-
 def cache_dir_path() -> Path:
     env_c = os.environ.get("CONTEXT_BUNDLE_CACHE_DIR")
     if env_c:
-        target = Path(env_c).expanduser()
-        if target.is_dir():
-            vitalio_dir = target / "packages" / "vitalio"
-            if vitalio_dir.is_dir():
-                for name in _OBSOLETE_VITALIO_PKGS:
-                    obs = vitalio_dir / name
-                    if obs.exists():
-                        shutil.rmtree(obs, ignore_errors=True)
-        return target
+        return Path(env_c).expanduser()
     xdg = os.environ.get("XDG_CACHE_HOME")
     base = Path(xdg).expanduser() if xdg else (Path.home() / ".cache")
-    return _migrate_and_prune_cache(base)
+    return base / "context-bundle"
 
 
 def state_dir_path() -> Path:
@@ -2535,11 +2503,8 @@ def env_plain() -> bool:
 
 def find_spec_file(start_dir: Path | None = None) -> Path | None:
     cur = (start_dir if start_dir is not None else Path.cwd()).resolve()
-    for name in (SPEC_FILE_NAME, LEGACY_SPEC_FILE_NAME):
-        candidate = cur / name
-        if candidate.is_file():
-            return candidate
-    return None
+    candidate = cur / SPEC_FILE_NAME
+    return candidate if candidate.is_file() else None
 
 
 def _has_unsafe_shell_syntax(cmd_str: str) -> bool:
@@ -2954,11 +2919,11 @@ def cmd_trust(argv: list[str] | None = None) -> int:
         candidates = (
             [str(spec_file.resolve())]
             if spec_file is not None
-            else [str((wdir / SPEC_FILE_NAME).resolve()), str((wdir / LEGACY_SPEC_FILE_NAME).resolve())]
+            else [str((wdir / SPEC_FILE_NAME).resolve())]
         )
         removed = [c for c in candidates if c in store]
         if not removed and spec_file is None:
-            sys.stderr.write(f"{prog}: {SPEC_FILE_NAME} or {LEGACY_SPEC_FILE_NAME} not found in {wdir}\n")
+            sys.stderr.write(f"{prog}: {SPEC_FILE_NAME} not found in {wdir}\n")
             return 2
         for c in removed:
             store.pop(c, None)
@@ -2967,7 +2932,7 @@ def cmd_trust(argv: list[str] | None = None) -> int:
         sys.stdout.write(f"{prog}: revoked trust for {target_label}\n")
         return 0
     if spec_file is None:
-        sys.stderr.write(f"{prog}: {SPEC_FILE_NAME} or {LEGACY_SPEC_FILE_NAME} not found in {wdir}\n")
+        sys.stderr.write(f"{prog}: {SPEC_FILE_NAME} not found in {wdir}\n")
         return 2
     resolved, digest = trust_spec_file(spec_file)
     sys.stdout.write(f"{prog}: trusted {resolved} (sha256:{digest})\n")
@@ -3136,7 +3101,7 @@ def _parse_spec_pass(
     cur_bdir = bundle_dir if bundle_dir is not None else work_dir
     root_label = (
         cur_chain[0]
-        if (cur_chain and cur_chain[0] in (SPEC_FILE_NAME, LEGACY_SPEC_FILE_NAME))
+        if (cur_chain and cur_chain[0] == SPEC_FILE_NAME)
         else SPEC_FILE_NAME
     )
     in_child_bundle = bool(cur_chain and cur_chain != [root_label])
@@ -3508,7 +3473,7 @@ def build_bundle(
     spec_file = find_spec_file(wdir) if spec_text is None else None
     if spec_text is None and spec_file is None:
         sys.stderr.write(
-            f"{prog}: {SPEC_FILE_NAME} or {LEGACY_SPEC_FILE_NAME} not found in {wdir} "
+            f"{prog}: {SPEC_FILE_NAME} not found in {wdir} "
             f"(run '{prog} --init' to create a starter template)\n"
         )
         raise SystemExit(2)
@@ -3609,7 +3574,7 @@ def build_bundle(
             d_kind = parts[0]
             target, excls, vmap = _parse_directive_tokens(parts[1:], prog)
             base_trace = f"if {cond_expr} {d_kind} {target}" if cond_expr else f"{d_kind} {target}"
-            trace_chain = [b for b in entry_chain if b not in (SPEC_FILE_NAME, LEGACY_SPEC_FILE_NAME)]
+            trace_chain = [b for b in entry_chain if b != SPEC_FILE_NAME]
             trace_prefix = [*(f"bundle {b}" for b in trace_chain), base_trace]
             merged_vmap = {**vmap, **session_vars}
             spec_rules.extend(
@@ -3663,7 +3628,7 @@ def build_bundle(
 
     spec_rules = [
         r for r in spec_rules
-        if r[0] not in (LEGACY_RULE_ID, EMBEDDED_RULE_ID, "agents_bundle", EMBEDDED_RULE_NAME)
+        if r[0] not in (EMBEDDED_RULE_ID, EMBEDDED_RULE_NAME)
     ]
     layer1_rules: list[tuple[str, str, str, list[str]]] = []
     layer2_rules: list[tuple[str, str, str, list[str]]] = []
@@ -3686,7 +3651,7 @@ def build_bundle(
 
     for up_item in upstream_rule_entries:
         up_uid = up_item[0]
-        if up_uid in (LEGACY_RULE_ID, EMBEDDED_RULE_ID, "agents_bundle", EMBEDDED_RULE_NAME):
+        if up_uid in (EMBEDDED_RULE_ID, EMBEDDED_RULE_NAME):
             continue
         if up_uid in claimed_upstream_rules or up_uid in seen_spec_uids:
             continue
@@ -3942,18 +3907,7 @@ def _is_our_binary(path: Path) -> bool:
         head = path.read_text(encoding="utf-8", errors="ignore")[:2048]
     except OSError:
         return False
-    return REPO_MARKER in head or LEGACY_REPO_MARKER in head
-
-
-def _remove_legacy_binary(install_dir: Path, keep_path: Path | None = None) -> None:
-    legacy = install_dir / "agents_bundle"
-    if keep_path is not None and legacy.resolve() == keep_path.resolve():
-        return
-    if _is_our_binary(legacy):
-        try:
-            legacy.unlink()
-        except OSError:
-            pass
+    return REPO_MARKER in head
 
 
 def fetch_remote_script(url: str | None = None) -> str:
@@ -3968,7 +3922,7 @@ def fetch_remote_script(url: str | None = None) -> str:
     )
     with urllib.request.urlopen(req, timeout=15) as resp:
         data = resp.read().decode("utf-8")
-    if REPO_MARKER not in data and LEGACY_REPO_MARKER not in data:
+    if REPO_MARKER not in data:
         raise ValueError("downloaded file does not contain expected repository marker")
     ast.parse(data)
     return data
@@ -3999,15 +3953,14 @@ def cmd_update(force: bool = False, url: str | None = None, check: bool = False)
     self_file = Path(sys.argv[0]).resolve() if sys.argv and sys.argv[0] else Path(__file__).resolve()
     if not self_file.is_file():
         self_file = Path(__file__).resolve()
-    dest = (self_file.parent / "context") if self_file.name == "agents_bundle" else self_file
+    dest = self_file
     try:
         remote_src = fetch_remote_script(url)
     except Exception as exc:
         sys.stderr.write(f"{prog}: update failed: {exc}\n")
         return 1
     remote_ver = parse_version_from_source(remote_src) or "unknown"
-    if not force and dest == self_file and version_tuple(remote_ver) <= version_tuple(VERSION):
-        _remove_legacy_binary(dest.parent, keep_path=dest)
+    if not force and version_tuple(remote_ver) <= version_tuple(VERSION):
         sys.stdout.write(f"{prog} {VERSION} is already up to date.\n")
         return 0
     try:
@@ -4024,7 +3977,6 @@ def cmd_update(force: bool = False, url: str | None = None, check: bool = False)
     except Exception as exc:
         sys.stderr.write(f"{prog}: could not write updated binary to {dest}: {exc}\n")
         return 1
-    _remove_legacy_binary(dest.parent, keep_path=dest)
     sys.stdout.write(f"{prog}: updated {VERSION} -> {remote_ver} ({dest})\n")
     return 0
 
@@ -4045,7 +3997,7 @@ def cmd_uninstall() -> int:
 
     cmd_name = os.environ.get("CONTEXT_BUNDLE_NAME") or "context"
     names = []
-    for n in (cmd_name, self_path.name if not is_repo_checkout else "", "context", "agents_bundle"):
+    for n in (cmd_name, self_path.name if not is_repo_checkout else "", "context"):
         if n and n not in names:
             names.append(n)
 
@@ -4077,10 +4029,9 @@ def cmd_uninstall() -> int:
 
     cdir = cache_dir_path()
     removed_caches: list[str] = []
-    for cache_target in (cdir, cdir.parent / "agents_bundle"):
-        if cache_target.exists():
-            shutil.rmtree(cache_target, ignore_errors=True)
-            removed_caches.append(str(cache_target))
+    if cdir.exists():
+        shutil.rmtree(cdir, ignore_errors=True)
+        removed_caches.append(str(cdir))
 
     details = ", ".join([*removed_bins, *removed_caches]) or "nothing to remove"
     sys.stdout.write(f"{prog}: uninstalled ({details})\n")

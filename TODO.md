@@ -1,14 +1,3 @@
-# 🎯 [NEXT] F43: Remove legacy agents_bundle, .agents_bundle, todo_md, and run_block migration shims
-
-- Depends on: F42
-- Bump: `PATCH`
-- Remove post-ADR-0004 legacy migration shims and fallbacks across `src/`, `install.sh`, `README.md`, `AGENTS.md`, and `tests/` (keeping canonical `context-bundle-protocol` v1 variable normalization `<owner>.<repo>.*` / `todo_md.*` in `src/upstream.py` intact):
-  - `src/header.py` & `src/bundle.py`: remove `LEGACY_REPO_MARKER`, `LEGACY_SPEC_FILE_NAME` (`.agents_bundle`), and `LEGACY_RULE_ID`; resolve only `SPEC_FILE_NAME` (`.context.bundle`) in `find_spec_file()`, `cmd_trust()`, `parse_spec()`, and `build_bundle()`; remove `LEGACY_RULE_ID` and `"agents_bundle"` from `spec_rules` / `upstream_rule_entries` filters; drop `(or .agents_bundle)` from `HELP_SECTIONS` and error messages.
-  - `src/core.py`: remove `_OBSOLETE_VITALIO_PKGS = ("agents_bundle", "run_block", "todo_md")` and `_migrate_and_prune_cache()` (`~/.cache/agents_bundle` migration and obsolete package pruning).
-  - `src/cli.py` & `install.sh`: remove `_remove_legacy_binary()`, `LEGACY_REPO_MARKER` checks, `self_file.name == "agents_bundle"` rename logic in `cmd_update()`, and `agents_bundle` binary/cache cleanup in `cmd_uninstall()` and `install.sh`.
-  - `README.md`, `AGENTS.md`, & `tests/`: remove `.agents_bundle` and `~/.cache/agents_bundle` migration references from documentation; update `tests/helpers.py`, `tests/test_bundle.py`, `tests/test_rules_engine.py`, `tests/test_cli.py`, `tests/test_core.py`, and `tests/test_includes.py` to use `.context.bundle`, `vitalio/todo-md`, and `context_bundle_mod`, and remove obsolete legacy migration tests.
-- Rebuild `./context` via `python3 build.py` and verify the full unit test suite passes.
-
 # 🎯 [NEXT] F44: Remove hardcoded DEFAULT_RULES_PKG (vitalio/agents-rules) and resolve root targets without hidden package fallback
 
 - Depends on: D1

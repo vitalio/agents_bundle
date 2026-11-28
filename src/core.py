@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import sys
 import textwrap
 from pathlib import Path
@@ -18,9 +17,6 @@ from src.header import (
     HELP_USAGE,
 )
 
-_OBSOLETE_VITALIO_PKGS = ("agents_bundle", "run_block", "todo_md")
-
-
 def prog_name() -> str:
     raw = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "context"
     for suf in (".py",):
@@ -30,39 +26,13 @@ def prog_name() -> str:
     return raw or "context"
 
 
-def _migrate_and_prune_cache(base: Path) -> Path:
-    target = base / "context-bundle"
-    legacy = base / "agents_bundle"
-    if not target.exists() and legacy.is_dir():
-        try:
-            os.replace(legacy, target)
-        except OSError:
-            pass
-    if target.is_dir():
-        vitalio_dir = target / "packages" / "vitalio"
-        if vitalio_dir.is_dir():
-            for name in _OBSOLETE_VITALIO_PKGS:
-                obs = vitalio_dir / name
-                if obs.exists():
-                    shutil.rmtree(obs, ignore_errors=True)
-    return target
-
-
 def cache_dir_path() -> Path:
     env_c = os.environ.get("CONTEXT_BUNDLE_CACHE_DIR")
     if env_c:
-        target = Path(env_c).expanduser()
-        if target.is_dir():
-            vitalio_dir = target / "packages" / "vitalio"
-            if vitalio_dir.is_dir():
-                for name in _OBSOLETE_VITALIO_PKGS:
-                    obs = vitalio_dir / name
-                    if obs.exists():
-                        shutil.rmtree(obs, ignore_errors=True)
-        return target
+        return Path(env_c).expanduser()
     xdg = os.environ.get("XDG_CACHE_HOME")
     base = Path(xdg).expanduser() if xdg else (Path.home() / ".cache")
-    return _migrate_and_prune_cache(base)
+    return base / "context-bundle"
 
 
 def state_dir_path() -> Path:

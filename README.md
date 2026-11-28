@@ -2,7 +2,7 @@
 
 **Unix-style context bundler, rule/bundle engine, and token-budgeted repository file tree for AI coding agents on POSIX (`linux` and `macos`).**
 
-`context` executes `.context.bundle` (with fallback to `.agents_bundle`) in the
+`context` executes `.context.bundle` in the
 target working directory, evaluates the 8-keyword `.bundle` directive language,
 merges rules, files, command outputs, and prompts, and writes the assembled
 context bundle strictly to `stdout` (with diagnostics on `stderr`) so it
@@ -97,7 +97,7 @@ context --tree -x bumps -x resolutions --max-lines 160 --max-tokens 1600
 
 | Command | Description |
 | :--- | :--- |
-| `context [k=v ...] [-p TEXT] [FILE ...]` | Build context bundle from `.context.bundle` (or `.agents_bundle`) to `stdout` (`stdin`: `Key: Value` preamble, task ID, or prompt; sets `piped=1` on prompt; empty piped `stdin` exits `2`) |
+| `context [k=v ...] [-p TEXT] [FILE ...]` | Build context bundle from `.context.bundle` to `stdout` (`stdin`: `Key: Value` preamble, task ID, or prompt; sets `piped=1` on prompt; empty piped `stdin` exits `2`) |
 | `context bundle <pkg>[:<name>] [k=v]` | Render a bundle's rules, files, commands, and prompts from `agents/` in the regular bundle format without `.context.bundle` (reads no `stdin`; honors `-C`, `-p`, `--plain`, `-v`, `--refresh`) |
 | `context rule <pkg>[:<name...>] [k=v]` | Render one or more rules from `agents/` (`<owner>/<repo>[@ref][:<name\|path>]`, `./path`, or URL) to `stdout` |
 | `context --list \| -l [pkg]` | List bundles, rules, and built-in variables (default: `vitalio/agents-rules`) |
@@ -162,7 +162,7 @@ if mode=summary
     prompt Summarize recent repository activity.
 ```
 
-`.context.bundle` (legacy `.agents_bundle`) and package `.bundle` files share
+`.context.bundle` and package `.bundle` files share
 the same 8-keyword directive language; blank lines and `#` comments are
 ignored, exported session variables resolve in a pre-pass (so `core` placed
 before a trailing `adapters/todo-md` bundle still sees `role`, `task`, and
@@ -274,7 +274,7 @@ the assembled body sections (`===== Rules =====`,
   occurrence (where a whole-file span absorbs any slice of the same file and
   overlapping slices become one slice); `prompt` fragments are re-wrapped with
   the new boundary inside the Prompt section with their metadata preserved.
-- **Chain provenance:** Fragments from `.context.bundle` or `.agents_bundle`
+- **Chain provenance:** Fragments from `.context.bundle`
   (and nested bundles) carry `chain` starting with the root spec filename;
   piped upstream fragments keep their own chain, and CLI file and `-p`
   arguments use `[]`.
@@ -291,9 +291,8 @@ the assembled body sections (`===== Rules =====`,
 ## Package Cache
 
 Remote packages are cloned into `<cache_dir>/packages` and URL files are saved
-in `<cache_dir>/urls` (`CONTEXT_BUNDLE_CACHE_DIR` overrides the location;
-`~/.cache/agents_bundle` is automatically migrated to
-`~/.cache/context-bundle`). `--refresh` re-fetches each remote package or URL
+in `<cache_dir>/urls` (`CONTEXT_BUNDLE_CACHE_DIR` overrides the default
+`~/.cache/context-bundle` location). `--refresh` re-fetches each remote package or URL
 at most once per run. `--update-cache` fetches and hard-resets every cached git
 package to its remote ref and re-downloads every cached URL file, printing one
 status line per item (exit code `1` when any item fails). Set

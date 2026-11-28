@@ -44,13 +44,13 @@ class TestIncludes(AgentsBundleTestCase):
         mod = self._load_bundle_module()
         key = str((self.tmp / "big.txt").resolve())
         sliced = mod.span_from_fragment(
-            {"kind": "file", "name": "big.txt:2-3", "chain": ["todo_md"]},
+            {"kind": "file", "name": "big.txt:2-3", "chain": ["vitalio/todo-md"]},
             "===== $ sed -n '2,3p' big.txt =====\nline2\nline3",
             self.tmp,
         )
         self.assertEqual((sliced.key, sliced.start, sliced.end), (key, 2, 3))
         self.assertEqual(sliced.lines, {2: "line2", 3: "line3"})
-        self.assertEqual(sliced.chain, ["todo_md"])
+        self.assertEqual(sliced.chain, ["vitalio/todo-md"])
         whole = mod.span_from_fragment(
             {"kind": "file", "name": "big.txt", "chain": []},
             "===== $ cat big.txt =====\nline1\nline2",

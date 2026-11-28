@@ -12,9 +12,7 @@ rules are loaded via `.context.bundle`.
   `EMBEDDED_RULE_ID = "vitalio/context-bundle:context"`, `VAR_NAME_PATTERN`).
 - `src/core.py` — `prog_name()`, `cache_dir_path()`, `state_dir_path()`,
   `trust_file_path()`, and `usage_text()` helpers shared by all modules;
-  `cache_dir_path()` atomically migrates `~/.cache/agents_bundle` ->
-  `~/.cache/context-bundle` and prunes obsolete
-  `packages/vitalio/{agents_bundle,run_block,todo_md}` clones; `usage_text()`
+  `usage_text()`
   expands `{prog}`, `{default_pkg}`, `{cache_dir}`, and `{trust_file}` in
   `HELP_USAGE` and `HELP_SECTIONS`, renders top-level `Usage:` lines as a
   compact syntax block, aligns the description column at a shared column

@@ -126,7 +126,7 @@ class TestRulesEngine(AgentsBundleTestCase):
         thread.start()
         try:
             url = f"http://127.0.0.1:{server.server_address[1]}/served.md"
-            (self.tmp / ".agents_bundle").write_text(f"rule {url}\nrule {url}\n", encoding="utf-8")
+            (self.tmp / ".context.bundle").write_text(f"rule {url}\nrule {url}\n", encoding="utf-8")
             r = self._run([str(SCRIPT), "--refresh"], cwd=str(self.tmp), capture_output=True, text=True, check=False)
         finally:
             server.shutdown()
@@ -203,7 +203,7 @@ class TestRulesEngine(AgentsBundleTestCase):
         )
 
         # 2. Multi-step package bundle cycle fails fast with full cycle path
-        (self.tmp / ".agents_bundle").write_text(
+        (self.tmp / ".context.bundle").write_text(
             "bundle vitalio/agents-rules:cycle_a\n",
             encoding="utf-8",
         )
@@ -218,7 +218,7 @@ class TestRulesEngine(AgentsBundleTestCase):
         self.assertNotIn("RecursionError", r_rs_multi.stderr)
         self.assertIn(
             "circular bundle reference detected: "
-            ".agents_bundle -> vitalio/agents-rules:cycle_a -> cycle_b -> "
+            ".context.bundle -> vitalio/agents-rules:cycle_a -> cycle_b -> "
             "cycle_c -> vitalio/agents-rules:cycle_a",
             r_rs_multi.stderr,
         )
@@ -228,7 +228,7 @@ class TestRulesEngine(AgentsBundleTestCase):
         rs_file_b = self.tmp / "rs_b.bundle"
         rs_file_a.write_text("bundle ./rs_b.bundle\n", encoding="utf-8")
         rs_file_b.write_text(f"bundle {rs_file_a.resolve().as_posix()}\n", encoding="utf-8")
-        (self.tmp / ".agents_bundle").write_text("bundle ./rs_a.bundle\n", encoding="utf-8")
+        (self.tmp / ".context.bundle").write_text("bundle ./rs_a.bundle\n", encoding="utf-8")
         r_rs_file = self._run(
             [str(SCRIPT)],
             cwd=str(self.tmp),
@@ -244,7 +244,7 @@ class TestRulesEngine(AgentsBundleTestCase):
         # 4. Self-referential bundle (both local file and package repo shorthand alias) fails fast
         self_bundle = self.tmp / "self.bundle"
         self_bundle.write_text(f"bundle {self_bundle.resolve().as_posix()}\n", encoding="utf-8")
-        (self.tmp / ".agents_bundle").write_text("bundle ./self.bundle\n", encoding="utf-8")
+        (self.tmp / ".context.bundle").write_text("bundle ./self.bundle\n", encoding="utf-8")
         r_b_self = self._run(
             [str(SCRIPT)],
             cwd=str(self.tmp),
@@ -254,7 +254,7 @@ class TestRulesEngine(AgentsBundleTestCase):
         )
         self.assertNotEqual(r_b_self.returncode, 0, msg=f"stdout:\n{r_b_self.stdout}\nstderr:\n{r_b_self.stderr}")
         self.assertNotIn("RecursionError", r_b_self.stderr)
-        self.assertIn("circular bundle reference detected: .agents_bundle -> ./self.bundle ->", r_b_self.stderr)
+        self.assertIn("circular bundle reference detected: .context.bundle -> ./self.bundle ->", r_b_self.stderr)
 
         loop_pkg = pkg_dir / "vitalio" / "loop_pkg" / "agents"
         loop_pkg.mkdir(parents=True)
@@ -262,7 +262,7 @@ class TestRulesEngine(AgentsBundleTestCase):
             "bundle vitalio/loop_pkg:loop_pkg\n",
             encoding="utf-8",
         )
-        (self.tmp / ".agents_bundle").write_text("bundle vitalio/loop_pkg\n", encoding="utf-8")
+        (self.tmp / ".context.bundle").write_text("bundle vitalio/loop_pkg\n", encoding="utf-8")
         r_b_alias = self._run(
             [str(SCRIPT)],
             cwd=str(self.tmp),
@@ -273,18 +273,18 @@ class TestRulesEngine(AgentsBundleTestCase):
         self.assertNotEqual(r_b_alias.returncode, 0, msg=f"stdout:\n{r_b_alias.stdout}\nstderr:\n{r_b_alias.stderr}")
         self.assertNotIn("RecursionError", r_b_alias.stderr)
         self.assertIn(
-            "circular bundle reference detected: .agents_bundle -> vitalio/loop_pkg -> vitalio/loop_pkg:loop_pkg",
+            "circular bundle reference detected: .context.bundle -> vitalio/loop_pkg -> vitalio/loop_pkg:loop_pkg",
             r_b_alias.stderr,
         )
 
-        # 5. Multi-step bundle cycle and cycle back to .agents_bundle fail fast
+        # 5. Multi-step bundle cycle and cycle back to .context.bundle fail fast
         b1 = self.tmp / "b1.bundle"
         b2 = self.tmp / "b2.bundle"
         b3 = self.tmp / "b3.bundle"
         b1.write_text("bundle ./b2.bundle\n", encoding="utf-8")
         b2.write_text("bundle ./b3.bundle\n", encoding="utf-8")
         b3.write_text(f"bundle {b1.resolve().as_posix()}\n", encoding="utf-8")
-        (self.tmp / ".agents_bundle").write_text("bundle ./b1.bundle\n", encoding="utf-8")
+        (self.tmp / ".context.bundle").write_text("bundle ./b1.bundle\n", encoding="utf-8")
         r_b_multi = self._run(
             [str(SCRIPT)],
             cwd=str(self.tmp),
@@ -295,13 +295,13 @@ class TestRulesEngine(AgentsBundleTestCase):
         self.assertNotEqual(r_b_multi.returncode, 0, msg=f"stdout:\n{r_b_multi.stdout}\nstderr:\n{r_b_multi.stderr}")
         self.assertNotIn("RecursionError", r_b_multi.stderr)
         self.assertIn(
-            "circular bundle reference detected: .agents_bundle -> ./b1.bundle -> ./b2.bundle -> ./b3.bundle ->",
+            "circular bundle reference detected: .context.bundle -> ./b1.bundle -> ./b2.bundle -> ./b3.bundle ->",
             r_b_multi.stderr,
         )
 
         b_root = self.tmp / "back_to_root.bundle"
-        b_root.write_text("bundle ./.agents_bundle\n", encoding="utf-8")
-        (self.tmp / ".agents_bundle").write_text("bundle ./back_to_root.bundle\n", encoding="utf-8")
+        b_root.write_text("bundle ./.context.bundle\n", encoding="utf-8")
+        (self.tmp / ".context.bundle").write_text("bundle ./back_to_root.bundle\n", encoding="utf-8")
         r_b_root = self._run(
             [str(SCRIPT)],
             cwd=str(self.tmp),
@@ -312,7 +312,7 @@ class TestRulesEngine(AgentsBundleTestCase):
         self.assertNotEqual(r_b_root.returncode, 0, msg=f"stdout:\n{r_b_root.stdout}\nstderr:\n{r_b_root.stderr}")
         self.assertNotIn("RecursionError", r_b_root.stderr)
         self.assertIn(
-            "circular bundle reference detected: .agents_bundle -> ./back_to_root.bundle -> ./.agents_bundle",
+            "circular bundle reference detected: .context.bundle -> ./back_to_root.bundle -> ./.context.bundle",
             r_b_root.stderr,
         )
 
@@ -325,7 +325,7 @@ class TestRulesEngine(AgentsBundleTestCase):
             "rule vitalio/agents-rules:stack/python-cli\n",
             encoding="utf-8",
         )
-        (self.tmp / ".agents_bundle").write_text(
+        (self.tmp / ".context.bundle").write_text(
             f"bundle {shared_b.as_posix()}\n"
             f"bundle {branch_b.as_posix()}\n",
             encoding="utf-8",

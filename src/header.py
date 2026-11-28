@@ -23,16 +23,13 @@ from pathlib import Path
 
 VERSION = "__VERSION__"
 REPO_MARKER = "context-bundle-repo: vitalio/context-bundle"
-LEGACY_REPO_MARKER = "agents_bundle-repo: vitalio/agents_bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/context-bundle/main/context"
 SPEC_FILE_NAME = ".context.bundle"
-LEGACY_SPEC_FILE_NAME = ".agents_bundle"
 PRODUCER_NAME = "vitalio/context-bundle"
 DEFAULT_RULES_PKG = "vitalio/agents-rules"
 EMBEDDED_RULE_CONTEXT = ""
 EMBEDDED_RULE_NAME = "context"
 EMBEDDED_RULE_ID = "vitalio/context-bundle:context"
-LEGACY_RULE_ID = "vitalio/agents_bundle:agents_bundle"
 PROTOCOL_VERSION = "1"
 RULES_HEADER = "===== Rules ====="
 PROMPT_HEADER = "===== Prompt ====="
@@ -52,7 +49,7 @@ HELP_SECTIONS = (
         (
             (
                 "[k=v ...] [FILE ...]",
-                "Build context bundle from .context.bundle (or .agents_bundle) to stdout (stdin: "
+                "Build context bundle from .context.bundle to stdout (stdin: "
                 "Key: Value preamble, task ID, or prompt; sets piped=1 on prompt; empty piped "
                 "stdin exits 2)",
             ),

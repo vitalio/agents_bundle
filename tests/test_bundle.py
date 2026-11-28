@@ -16,7 +16,7 @@ class TestBundle(AgentsBundleTestCase):
         other_os = "macos" if cur_os == "linux" else "linux"
         (self.tmp / "AGENTS.md").write_text("# Project Rules\n", encoding="utf-8")
         (self.tmp / "extra.txt").write_text("extra content\n", encoding="utf-8")
-        (self.tmp / ".agents_bundle").write_text(
+        (self.tmp / ".context.bundle").write_text(
             "bundle vitalio/agents-rules:core lang=Spanish\n"
             f"if os={cur_os}\n"
             "    rule vitalio/agents-rules:os/linux\n"
@@ -76,7 +76,7 @@ class TestBundle(AgentsBundleTestCase):
         self._assert_ok(r_url)
         self.assertIn("Loaded from URL 99.", r_url.stdout)
 
-        # Verify bundle directive, CLI key=val variables, and prompt directives in .agents_bundle
+        # Verify bundle directive, CLI key=val variables, and prompt directives in .context.bundle
         inc_file = self.tmp / "task_flow.bundle"
         inc_file.write_text(
             "# Description: Custom task flow bundle\n"
@@ -95,10 +95,10 @@ class TestBundle(AgentsBundleTestCase):
             "        prompt Mode: EXECUTION ({task:})\n",
             encoding="utf-8",
         )
-        (self.tmp / ".agents_bundle").write_text(
-            "bundle vitalio/agents_bundle\n"
+        (self.tmp / ".context.bundle").write_text(
+            "bundle vitalio/context-bundle:context\n"
             "bundle vitalio/agents-rules:core\n"
-            "bundle vitalio/todo_md\n"
+            "bundle vitalio/todo-md\n"
             f"bundle {inc_file.as_posix()}\n"
             "export role task\n",
             encoding="utf-8",
@@ -113,8 +113,7 @@ class TestBundle(AgentsBundleTestCase):
             r_none.stdout,
         )
         self.assertNotIn("Session assembly", r_none.stdout)
-        self.assertNotIn("run_block", r_none.stdout)
-        self.assertIn("Task management (`todo_md`)", r_none.stdout)
+        self.assertIn("Task management (`todo`)", r_none.stdout)
         self.assertNotIn("all_tasks", r_none.stdout)
         self.assertNotIn("focused_task_", r_none.stdout)
         self.assertNotIn("===== Prompt =====", r_none.stdout)
@@ -188,7 +187,7 @@ class TestBundle(AgentsBundleTestCase):
             "# Description: Local pkg rule\n- Local package directory bundle rule body.\n",
             encoding="utf-8",
         )
-        (rel_ws / ".agents_bundle").write_text(
+        (rel_ws / ".context.bundle").write_text(
             "bundle ./bundles/nested/child.bundle\n"
             "bundle ../local_pkg\n",
             encoding="utf-8",
@@ -199,8 +198,8 @@ class TestBundle(AgentsBundleTestCase):
         self.assertIn("Shared parent relative rule body.", r_rel.stdout)
         self.assertIn("Local package directory bundle rule body.", r_rel.stdout)
 
-    def test_agents_bundle_vars_env_and_cli_override(self):
-        (self.tmp / ".agents_bundle").write_text(
+    def test_context_bundle_vars_env_and_cli_override(self):
+        (self.tmp / ".context.bundle").write_text(
             "bundle vitalio/agents-rules:core lang=English\n"
             "export lang mode\n"
             "if mode=custom\n"
@@ -262,7 +261,7 @@ class TestBundle(AgentsBundleTestCase):
     def test_dynamic_let_file_and_stdin_pipe(self):
         (self.tmp / "src").mkdir()
         (self.tmp / "src/target.py").write_text("VALUE = 42\n", encoding="utf-8")
-        (self.tmp / ".agents_bundle").write_text(
+        (self.tmp / ".context.bundle").write_text(
             "bundle vitalio/agents-rules:core\n"
             "if role=execute\n"
             "    let task=$(printf 'F7')\n"
@@ -385,7 +384,7 @@ class TestBundle(AgentsBundleTestCase):
             "cmd echo cmd_from_b2\n",
             encoding="utf-8",
         )
-        (self.tmp / ".agents_bundle").write_text(
+        (self.tmp / ".context.bundle").write_text(
             f"bundle {b1.as_posix()}\n"
             "cmd echo middle_cmd\n"
             f"bundle {b2.as_posix()}\n"
@@ -426,7 +425,7 @@ class TestBundle(AgentsBundleTestCase):
         proj.mkdir()
         (proj / "AGENTS.md").write_text("# Target Project Rules\n", encoding="utf-8")
         (proj / "note.txt").write_text("hello from target\n", encoding="utf-8")
-        (proj / ".agents_bundle").write_text(
+        (proj / ".context.bundle").write_text(
             "bundle vitalio/agents-rules:core\n"
             "export project task title role chat_lang\n"
             "cmd cat AGENTS.md\n"
@@ -438,7 +437,7 @@ class TestBundle(AgentsBundleTestCase):
 
         # Piped Key: Value preamble maps Workdir and non-transport headers to lowercase vars
         piped = (
-            f"Bundle-Command: todo_md F18\n"
+            f"Bundle-Command: todo F18\n"
             f"Bundle-Boundary: nonce123\n"
             f"Project: demo\n"
             f"Task: F18\n"
@@ -467,7 +466,7 @@ class TestBundle(AgentsBundleTestCase):
         self.assertIn("Role: execute\n", r.stdout)
         self.assertIn("Chat-Lang: Spanish\n", r.stdout)
         self.assertNotIn("Bundle-Boundary: nonce123", r.stdout)
-        self.assertIn("Bundle-Command: todo_md F18 | context\n", r.stdout)
+        self.assertIn("Bundle-Command: todo F18 | context\n", r.stdout)
         self.assertIn("===== $ cat AGENTS.md =====\n# Target Project Rules\n", r.stdout)
         self.assertIn("note.txt", r.stdout)
         self.assertIn(f"===== $ pwd =====\n{proj.resolve()}\n", r.stdout)
@@ -518,7 +517,7 @@ class TestBundle(AgentsBundleTestCase):
         override_proj = self.tmp / "override_proj"
         override_proj.mkdir()
         (override_proj / "AGENTS.md").write_text("# Override Rules\n", encoding="utf-8")
-        (override_proj / ".agents_bundle").write_text(
+        (override_proj / ".context.bundle").write_text(
             "bundle vitalio/agents-rules:core\n"
             "export task\n"
             "cmd cat AGENTS.md\n",
@@ -553,7 +552,7 @@ class TestBundle(AgentsBundleTestCase):
         # Builtin piped=1 is set only when stdin prompt text is present (and not emitted as header)
         piped_guard_proj = self.tmp / "piped_guard_proj"
         piped_guard_proj.mkdir()
-        (piped_guard_proj / ".agents_bundle").write_text(
+        (piped_guard_proj / ".context.bundle").write_text(
             "if piped!=1\n"
             "    cmd echo fetch_from_tracker\n"
             "if piped=1\n"
@@ -608,7 +607,7 @@ class TestBundle(AgentsBundleTestCase):
     def test_empty_piped_fifo_fails_fast_but_devnull_is_allowed(self):
         proj = self.tmp / "empty_pipe_proj"
         proj.mkdir()
-        (proj / ".agents_bundle").write_text("cmd echo marker_should_not_run\n", encoding="utf-8")
+        (proj / ".context.bundle").write_text("cmd echo marker_should_not_run\n", encoding="utf-8")
         self._trust(proj)
         for label, data in [("empty", ""), ("whitespace", "  \n")]:
             with self.subTest(fifo_case=label):
@@ -730,7 +729,7 @@ class TestBundle(AgentsBundleTestCase):
             "cmd exit 7\n"
             "prompt Root prompt\n"
         )
-        (self.tmp / ".agents_bundle").write_text(spec_text, encoding="utf-8")
+        (self.tmp / ".context.bundle").write_text(spec_text, encoding="utf-8")
         self._trust()
 
         # 1. Verify parse_spec preserves full multi-hop chain (root=[] vs nested bundles)
@@ -802,7 +801,7 @@ class TestBundle(AgentsBundleTestCase):
             {
                 "kind": "rule",
                 "id": "vitalio/agents-rules:release/single-file-build",
-                "chain": [".agents_bundle"],
+                "chain": [".context.bundle"],
             },
         )
         self.assertEqual(
@@ -810,7 +809,7 @@ class TestBundle(AgentsBundleTestCase):
             {
                 "kind": "rule",
                 "id": "vitalio/agents-rules:stack/python-cli",
-                "chain": [".agents_bundle", top_ref],
+                "chain": [".context.bundle", top_ref],
             },
         )
         self.assertEqual(
@@ -819,7 +818,7 @@ class TestBundle(AgentsBundleTestCase):
                 "kind": "rule",
                 "id": "vitalio/agents-rules:core/start",
                 "chain": [
-                    ".agents_bundle",
+                    ".context.bundle",
                     top_ref,
                     leaf_ref,
                     "vitalio/agents-rules:default",
@@ -829,24 +828,24 @@ class TestBundle(AgentsBundleTestCase):
         )
 
         cmd_recs = {r["name"]: r for r in records if r["kind"] == "cmd"}
-        self.assertEqual(cmd_recs["printf leaf_ok"]["chain"], [".agents_bundle", top_ref, leaf_ref])
+        self.assertEqual(cmd_recs["printf leaf_ok"]["chain"], [".context.bundle", top_ref, leaf_ref])
         self.assertEqual(cmd_recs["printf leaf_ok"]["rc"], 0)
         self.assertIsInstance(cmd_recs["printf leaf_ok"]["ms"], int)
         self.assertGreaterEqual(cmd_recs["printf leaf_ok"]["ms"], 0)
 
-        self.assertEqual(cmd_recs["printf root_ok"]["chain"], [".agents_bundle"])
+        self.assertEqual(cmd_recs["printf root_ok"]["chain"], [".context.bundle"])
         self.assertEqual(cmd_recs["printf root_ok"]["rc"], 0)
-        self.assertEqual(cmd_recs["exit 7"]["chain"], [".agents_bundle"])
+        self.assertEqual(cmd_recs["exit 7"]["chain"], [".context.bundle"])
         self.assertEqual(cmd_recs["exit 7"]["rc"], 7)
         self.assertIsInstance(cmd_recs["exit 7"]["ms"], int)
 
         inc_recs = {r["name"]: r for r in records if r["kind"] == "file"}
-        self.assertEqual(inc_recs["leaf_note.txt"]["chain"], [".agents_bundle", top_ref, leaf_ref])
-        self.assertEqual(inc_recs["root_note.txt"]["chain"], [".agents_bundle"])
+        self.assertEqual(inc_recs["leaf_note.txt"]["chain"], [".context.bundle", top_ref, leaf_ref])
+        self.assertEqual(inc_recs["root_note.txt"]["chain"], [".context.bundle"])
         self.assertEqual(inc_recs["cli_note.txt"]["chain"], [])
 
         prompt_recs = [r for r in records if r["kind"] == "prompt"]
-        self.assertEqual([r["chain"] for r in prompt_recs], [[".agents_bundle", top_ref, leaf_ref], [".agents_bundle"], []])
+        self.assertEqual([r["chain"] for r in prompt_recs], [[".context.bundle", top_ref, leaf_ref], [".context.bundle"], []])
 
         # Merged prompt with mixed chains emits chain=[], while shared non-empty chain emits shared chain
         _, mixed_frags = self._extract_fragments(body)
@@ -856,11 +855,11 @@ class TestBundle(AgentsBundleTestCase):
         shared_bundle = self.tmp / "shared_prompt.bundle"
         shared_bundle.write_text("prompt First\nprompt Second\n", encoding="utf-8")
         shared_ref = shared_bundle.as_posix()
-        (self.tmp / ".agents_bundle").write_text(f"bundle {shared_ref}\n", encoding="utf-8")
+        (self.tmp / ".context.bundle").write_text(f"bundle {shared_ref}\n", encoding="utf-8")
         shared_body, _ = mod.build_bundle(work_dir=self.tmp)
         _, shared_frags = self._extract_fragments(shared_body)
         shared_prompt_meta = [m for m, _b in shared_frags if m["kind"] == "prompt"][0]
-        self.assertEqual(shared_prompt_meta, {"kind": "prompt", "chain": [".agents_bundle", shared_ref]})
+        self.assertEqual(shared_prompt_meta, {"kind": "prompt", "chain": [".context.bundle", shared_ref]})
 
     def test_json_fragment_markers_for_all_kinds(self):
         pkg_dir = Path(os.environ["CONTEXT_BUNDLE_LOCAL_PKG_DIR"])
@@ -881,7 +880,7 @@ class TestBundle(AgentsBundleTestCase):
         (self.tmp / "sub_doc.txt").write_text("sub doc line 1\nsub doc line 2\n", encoding="utf-8")
         (self.tmp / "root_doc.txt").write_text("root doc body\n", encoding="utf-8")
         (self.tmp / "cli_doc.txt").write_text("cli doc body\n", encoding="utf-8")
-        (self.tmp / ".agents_bundle").write_text(
+        (self.tmp / ".context.bundle").write_text(
             "bundle vitalio/agents-rules:core\n"
             f"bundle {(self.tmp / 'sub.bundle').as_posix()}\n"
             "file root_doc.txt\n"
@@ -906,7 +905,7 @@ class TestBundle(AgentsBundleTestCase):
         nonce, fragments = self._extract_fragments(r.stdout)
         self.assertTrue(len(nonce) >= 16)
 
-        # Verify no fragment leaks .agents_bundle, group, or via
+        # Verify no fragment leaks .context.bundle, group, or via
         for meta, _ in fragments:
             self.assertNotIn("group", meta)
             self.assertNotIn("via", meta)
@@ -930,7 +929,7 @@ class TestBundle(AgentsBundleTestCase):
             {
                 "kind": "rule",
                 "id": "vitalio/agents-rules:core/start",
-                "chain": [".agents_bundle", "vitalio/agents-rules:core"],
+                "chain": [".context.bundle", "vitalio/agents-rules:core"],
             },
         )
         sub_ref = (self.tmp / "sub.bundle").as_posix()
@@ -940,7 +939,7 @@ class TestBundle(AgentsBundleTestCase):
             {
                 "kind": "rule",
                 "id": "vitalio/agents-rules:core/multiline",
-                "chain": [".agents_bundle", sub_ref],
+                "chain": [".context.bundle", sub_ref],
             },
         )
         self.assertIn("- Multiline rule header:\n  - Bullet one\n  - Bullet two", multi_body)
@@ -958,7 +957,7 @@ class TestBundle(AgentsBundleTestCase):
             },
         )
         sub_cmd_meta, sub_cmd_body = cmd_frags["printf 'sub_line_1\\nsub_line_2\\n'"]
-        self.assertEqual(sub_cmd_meta["chain"], [".agents_bundle", sub_ref])
+        self.assertEqual(sub_cmd_meta["chain"], [".context.bundle", sub_ref])
         self.assertEqual(sub_cmd_meta["rc"], 0)
         self.assertIsInstance(sub_cmd_meta["ms"], int)
         self.assertGreaterEqual(sub_cmd_meta["ms"], 0)
@@ -974,18 +973,18 @@ class TestBundle(AgentsBundleTestCase):
 
         exit_meta, _exit_body = cmd_frags["exit 3"]
         self.assertEqual(exit_meta["rc"], 3)
-        self.assertEqual(exit_meta["chain"], [".agents_bundle"])
+        self.assertEqual(exit_meta["chain"], [".context.bundle"])
 
-        # Verify file fragments across bundle, .agents_bundle, and CLI
+        # Verify file fragments across bundle, .context.bundle, and CLI
         inc_frags = {meta["name"]: (meta, body) for meta, body in fragments if meta["kind"] == "file"}
         self.assertEqual(
             inc_frags["sub_doc.txt"][0],
-            {"kind": "file", "name": "sub_doc.txt", "chain": [".agents_bundle", sub_ref]},
+            {"kind": "file", "name": "sub_doc.txt", "chain": [".context.bundle", sub_ref]},
         )
         self.assertIn("sub doc line 1\nsub doc line 2", inc_frags["sub_doc.txt"][1])
         self.assertEqual(
             inc_frags["root_doc.txt"][0],
-            {"kind": "file", "name": "root_doc.txt", "chain": [".agents_bundle"]},
+            {"kind": "file", "name": "root_doc.txt", "chain": [".context.bundle"]},
         )
         self.assertEqual(
             inc_frags["cli_doc.txt"][0],
@@ -1031,7 +1030,7 @@ class TestBundle(AgentsBundleTestCase):
             encoding="utf-8",
         )
         (self.tmp / "doc.txt").write_text("included doc line\n", encoding="utf-8")
-        (self.tmp / ".agents_bundle").write_text(
+        (self.tmp / ".context.bundle").write_text(
             "bundle vitalio/agents-rules:core\n"
             f"bundle {(self.tmp / 'sub.bundle').as_posix()}\n"
             "file doc.txt\n"
@@ -1102,7 +1101,7 @@ class TestBundle(AgentsBundleTestCase):
         (self.tmp / "big.txt").write_text("".join(f"line{i}\n" for i in range(1, 11)), encoding="utf-8")
         extras = ["big.txt:9-20", "nomatch/*.py", "big.txt:0-2", "big.txt:4-2", "odd:1-2.txt"]
         (self.tmp / "odd:1-2.txt").write_text("whole\n", encoding="utf-8")
-        (self.tmp / ".agents_bundle").write_text(
+        (self.tmp / ".context.bundle").write_text(
             "file src/*.py\n"
             "file big.txt:2-3\n"
             "file big.txt:5\n"
@@ -1126,7 +1125,7 @@ class TestBundle(AgentsBundleTestCase):
         self.assertEqual(names, expected)
         self.assertEqual(
             next(r for r in records if r.get("name") == "big.txt:2-3"),
-            {"kind": "file", "name": "big.txt:2-3", "chain": [".agents_bundle"]},
+            {"kind": "file", "name": "big.txt:2-3", "chain": [".context.bundle"]},
         )
         for missing in ("nomatch/*.py", "big.txt:0-2", "big.txt:4-2"):
             self.assertIn(f"missing file: {missing}", warnings)
@@ -1305,7 +1304,7 @@ class TestBundle(AgentsBundleTestCase):
             )
 
             # 1. Include inside repository root succeeds
-            (self.tmp / ".agents_bundle").write_text(
+            (self.tmp / ".context.bundle").write_text(
                 "bundle vitalio/agents-rules:inc_inside\n",
                 encoding="utf-8",
             )
@@ -1316,7 +1315,7 @@ class TestBundle(AgentsBundleTestCase):
             # 2. Absolute, parent-relative slice, and glob outside spec_dir fail fast
             for bname in ("inc_abs_out", "inc_rel_out", "inc_glob_out"):
                 with self.subTest(bundle=bname):
-                    (self.tmp / ".agents_bundle").write_text(
+                    (self.tmp / ".context.bundle").write_text(
                         f"bundle vitalio/agents-rules:{bname}\n",
                         encoding="utf-8",
                     )
@@ -1333,7 +1332,7 @@ class TestBundle(AgentsBundleTestCase):
                 "file leak_link.txt\n",
                 encoding="utf-8",
             )
-            (self.tmp / ".agents_bundle").write_text(
+            (self.tmp / ".context.bundle").write_text(
                 "bundle vitalio/agents-rules:inc_symlink\n",
                 encoding="utf-8",
             )
