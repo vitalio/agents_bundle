@@ -9,7 +9,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from src.header import DEFAULT_RULES_PKG, DEFAULT_UPDATE_URL, REPO_MARKER, VERSION
+from src.header import DEFAULT_UPDATE_URL, REPO_MARKER, VERSION
 from src.core import cache_dir_path, prog_name, usage_text
 from src.tree import cmd_tree
 from src.rules_engine import (
@@ -208,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
     if args and args[0] in ("--list", "-l"):
         if len(args) > 2:
             raise SystemExit(f"{prog}: usage: {prog} --list [package]")
-        return cmd_list_rules(args[1] if len(args) == 2 else DEFAULT_RULES_PKG)
+        return cmd_list_rules(args[1] if len(args) == 2 else None)
     if args and args[0] == "--update-cache":
         return cmd_update_cache()
     if args and args[0] == "--init":

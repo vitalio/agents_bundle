@@ -6,7 +6,6 @@ import textwrap
 from pathlib import Path
 
 from src.header import (
-    DEFAULT_RULES_PKG,
     EMBEDDED_RULE_CONTEXT,
     HELP_GAP,
     HELP_INDENT,
@@ -76,7 +75,6 @@ def render_help_section(title: str, rows, col: int | None = None) -> str:
 def usage_text() -> str:
     fields = {
         "prog": prog_name(),
-        "default_pkg": DEFAULT_RULES_PKG,
         "cache_dir": cache_dir_path(),
         "trust_file": trust_file_path(),
     }

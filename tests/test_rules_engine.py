@@ -47,16 +47,61 @@ class TestRulesEngine(AgentsBundleTestCase):
         self.assertIn("excludes are not supported", rex.stderr)
 
     def test_cli_bundle_rule_and_list(self):
-        rl = self._run([str(SCRIPT), "--list"], capture_output=True, text=True, check=False)
-        self._assert_ok(rl)
-        self.assertIn("Built-in variables", rl.stdout)
-        self.assertIn("piped", rl.stdout)
-        self.assertIn("if os=linux rule os/linux", rl.stdout)
-        self.assertIn("Bundles in 'vitalio/agents-rules'", rl.stdout)
-        self.assertNotIn("os/auto", rl.stdout)
-        self.assertNotIn("vcs/auto", rl.stdout)
+        rl_pkg = self._run(
+            [str(SCRIPT), "--list", "vitalio/agents-rules"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self._assert_ok(rl_pkg)
+        self.assertIn("Built-in variables", rl_pkg.stdout)
+        self.assertIn("piped", rl_pkg.stdout)
+        self.assertIn("if os=linux rule os/linux", rl_pkg.stdout)
+        self.assertIn("Bundles in 'vitalio/agents-rules'", rl_pkg.stdout)
+        self.assertNotIn("os/auto", rl_pkg.stdout)
+        self.assertNotIn("vcs/auto", rl_pkg.stdout)
 
-        rr = self._run([str(SCRIPT), "rule", "vitalio/agents-rules:release/single-file-build"], capture_output=True, text=True, check=False)
+        with self.subTest(case="--list without pkg and without local agents/ or .context.bundle prints hint"):
+            empty_dir = self.tmp / "empty_list_dir"
+            empty_dir.mkdir()
+            rl_empty = self._run([str(SCRIPT), "--list"], cwd=str(empty_dir))
+            self._assert_ok(rl_empty)
+            self.assertIn("Built-in variables", rl_empty.stdout)
+            self.assertIn("No local agents/ catalog or .context.bundle packages found", rl_empty.stdout)
+            self.assertIn("context --list <owner>/<repo>", rl_empty.stdout)
+            self.assertNotIn("vitalio/agents-rules", rl_empty.stdout)
+
+        with self.subTest(case="--list without pkg lists local agents/ and .context.bundle packages"):
+            proj_dir = self.tmp / "proj_list_dir"
+            (proj_dir / "agents").mkdir(parents=True)
+            (proj_dir / "agents" / "local_rule.md").write_text(
+                "# Description: Local repo rule\n- Local rule body.\n",
+                encoding="utf-8",
+            )
+            (proj_dir / "agents" / "local_bundle.bundle").write_text(
+                "# Description: Local repo bundle\nrule local_rule\n",
+                encoding="utf-8",
+            )
+            (proj_dir / ".context.bundle").write_text(
+                "bundle vitalio/agents-rules:core\n",
+                encoding="utf-8",
+            )
+            rl_proj = self._run([str(SCRIPT), "--list"], cwd=str(proj_dir))
+            self._assert_ok(rl_proj)
+            self.assertIn("Bundles in 'agents/' (use as 'bundle <bundle>'):", rl_proj.stdout)
+            self.assertIn("local_bundle", rl_proj.stdout)
+            self.assertIn("Atomic rules in 'agents/' (use as 'rule <rule>'):", rl_proj.stdout)
+            self.assertIn("local_rule", rl_proj.stdout)
+            self.assertIn("Bundles in 'vitalio/agents-rules'", rl_proj.stdout)
+
+        rr = self._run(
+            [str(SCRIPT), "rule", "vitalio/agents-rules:release/single-file-build"],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         self._assert_ok(rr)
         self.assertIn("Single-file build from modular `src/`:", rr.stdout)
 
@@ -649,6 +694,79 @@ class TestRulesEngine(AgentsBundleTestCase):
         items_repo = mod.collect_directive_items("rule", "vitalio/todo-md", work_dir=self.tmp)
         self.assertEqual(items_repo[0][0], "vitalio/todo-md:todo-md")
         self.assertIn("REPO_NAMED_TODO_MD_BODY", items_repo[0][2])
+
+    def test_root_targets_require_explicit_package_or_local_agents_and_no_intra_pkg_shorthand_fallback(self):
+        from unittest import mock
+
+        repo = self.tmp / "no_default_pkg_repo"
+        repo.mkdir()
+
+        with self.subTest(case="unprefixed root rule or bundle without local agents/ fails fast"):
+            for cmd_args, target in (
+                (["rule", "core"], "core"),
+                (["bundle", "core"], "core"),
+            ):
+                r_unpref = self._run([str(SCRIPT), *cmd_args], cwd=str(repo))
+                self.assertNotEqual(r_unpref.returncode, 0)
+                self.assertIn(f"missing package prefix in {target!r}", r_unpref.stderr)
+
+        with self.subTest(case="unprefixed root rule or bundle resolves from current repository local agents/"):
+            (repo / "agents").mkdir()
+            (repo / "agents" / "my_rule.md").write_text(
+                "# Description: Local rule\n- LOCAL_AGENTS_RULE_BODY\n",
+                encoding="utf-8",
+            )
+            (repo / "agents" / "my_bundle.bundle").write_text(
+                "# Description: Local bundle\nrule my_rule\n",
+                encoding="utf-8",
+            )
+            r_local_rule = self._run([str(SCRIPT), "rule", "my_rule"], cwd=str(repo))
+            self._assert_ok(r_local_rule)
+            self.assertIn("LOCAL_AGENTS_RULE_BODY", r_local_rule.stdout)
+
+            r_local_bundle = self._run([str(SCRIPT), "bundle", "my_bundle", "--plain"], cwd=str(repo))
+            self._assert_ok(r_local_bundle)
+            self.assertIn("LOCAL_AGENTS_RULE_BODY", r_local_bundle.stdout)
+
+        with self.subTest(case="intra-package two-segment typo fails in default_pkg without git clone fallback"):
+            mod = self._load_bundle_module()
+            with mock.patch.object(mod, "_ensure_remote_package", wraps=mod._ensure_remote_package) as spy_remote:
+                r_typo_cli = self._run(
+                    [str(SCRIPT), "bundle", "vitalio/agents-rules:default", "role=reivew"],
+                    cwd=str(repo),
+                )
+                self.assertNotEqual(r_typo_cli.returncode, 0)
+                self.assertIn("unknown rule 'role/reivew' in package 'vitalio/agents-rules'", r_typo_cli.stderr)
+                for call in spy_remote.call_args_list:
+                    self.assertNotEqual(call.args[0], "role/reivew")
+
+                with self.assertRaises(SystemExit) as ctx:
+                    mod.collect_directive_items(
+                        "bundle",
+                        "vitalio/agents-rules:default",
+                        cli_vars={"role": "reivew"},
+                        work_dir=repo,
+                    )
+                self.assertIn("unknown rule 'role/reivew' in package 'vitalio/agents-rules'", str(ctx.exception))
+                for call in spy_remote.call_args_list:
+                    self.assertNotEqual(call.args[0], "role/reivew")
+
+        with self.subTest(case="_ensure_remote_package disables interactive git terminal prompts"):
+            import subprocess as sp
+
+            mod = self._load_bundle_module()
+            fake_cp = sp.CompletedProcess(args=["git"], returncode=128, stdout="", stderr="fatal: repository not found")
+            env_no_local = {k: v for k, v in os.environ.items() if k != "CONTEXT_BUNDLE_LOCAL_PKG_DIR"}
+            with mock.patch.dict(os.environ, env_no_local, clear=True), mock.patch.object(
+                mod.subprocess, "run", return_value=fake_cp
+            ) as mock_run:
+                with self.assertRaises(SystemExit) as ctx:
+                    mod._ensure_remote_package("nonexistent_owner/nonexistent_repo", refresh=True)
+                self.assertIn("failed to fetch package", str(ctx.exception))
+                self.assertEqual(mock_run.call_count, 1)
+                _, kwargs = mock_run.call_args
+                self.assertIs(kwargs.get("stdin"), sp.DEVNULL)
+                self.assertEqual(kwargs.get("env", {}).get("GIT_TERMINAL_PROMPT"), "0")
 
 
 if __name__ == "__main__":

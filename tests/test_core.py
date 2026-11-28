@@ -42,13 +42,14 @@ class TestCoreHelpers(unittest.TestCase):
         self.assertIn("Usage:", text)
         for title, _rows in header.HELP_SECTIONS:
             self.assertIn(title, text)
-        self.assertIn(header.DEFAULT_RULES_PKG, text)
+        self.assertFalse(hasattr(header, "DEFAULT_RULES_PKG"))
+        self.assertIn("local agents/ and .context.bundle", " ".join(text.split()))
         self.assertNotIn("{prog}", text)
+        self.assertNotIn("{default_pkg}", text)
         self.assertNotIn("{cache_dir}", text)
         self.assertNotIn("{trust_file}", text)
         fields = {
             "prog": "context",
-            "default_pkg": header.DEFAULT_RULES_PKG,
             "cache_dir": "/tmp/ctx-cache",
             "trust_file": "/tmp/trusted.json",
         }

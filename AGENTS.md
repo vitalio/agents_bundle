@@ -13,7 +13,7 @@ rules are loaded via `.context.bundle`.
 - `src/core.py` — `prog_name()`, `cache_dir_path()`, `state_dir_path()`,
   `trust_file_path()`, and `usage_text()` helpers shared by all modules;
   `usage_text()`
-  expands `{prog}`, `{default_pkg}`, `{cache_dir}`, and `{trust_file}` in
+  expands `{prog}`, `{cache_dir}`, and `{trust_file}` in
   `HELP_USAGE` and `HELP_SECTIONS`, renders top-level `Usage:` lines as a
   compact syntax block, aligns the description column at a shared column
   (capped by `HELP_MAX_LEFT`) across all tabular sections, and wraps lines to

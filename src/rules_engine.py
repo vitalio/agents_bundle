@@ -9,7 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from src.header import DEFAULT_RULES_PKG, VAR_NAME_PATTERN, VERSION
+from src.header import SPEC_FILE_NAME, VAR_NAME_PATTERN, VERSION
 from src.core import cache_dir_path, prog_name
 
 
@@ -355,7 +355,7 @@ def _ensure_remote_package(pkg_spec: str, refresh: bool = False) -> Path:
         sub_pkg = lo_path / repo_part
         if sub_pkg.is_dir():
             return sub_pkg
-        if pkg_spec == DEFAULT_RULES_PKG or (lo_path / "agents").is_dir():
+        if (lo_path / "agents").is_dir():
             return lo_path
     refresh = _first_refresh(f"pkg:{pkg_spec}", refresh)
 
@@ -378,7 +378,16 @@ def _ensure_remote_package(pkg_spec: str, refresh: bool = False) -> Path:
     if ref:
         cmd.extend(["--branch", ref])
     cmd.extend([url, str(cdir)])
-    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    git_env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    r = subprocess.run(
+        cmd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=git_env,
+        check=False,
+    )
     if r.returncode != 0:
         raise SystemExit(f"{prog}: failed to fetch package {pkg_spec!r}: {r.stderr.strip()}")
     return cdir
@@ -453,21 +462,6 @@ def _is_repo_shorthand_spec(spec: str) -> bool:
     return re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:@[A-Za-z0-9_./-]+)?", s) is not None
 
 
-def _target_exists_in_pkg(
-    pkg_dir: Path,
-    target: str,
-    kind: str = "rule",
-) -> bool:
-    rules_dict, bundles_dict = _load_package_from_dir(pkg_dir)
-    if kind == "bundle":
-        if _match_bundle_in_dict(target, bundles_dict, repo_shorthand=False) is not None:
-            return True
-        return _resolve_package_rel_file(pkg_dir, target, (".bundle",)) is not None
-    if _match_rule_in_dict(target, rules_dict, repo_shorthand=False) is not None:
-        return True
-    return _resolve_package_rel_file(pkg_dir, target, (".md",)) is not None
-
-
 def _parse_target_spec(
     spec: str,
     default_pkg: str | None = None,
@@ -487,20 +481,21 @@ def _parse_target_spec(
         return spec[:idx], spec[idx + 1:].strip().lower()
     if ":" not in spec:
         s_clean = spec.strip()
-        if default_pkg and "@" not in s_clean:
-            if not (allow_repo_shorthand and _is_repo_shorthand_spec(s_clean)):
-                return default_pkg, s_clean.lower()
-            try:
-                def_dir = _resolve_package_dir(default_pkg, work_dir=work_dir, refresh=refresh)
-            except SystemExit:
-                def_dir = None
-            if def_dir is not None and _target_exists_in_pkg(def_dir, s_clean, kind=kind):
-                return default_pkg, s_clean.lower()
+        if default_pkg:
+            return default_pkg, s_clean.lower()
+        base_dir = (work_dir if work_dir is not None else Path.cwd()).resolve()
+        if (base_dir / "agents").is_dir():
+            local_rules, local_bundles = _load_package_from_dir(base_dir)
+            matched = (
+                _match_bundle_in_dict(s_clean, local_bundles, repo_shorthand=False)
+                if kind == "bundle"
+                else _match_rule_in_dict(s_clean, local_rules, repo_shorthand=False)
+            )
+            if matched is not None:
+                return ".", s_clean.lower()
         if allow_repo_shorthand and _is_repo_shorthand_spec(s_clean):
             repo_leaf = s_clean.split("@", 1)[0].rsplit("/", 1)[-1].lower()
             return s_clean, repo_leaf
-        if default_pkg:
-            return default_pkg, s_clean.lower()
         raise SystemExit(
             f"{prog}: missing package prefix in {spec!r} (expected '<owner>/<repo>:{spec}' or './path')"
         )
@@ -668,10 +663,16 @@ def _is_external_bundle_source(
     root_dir: Path | None,
     parent_is_external: bool = False,
 ) -> bool:
-    if parent_is_external or child_pkg is not None or child_bdir is None or root_dir is None:
+    if parent_is_external or child_bdir is None or root_dir is None:
         return True
+    if child_pkg is not None and not _is_local_path_spec(child_pkg) and not Path(child_pkg).is_absolute():
+        return True
+    if ":" in canonical_id:
+        pkg_prefix = canonical_id.split(":", 1)[0]
+        if not _is_local_path_spec(pkg_prefix) and not Path(pkg_prefix).is_absolute():
+            return True
+    fpath = child_bdir.resolve() if (child_pkg is not None or ":" in canonical_id) else Path(canonical_id).resolve()
     try:
-        fpath = Path(canonical_id).resolve()
         fpath.relative_to(root_dir.resolve())
     except ValueError:
         return True
@@ -694,7 +695,7 @@ def _resolve_bundle_context(
     target_spec: str,
     work_dir: Path | None = None,
     refresh: bool = False,
-    default_pkg: str | None = DEFAULT_RULES_PKG,
+    default_pkg: str | None = None,
     kind_label: str = "bundle",
 ) -> tuple[str, str, str | None, Path | None, Path | None]:
     prog = prog_name()
@@ -761,7 +762,7 @@ def resolve_bundle_source(
     target_spec: str,
     work_dir: Path | None = None,
     refresh: bool = False,
-    default_pkg: str | None = DEFAULT_RULES_PKG,
+    default_pkg: str | None = None,
 ) -> tuple[str, str]:
     canonical_id, body, _, _, _ = _resolve_bundle_context(
         target_spec,
@@ -776,7 +777,7 @@ def resolve_bundle_text(
     target_spec: str,
     work_dir: Path | None = None,
     refresh: bool = False,
-    default_pkg: str | None = DEFAULT_RULES_PKG,
+    default_pkg: str | None = None,
 ) -> str:
     return resolve_bundle_source(
         target_spec,
@@ -818,16 +819,16 @@ def collect_directive_items(
     cur_trace = list(trace_prefix or [f"{kind} {target_spec}"])
 
     if kind == "bundle":
-        canonical_id, body_text, child_pkg, _child_pkg_dir, child_bdir = _resolve_bundle_context(
+        canonical_id, body_text, child_pkg, child_pkg_dir, child_bdir = _resolve_bundle_context(
             target_spec,
             work_dir=work_dir,
             refresh=refresh,
-            default_pkg=default_pkg or DEFAULT_RULES_PKG,
+            default_pkg=default_pkg,
             kind_label=kind,
         )
         pkg_id, item_name = _parse_target_spec(
             target_spec,
-            default_pkg=default_pkg or DEFAULT_RULES_PKG,
+            default_pkg=default_pkg,
             allow_repo_shorthand=True,
             work_dir=work_dir,
             refresh=refresh,
@@ -845,7 +846,7 @@ def collect_directive_items(
         next_bundles = [*next_bundles, (canonical_id, bundle_spec)]
         bundle_chain = [*base_chain, bundle_spec]
         base_url = item_name.rsplit("/", 1)[0] if (pkg_id == "__url__" and "/" in item_name) else None
-        sub_wdir = child_bdir if child_bdir is not None else work_dir
+        sub_wdir = work_dir if child_pkg is not None else (child_bdir if child_bdir is not None else work_dir)
         local_vars = dict(effective_vars)
         items_out: list[tuple[str, str, str, list[str]]] = []
 
@@ -895,11 +896,23 @@ def collect_directive_items(
                 full_cond = " ".join(c for c in (cond_expr, cond_s) if c) or None
                 for sub_target in sub_targets:
                     step_label = f"if {cond_s} {sub_kind} {sub_target}" if cond_s else f"{sub_kind} {sub_target}"
-                    qual_target = (
-                        f"{base_url}/{sub_target}"
-                        if (base_url and ":" not in sub_target and sub_target.endswith((".md", ".bundle")))
-                        else sub_target
-                    )
+                    if base_url and ":" not in sub_target and sub_target.endswith((".md", ".bundle")):
+                        qual_target = f"{base_url}/{sub_target}"
+                    elif (
+                        child_pkg is not None
+                        and child_pkg_dir is not None
+                        and child_bdir is not None
+                        and _is_local_path_spec(sub_target)
+                        and not Path(sub_target).expanduser().is_absolute()
+                    ):
+                        resolved_sub = (child_bdir / sub_target).resolve()
+                        try:
+                            rel_sub = resolved_sub.relative_to(child_pkg_dir.resolve())
+                        except ValueError:
+                            raise SystemExit(f"{prog}: package path escapes package root: {sub_target}")
+                        qual_target = f"{child_pkg}:{rel_sub.as_posix()}"
+                    else:
+                        qual_target = sub_target
                     items_out.extend(
                         collect_directive_items(
                             sub_kind,
@@ -907,7 +920,7 @@ def collect_directive_items(
                             cli_vars=merged_vars,
                             work_dir=sub_wdir,
                             refresh=refresh,
-                            default_pkg=child_pkg or DEFAULT_RULES_PKG,
+                            default_pkg=child_pkg,
                             trace_prefix=[*cur_trace, step_label],
                             piped=piped,
                             chain=bundle_chain,
@@ -1086,25 +1099,101 @@ def render_directive(
     return format_collected_rules(items, verbose=verbose)
 
 
-def cmd_list_rules(pkg_id: str = DEFAULT_RULES_PKG) -> int:
-    rules_dict, bundles_dict = _get_package_catalog(pkg_id)
-    bvars = builtin_vars()
-    sys.stdout.write("Built-in variables (usable in 'if key=val' conditions and rule templates):\n")
-    sys.stdout.write(f"  {'os':<38}  Active operating system (linux, macos; current: {bvars['os']!r})\n")
-    sys.stdout.write(f"  {'vcs':<38}  Detected repository VCS (git, cvs, or ''; current: {bvars['vcs']!r})\n")
-    sys.stdout.write(f"  {'piped':<38}  Set to '1' when stdin prompt text is present, else '' (current: {bvars['piped']!r})\n\n")
+def _write_catalog_section(
+    pkg_label: str,
+    target_prefix: str,
+    rules_dict: dict[str, tuple[str, str]],
+    bundles_dict: dict[str, tuple[str, str]],
+    include_empty_rules_header: bool = True,
+) -> None:
     if bundles_dict:
-        sys.stdout.write(f"Bundles in '{pkg_id}' (use as 'bundle {pkg_id}:<bundle>'):\n")
+        sys.stdout.write(f"\nBundles in '{pkg_label}' (use as 'bundle {target_prefix}<bundle>'):\n")
         for k, (desc, body) in bundles_dict.items():
-            target_tag = f"{pkg_id}:{k}"
+            target_tag = f"{target_prefix}{k}"
             sys.stdout.write(f"  {target_tag:<38}  {desc}\n")
             for cond_expr, line in strip_if_blocks_and_lines(body):
                 cond_s = f"if {cond_expr} " if cond_expr else ""
                 sys.stdout.write(f"  {'':<38}    {cond_s}{line}\n")
-    sys.stdout.write(f"\nAtomic rules in '{pkg_id}' (use as 'rule {pkg_id}:<rule>'):\n")
-    for k, (desc, _) in rules_dict.items():
-        target_tag = f"{pkg_id}:{k}"
-        sys.stdout.write(f"  {target_tag:<38}  {desc}\n")
+    if rules_dict or include_empty_rules_header:
+        sys.stdout.write(f"\nAtomic rules in '{pkg_label}' (use as 'rule {target_prefix}<rule>'):\n")
+        for k, (desc, _) in rules_dict.items():
+            target_tag = f"{target_prefix}{k}"
+            sys.stdout.write(f"  {target_tag:<38}  {desc}\n")
+
+
+def _referenced_packages_in_spec(spec_file: Path) -> list[str]:
+    if not spec_file.is_file():
+        return []
+    try:
+        raw_text = spec_file.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    pkgs: list[str] = []
+    for raw_line in raw_text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not (stripped.startswith("bundle ") or stripped.startswith("rule ")):
+            continue
+        try:
+            parts = shlex.split(stripped)
+        except ValueError:
+            continue
+        if len(parts) < 2:
+            continue
+        kind = parts[0]
+        tokens = [t for t in parts[1:] if "=" not in t]
+        if kind == "bundle":
+            tokens = tokens[:1]
+        for tok in tokens:
+            if "{" in tok or tok.startswith(("http://", "https://", "file://")):
+                continue
+            if ":" in tok:
+                pkg = tok.split(":", 1)[0].strip()
+            elif _is_repo_shorthand_spec(tok) or _is_local_path_spec(tok):
+                pkg = tok.strip()
+            else:
+                continue
+            if pkg and pkg not in pkgs:
+                if _is_local_path_spec(pkg) and not ((spec_file.parent / pkg).resolve() / "agents").is_dir():
+                    continue
+                pkgs.append(pkg)
+    return pkgs
+
+
+def cmd_list_rules(pkg_id: str | None = None, work_dir: Path | None = None) -> int:
+    wdir = (work_dir if work_dir is not None else Path.cwd()).resolve()
+    bvars = builtin_vars(wdir)
+    sys.stdout.write("Built-in variables (usable in 'if key=val' conditions and rule templates):\n")
+    sys.stdout.write(f"  {'os':<38}  Active operating system (linux, macos; current: {bvars['os']!r})\n")
+    sys.stdout.write(f"  {'vcs':<38}  Detected repository VCS (git, cvs, or ''; current: {bvars['vcs']!r})\n")
+    sys.stdout.write(f"  {'piped':<38}  Set to '1' when stdin prompt text is present, else '' (current: {bvars['piped']!r})\n")
+    if pkg_id is not None:
+        rules_dict, bundles_dict = _get_package_catalog(pkg_id, work_dir=wdir)
+        _write_catalog_section(pkg_id, f"{pkg_id}:", rules_dict, bundles_dict, include_empty_rules_header=True)
+        return 0
+
+    printed_any = False
+    local_rules, local_bundles = _load_package_from_dir(wdir)
+    if local_rules or local_bundles:
+        _write_catalog_section("agents/", "", local_rules, local_bundles, include_empty_rules_header=False)
+        printed_any = True
+
+    for ref_pkg in _referenced_packages_in_spec(wdir / SPEC_FILE_NAME):
+        try:
+            r_dict, b_dict = _get_package_catalog(ref_pkg, work_dir=wdir)
+        except SystemExit:
+            continue
+        if r_dict or b_dict:
+            _write_catalog_section(ref_pkg, f"{ref_pkg}:", r_dict, b_dict, include_empty_rules_header=False)
+            printed_any = True
+
+    if not printed_any:
+        prog = prog_name()
+        sys.stdout.write(
+            f"\nNo local agents/ catalog or {SPEC_FILE_NAME} packages found in {wdir} "
+            f"(run '{prog} --list <owner>/<repo>' to inspect a package).\n"
+        )
     return 0
 
 

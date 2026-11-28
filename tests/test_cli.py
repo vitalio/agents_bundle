@@ -24,6 +24,8 @@ class TestCLI(AgentsBundleTestCase):
         self.assertIn("Bundle Output Protocol:", rh.stdout)
         self.assertIn("-x, --exclude DIR", rh.stdout)
         self.assertIn("bundle <pkg>[:<name>] [k=v]", rh.stdout)
+        self.assertIn("local agents/ and .context.bundle", " ".join(rh.stdout.split()))
+        self.assertNotIn("vitalio/agents-rules", rh.stdout)
         self.assertNotIn("--check-update", rh.stdout)
         self.assertNotIn("--self-update", rh.stdout)
         self.assertNotIn("--agents", rh.stdout)

@@ -26,7 +26,6 @@ REPO_MARKER = "context-bundle-repo: vitalio/context-bundle"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/context-bundle/main/context"
 SPEC_FILE_NAME = ".context.bundle"
 PRODUCER_NAME = "vitalio/context-bundle"
-DEFAULT_RULES_PKG = "vitalio/agents-rules"
 EMBEDDED_RULE_CONTEXT = ""
 EMBEDDED_RULE_NAME = "context"
 EMBEDDED_RULE_ID = "vitalio/context-bundle:context"
@@ -65,7 +64,7 @@ HELP_SECTIONS = (
             ),
             (
                 "--list | -l [pkg]",
-                "List bundles, rules, and built-in variables (default: {default_pkg})",
+                "List bundles, rules, and built-in variables (default: local agents/ and .context.bundle)",
             ),
             ("--update-cache", "Refresh cached git packages and URL files in {cache_dir}"),
             ("--init [--force]", "Create a starter .context.bundle in the current directory"),

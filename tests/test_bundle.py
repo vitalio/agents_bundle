@@ -416,7 +416,7 @@ class TestBundle(AgentsBundleTestCase):
             if ln.strip() and not ln.strip().startswith("#")
         ]
         self.assertIn("file AGENTS.md", init_lines)
-        self.assertIn("bundle vitalio/agents-rules:default", init_lines)
+        self.assertNotIn("bundle vitalio/agents-rules:default", init_lines)
         mod = self._load_bundle_module()
         self.assertTrue(mod.is_spec_trusted(init_dir / ".context.bundle"))
 
@@ -1611,6 +1611,56 @@ class TestBundle(AgentsBundleTestCase):
             self.assertIn("./local_child.bundle", r_c2.stderr)
             self.assertNotIn("child_tampered", r_c2.stdout)
 
+        with self.subTest(case="local directory package ./path/to/pkg:<item> anchors work_dir and tracks local files in trusted.json"):
+            pkg_sub = repo / "packages" / "my_pkg" / "agents"
+            pkg_sub.mkdir(parents=True, exist_ok=True)
+            (pkg_sub / "main.bundle").write_text(
+                "bundle sibling\n"
+                "rule sub_rule\n",
+                encoding="utf-8",
+            )
+            sibling_b = pkg_sub / "sibling.bundle"
+            sibling_b.write_text(
+                "rule sib_rule\n"
+                "cmd printf local_pkg_sib_v1\n",
+                encoding="utf-8",
+            )
+            (pkg_sub / "sub_rule.md").write_text(
+                "# Description: Sub rule\n- LOCAL_PKG_SUB_RULE_BODY\n",
+                encoding="utf-8",
+            )
+            (pkg_sub / "sib_rule.md").write_text(
+                "# Description: Sibling rule\n- LOCAL_PKG_SIB_RULE_BODY\n",
+                encoding="utf-8",
+            )
+            (repo / ".context.bundle").write_text(
+                "bundle ./packages/my_pkg:main\n",
+                encoding="utf-8",
+            )
+            self._trust(repo)
+            r_lp1 = self._run([str(SCRIPT), "--plain"], cwd=str(repo))
+            self._assert_ok(r_lp1)
+            self.assertIn("LOCAL_PKG_SUB_RULE_BODY", r_lp1.stdout)
+            self.assertIn("LOCAL_PKG_SIB_RULE_BODY", r_lp1.stdout)
+            self.assertIn("local_pkg_sib_v1", r_lp1.stdout)
+
+            # Also verify collect_directive_items directly on ./packages/my_pkg:main
+            direct_items = mod.collect_directive_items("bundle", "./packages/my_pkg:main", work_dir=repo)
+            direct_bodies = "\n".join(item[2] for item in direct_items)
+            self.assertIn("LOCAL_PKG_SUB_RULE_BODY", direct_bodies)
+            self.assertIn("LOCAL_PKG_SIB_RULE_BODY", direct_bodies)
+
+            # Modifying sibling.bundle inside ./packages/my_pkg/agents/ invalidates composite sha256 trust
+            sibling_b.write_text(
+                "rule sib_rule\n"
+                "cmd printf local_pkg_sib_tampered\n",
+                encoding="utf-8",
+            )
+            r_lp2 = self._run([str(SCRIPT)], cwd=str(repo))
+            self.assertNotEqual(r_lp2.returncode, 0)
+            self.assertIn("untrusted .context.bundle", r_lp2.stderr)
+            self.assertNotIn("local_pkg_sib_tampered", r_lp2.stdout)
+
         with self.subTest(case="context --init automatically records trust in trusted.json"):
             init_repo = self.tmp / "init_trusted_repo"
             init_repo.mkdir()
@@ -1638,7 +1688,7 @@ class TestBundle(AgentsBundleTestCase):
         adapters_dir.mkdir(parents=True, exist_ok=True)
         (adapters_dir / "todo-md.bundle").write_text(
             "# Description: Todo-md adapter\n"
-            "rule vitalio/todo-md\n"
+            "rule vitalio/todo-md:todo\n"
             "if todo_md.role!=\n"
             "    let role={todo_md.role:}\n"
             "elif todo_md.status=WIP,NEXT\n"
@@ -1746,7 +1796,7 @@ class TestBundle(AgentsBundleTestCase):
         adapters_dir.mkdir(parents=True, exist_ok=True)
         (adapters_dir / "todo-md.bundle").write_text(
             "# Description: Todo-md adapter\n"
-            "rule vitalio/todo-md\n"
+            "rule vitalio/todo-md:todo\n"
             "if todo_md.role!=\n"
             "    let role={todo_md.role:}\n"
             "elif todo_md.status=WIP,NEXT\n"

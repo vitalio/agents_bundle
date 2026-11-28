@@ -14,7 +14,6 @@ import time
 from pathlib import Path
 
 from src.header import (
-    DEFAULT_RULES_PKG,
     EMBEDDED_RULE_ID,
     EMBEDDED_RULE_NAME,
     PRODUCER_NAME,
@@ -29,16 +28,16 @@ from src.tree import _tree_from_args
 from src.rules_engine import (
     VAR_NAME_RE,
     _cond_is_invariant,
+    _find_bundle_file_in_pkg,
     _is_external_bundle_source,
     _is_local_path_spec,
-    _is_repo_shorthand_spec,
     _rule_template_is_invariant,
-    _target_exists_in_pkg,
     _parse_directive_tokens,
     _parse_md_text,
     _parse_rule_directive_tokens,
     _render_rule_vars,
     _resolve_bundle_context,
+    _resolve_package_rel_file,
     builtin_vars,
     collect_directive_items,
     env_vars,
@@ -72,8 +71,6 @@ def default_spec_template(prog: str | None = None) -> str:
         "#   let <name>=<value>  (or let <name>=$(<shell command>); bundle-scoped)",
         "#   export <name...>  (promote to session scope and output preamble)",
         "#   if <cond> / else if <cond> / else  (4-space indented blocks)",
-        "",
-        f"bundle {DEFAULT_RULES_PKG}:default",
         "",
         "file AGENTS.md",
         f"cmd {cmd} --tree",
@@ -245,9 +242,9 @@ def _collect_spec_trust_tree(
                 )
                 canonical_bundle, inc_text, child_pkg, child_pkg_dir, child_bdir = _resolve_bundle_context(
                     lookup_target,
-                    work_dir=cur_bdir,
+                    work_dir=root_dir,
                     refresh=False,
-                    default_pkg=default_pkg or DEFAULT_RULES_PKG,
+                    default_pkg=default_pkg,
                 )
             except (SystemExit, OSError):
                 if _is_local_path_spec(target):
@@ -275,8 +272,14 @@ def _collect_spec_trust_tree(
                 parent_is_external=is_external,
             )
             if not child_is_ext:
-                cand_path = Path(canonical_bundle)
-                if cand_path.is_file() and _is_within_root(cand_path.resolve(), root_dir):
+                cand_path: Path | None = Path(canonical_bundle)
+                if not cand_path.is_file() and child_pkg_dir is not None and ":" in canonical_bundle:
+                    ik = canonical_bundle.rsplit(":", 1)[1]
+                    cand_path = _find_bundle_file_in_pkg(child_pkg_dir, ik)
+                    if cand_path is None:
+                        rel_m = _resolve_package_rel_file(child_pkg_dir, ik, (".bundle",))
+                        cand_path = rel_m[1] if rel_m is not None else None
+                if cand_path is not None and cand_path.is_file() and _is_within_root(cand_path.resolve(), root_dir):
                     local_files.add(cand_path.resolve())
             child_label = (
                 lookup_target
@@ -620,11 +623,6 @@ def _qualify_nested_target(
         and not target.startswith(("http://", "https://", "file://"))
         and default_pkg is not None
     ):
-        if _is_repo_shorthand_spec(target):
-            if "@" in target:
-                return target
-            if pkg_dir is not None and not _target_exists_in_pkg(pkg_dir, target, kind=kind):
-                return target
         return f"{default_pkg}:{target}"
     return target
 
@@ -881,9 +879,9 @@ def _parse_spec_pass(
                 lookup_target = _qualify_nested_target(target, work_dir, cur_bdir, default_pkg, pkg_dir, prog, kind="bundle")
                 canonical_bundle, inc_text, child_pkg, child_pkg_dir, child_bdir = _resolve_bundle_context(
                     lookup_target,
-                    work_dir=cur_bdir,
+                    work_dir=work_dir,
                     refresh=refresh,
-                    default_pkg=default_pkg or DEFAULT_RULES_PKG,
+                    default_pkg=default_pkg,
                 )
                 cur_active = list(active_bundles) if active_bundles else []
                 if any(cid == canonical_bundle for cid, _ in cur_active):
